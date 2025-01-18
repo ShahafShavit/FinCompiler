@@ -1,3 +1,4 @@
+import urllib.parse
 from datetime import datetime, timedelta
 import config
 from selenium import webdriver, common
@@ -7,6 +8,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import os
 import time
+
+from folder_tracking import FolderTracker
 
 project_dir = os.path.abspath(os.path.dirname(__file__))
 download_dir = os.path.join(project_dir, config.input_dir)
@@ -89,15 +92,20 @@ class Bank:
             WebDriverWait(self.__driver, 10).until(EC.number_of_windows_to_be(2))
             self.__driver.switch_to.window(self.__driver.window_handles[1])
 
-            continue_button = WebDriverWait(self.__driver, 10).until(
+            download_btn = WebDriverWait(self.__driver, 10).until(
                 EC.element_to_be_clickable((By.ID, 'ImgContinue'))
             )
-            continue_button.click()
-            time.sleep(6)
+            folder_tracker = FolderTracker(download_dir)
+            result = folder_tracker.monitor_folder(1, 10)
+            download_btn.click()
+            if result:
+                print("File downloaded successfully.")
+            else:
+                print("File download failed or timed out.")
+
+            time.sleep(2)
         elif file.lower() == 'osh':
-            # print(len(self.__driver.window_handles))
-            #if len(self.__driver.window_handles) > 1:
-                #self.__driver.switch_to.window(self.__driver.window_handles[0])
+            self.__driver.switch_to.window(self.__driver.window_handles[0])
 
             self.__driver.get('https://hb2.bankleumi.co.il/ebanking/SO/SPA.aspx#/ts/BusinessAccountTrx?WidgetPar=1')
             advanced_search_button = WebDriverWait(self.__driver, 10).until(
@@ -154,28 +162,25 @@ class Bank:
 
             buttons = modal_dialog.find_elements(By.TAG_NAME, "button")
 
-            continue_button = None
+            continue_btn = None
             for i, button in enumerate(buttons):
                 if 'המשך' in button.text:
-                    continue_button = button
+                    continue_btn = button
                     break
 
-            if continue_button:
+            if continue_btn:
                 actions = ActionChains(self.__driver)
-                actions.move_to_element(continue_button).click().perform()
-
+                actions.move_to_element(continue_btn).click().perform()
 
             else:
                 print("Continue button not found")
         elif file.lower() == 'credit':
-
             self.__driver.get('https://hb2.bankleumi.co.il/ebanking/SO/SPA.aspx#/ts/CardsWorld')
 
             WebDriverWait(self.__driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.swiper-wrapper"))
             )
 
-            # Locate only the active swiper-slide elements by filtering out those with blank or placeholder content
             cards = self.__driver.find_elements(By.CSS_SELECTOR,
                                                 "div.swiper-slide:not(.blank) article.credit-card-item")
 
@@ -185,7 +190,6 @@ class Bank:
                     continue
                 if float(amount_text.replace(',', '')) <= 0:
                     continue
-                # Scroll the card into view and click it
                 self.__driver.execute_script("arguments[0].scrollIntoView();", card)
                 WebDriverWait(self.__driver, 10).until(EC.element_to_be_clickable(card)).click()
 
@@ -205,8 +209,11 @@ class Bank:
                 new_window = self.__driver.window_handles[-1]
                 self.__driver.switch_to.window(new_window)
                 d = DirTracker(download_dir)
-                while True:
-                    try:
+                current_url = self.__driver.current_url
+                domain = urllib.parse.urlparse(current_url).netloc
+                print(domain)
+                if "isracard.co.il" in domain:
+                    while True:
                         select_button = WebDriverWait(self.__driver, 10).until(
                             EC.element_to_be_clickable((By.CSS_SELECTOR, "span[aria-label='בחר מועד חיוב מועד קרוב']"))
                         )
@@ -222,10 +229,28 @@ class Bank:
                                 (By.XPATH, "//button[@aria-label='Excel הורד פירוט חיובים בפורמט']"))
                         )
                         download_button.click()
-                    except common.exceptions.TimeoutException:
+                        time.sleep(4)
+                        if d.new_file()[0]:
+                            self.__driver.close()  # Close the current window
+                            self.__driver.switch_to.window(self.__driver.window_handles[0])
+                            break
+                if "max.co.il" in domain:
+                    while True:
+                        months_hebrew = [
+                            "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
+                            "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"
+                        ]
+                        current_date = datetime.now()
+
+                        next_month_index = current_date.month
+                        current_year = current_date.year
+
+                        this_month_string = f"{months_hebrew[next_month_index]} {current_year}"
+                        print(this_month_string)
                         date_combo = WebDriverWait(self.__driver, 10).until(
                             EC.element_to_be_clickable(
-                                (By.XPATH, "//div[contains(@class, 'combo-text dates') and text()=' אוקטובר 2024 ']"))
+                                (By.XPATH,
+                                 f"//div[contains(@class, 'combo-text dates') and text()=' {this_month_string} ']"))
                         )
                         date_combo.click()
 
@@ -234,19 +259,16 @@ class Bank:
                                                         "//li[@class='month selected-month ng-star-inserted']/preceding-sibling::li[1]"))
                         )
                         previous_month.click()
-
-
-
                         excel_link = WebDriverWait(self.__driver, 10).until(
                             EC.element_to_be_clickable(
                                 (By.XPATH, "//a[contains(text(),'להורדת פירוט החיובים כקובץ אקסל')]"))
                         )
                         excel_link.click()
-                    time.sleep(4)
-                    if d.new_file()[0]:
-                        self.__driver.close()  # Close the current window
-                        self.__driver.switch_to.window(self.__driver.window_handles[0])
-                        break
+                        time.sleep(4)
+                        if d.new_file()[0]:
+                            self.__driver.close()
+                            self.__driver.switch_to.window(self.__driver.window_handles[0])
+                            break
         else:
             raise Exception("TransactionFile must be 'holdings' or 'osh'.")
         downloaded, new_file = verify_download(download_dir, 15, 60)
@@ -511,6 +533,7 @@ class DirTracker:
 
 
 if __name__ == "__main__":
+
     # maxCard = MaxCredit(config.max_username, config.max_password)
     # maxCard.download()
     b = Bank(config.bank_username, config.bank_password)
