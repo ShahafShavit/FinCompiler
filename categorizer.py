@@ -203,8 +203,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     @staticmethod
     def fix_similar_categories_in_file():
         stores_df = pd.read_csv(config.stores_to_categories_file)
-        stores_df['category'].replace(nan, "NULL", inplace=True)
-
+        stores_df['category'] = stores_df['category'].replace(nan, "NULL")
         compiled_df = pd.read_csv(config.compiled_file)
         backup_df = pd.read_csv(config.transaction_category_file)
         categories_to_check = set(stores_df['category'].tolist())
