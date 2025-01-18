@@ -1,14 +1,10 @@
 import asyncio
 import difflib
 import os.path
-import datetime
-
+from numpy import nan
 import pandas as pd
 import config
 from config import similar_categories_file
-
-
-# from categorizer_bot import DiscordBot
 
 
 class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
@@ -47,18 +43,10 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 recorded_store, category_, is_static = store_row['store_name'], store_row['category'], store_row[
                     'is_static']
 
-                if recorded_store == store_name:
-                    if is_static == 1:
-                        return category_
-                    elif is_static == 0:
-                        if store_name == 'פז אפליקציית יילו':
-                            if expense > 210:
-                                return 'דלק'
-                            else:
-                                return 'משק בית'
-                    return None
+                if recorded_store == store_name and is_static == 1:
+                    return category_
+                return None
             return None
-
         elif method == 'input':
             all_categories = set(self.stores_df['category'].tolist())
             for _, row in self.stores_df.iterrows():
@@ -77,7 +65,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                         print(f"All categories: {all_categories}")
 
                         category_input = input(
-                            f"Choose a category for {store_name} from the categories, or type a new one: ")
+                            f"Choose a category for {store_name} from the categories, or type a new one: ").strip()
                         if category_input in dynamic_categories:
                             return category_input
                         else:
@@ -94,7 +82,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
                         is_static_input = input(
                             f"Is this category: [{category}] for {store_name} static?"
-                            f"\n (Type '0' if dynamic, type '1' if static): ")
+                            f"\n (Type '0' if dynamic, type '1' if static): ").strip()
                         is_static = int(is_static_input) if int(is_static_input) == 1 or 0 else -1
                         self.stores_df.loc[self.stores_df['store_name'] == store_name, 'is_static'] = is_static
                         self.save_stores()
@@ -105,9 +93,11 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 f"Income: {income}\nAdditional details: {details}\nDigits: {digits}")
             print(f"All categories: {all_categories}")
             category_input = input(
-                f"{store_name} is not in the store list. Choose a category from the list or type a new one: ")
+                f"{store_name} is not in the store list. Choose a category from the list or type a new one: ").strip()
+
             is_static_input = input(
-                f"Should {store_name} be under static category? Type 1 for static and 0 for fluid: ")
+                f"Should {store_name} be under static category? Type 1 for static and 0 for fluid: ").strip()
+
             new_row = {'store_name': store_name, 'category': category_input, 'is_static': int(is_static_input)}
             self.stores_df.loc[len(self.stores_df)] = new_row
             self.save_stores()
@@ -204,8 +194,17 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                     break
 
     @staticmethod
+    def fix_nan_category():
+        stores_df = pd.read_csv(config.stores_to_categories_file)
+        categories_to_check = set(stores_df['category'].tolist())
+        stores_df['category'].fillna("NULL")
+        stores_df.to_csv(config.stores_to_categories_file, index=False)
+
+    @staticmethod
     def fix_similar_categories_in_file():
         stores_df = pd.read_csv(config.stores_to_categories_file)
+        stores_df['category'].replace(nan, "NULL", inplace=True)
+
         compiled_df = pd.read_csv(config.compiled_file)
         backup_df = pd.read_csv(config.transaction_category_file)
         categories_to_check = set(stores_df['category'].tolist())
@@ -217,12 +216,12 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 ans = difflib.get_close_matches(category, categories_to_check, n=3)
                 if len(ans) > 1:
                     match_ratio = difflib.SequenceMatcher(None, ans[0], ans[1]).ratio()
-                    if match_ratio < 0.75:
+                    if match_ratio > 0.7:
                         pair = [ans[0], ans[1]]
                         if pair in linked_pairs.values.tolist() or list(reversed(pair)) in linked_pairs.values.tolist():
                             continue
+                        print(f"Checking {category}:")
                         for i, option in enumerate(ans, 1):
-                            print(f"Checking {category}")
                             print(f"{i}. {option}")
                         ans_input = input(f"Choose:\n1. Keep first\n2. Keep second\n3. Keep both\n")
                         if ans_input in ['1', '2']:
