@@ -1,0 +1,333 @@
+import time
+import numpy as np
+import gspread
+import pandas
+import pandas as pd
+import tabulate
+from oauth2client.service_account import ServiceAccountCredentials
+import re
+import categorizer
+import config
+import gspread.utils
+from googleapiclient.discovery import build
+pd.set_option('display.precision', 2)  # Sets display precision to two decimal places
+
+tabulate.PRESERVE_WHITESPACE = True
+pd.options.display.max_columns = None
+pd.options.display.width = None
+pd.options.styler.latex.multicol_align = 'c'
+
+
+class GoogleSheetsHandler:
+    def __init__(self, credentials_file, sheet_id):
+        self.credentials = None
+        self.credentials_file = credentials_file
+        self.sheet_id = sheet_id
+        self.client = self.authenticate_google_sheets()
+        self.spreadsheet = self.client.open_by_key(self.sheet_id)
+
+    def authenticate_google_sheets(self):
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        self.credentials = ServiceAccountCredentials.from_json_keyfile_name(self.credentials_file, scope)
+        return gspread.authorize(self.credentials)
+
+    def update_sheet(self, dataframe, sheet_name, special=None):
+        if special is None:
+            special = []
+
+        def safe_convert_to_datetime(date):
+            try:
+                return pd.to_datetime(date, errors='raise', dayfirst=True, format='mixed')
+            except Exception:
+                pass
+            return date
+
+        print(f"Started pushing {sheet_name}...")
+        dataframe.replace([float('inf'), float('-inf')], float('nan'), inplace=True)  # Replace infinities with NaN
+        dataframe.replace(np.nan, "", inplace=True)
+
+        try:
+            sheet = self.spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            sheet = self.spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=100)
+
+        sheet.clear()
+        sheet.update([dataframe.columns.values.tolist()] + dataframe.values.tolist())
+
+        print(f"Finished pushing {sheet.title}.")
+
+    def get_sheet(self, sheet_name, range: str):
+
+        try:
+            sheet = self.spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"Worksheet named {sheet_name} is missing")
+            sheet = self.spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=100)
+        data = sheet.get(range)
+        df = pd.DataFrame(data=data[1:], columns=data[0])
+        return df
+
+class GSLink:
+    def __init__(self, gs_handler: GoogleSheetsHandler):
+        self.handler = gs_handler
+
+    def update_local(self, sheets, compiled_files):
+        self.sync_check(sheets, compiled_files)
+        input("Are you sure you want to PULL data from the cloud?")
+        for sheet_name, compiled_file in zip(sheets, compiled_files):
+            df = self.handler.get_sheet(sheet_name, "A1:Z")
+            for column in df.columns:
+                try:
+                    df[column] = df[column].apply(pd.to_numeric)
+                except ValueError:
+                    pass
+            if 'מזהה עסקה' in df.columns:
+                for index, row in df.iterrows():
+                    categorizer.CategorizeFile.category_store_link_backup(transaction_id=row['מזהה עסקה'],
+                                                                          category=row['קטגוריה'])
+                    categorizer.CategorizeFile.update_store_category(store_name=row['מקור עסקה'],
+                                                                     category=row['קטגוריה'])
+                df.to_csv(compiled_file, index=False)
+                categorizer.CategorizeFile.fix_similar_categories_in_file()
+                categorizer.CategorizeFile.fix_null_category_status()
+
+
+            print(f"Pulled data for {sheet_name}")
+            df.to_csv(compiled_file, index=False)
+
+
+
+    def update_cloud(self, sheets, compiled_files, special_columns=None):
+        if special_columns is None:
+            special_columns = []
+        self.sync_check(sheets, compiled_files)
+        input("Are you sure you want to PUSH data the cloud?")
+        for sheet_name, compiled_file in zip(sheets, compiled_files):
+            try:
+                df = pd.read_csv(compiled_file)
+                self.handler.update_sheet(df, sheet_name, special_columns)
+            except FileNotFoundError:
+                print(f"Missing file: {compiled_file}, skipping push to cloud.")
+
+    def sync_check(self, sheets, compiled_files):
+        def safe_to_numeric(num):
+            try:
+                return pd.to_numeric(num)
+            except Exception:
+                return num
+
+        def wrap_hebrew_words(text):
+            # Define the RLE and PDF characters
+            RLE = '\u202B'
+            PDF = '\u202C'
+
+            # Define a regex pattern to match Hebrew words
+
+            hebrew_pattern = re.compile(r'[\u0590-\u05FF]+')
+
+            # Replace Hebrew words with wrapped versions
+            try:
+                wrapped_text = hebrew_pattern.sub(lambda m: f"{RLE}{str(m.group(0))}{PDF}", text)
+            except Exception as e:
+                print(f"Failed adding BiDi text formatter for Hebrew Word {text}: {e}")
+                return text
+
+            return wrapped_text
+
+        # Apply the function to each cell in the dataframe
+        local_dfs = []
+        cloud_dfs = []
+        diff_dfs = []
+        for file, sheet in zip(compiled_files, sheets):
+            local_dfs.append(pd.read_csv(file))
+            cloud_dfs.append(self.handler.get_sheet(sheet, "A1:Z"))
+        for local_df, cloud_df in zip(local_dfs, cloud_dfs):
+            local_df = local_df.apply(safe_to_numeric)
+            cloud_df = cloud_df.apply(safe_to_numeric)
+            local_df.replace(np.nan, "", inplace=True)
+            cloud_df.replace(np.nan, "", inplace=True)
+            try:
+                diff = local_df.compare(cloud_df).dropna(axis=0, how='all')
+                diff_dfs.append(diff)
+            except ValueError as e:
+                print("Some mismatch occured while comparing cloud and local data (probably new record somewhere.)")
+                print(f"Local df shape: (R,C) {local_df.shape} | Cloud df shape: (R,C) {cloud_df.shape}")
+
+        success = 0
+        for sheet, df in zip(sheets, diff_dfs):
+            if not df.empty:
+                indices_df = pd.DataFrame(data={'Cloud Row': df.index + 2, 'Local Row': df.index})
+                print(f"Total of {len(df)} mismatched row(s) found in: {sheet}")
+                df.rename(columns={"self": 'local', 'other': 'cloud'}, inplace=True)
+                print(tabulate.tabulate(indices_df, headers='keys', showindex=False, tablefmt='simple',
+                                        numalign='center'))
+                df.index = df.index + 2
+                print(tabulate.tabulate(df, headers='keys', showindex=False, tablefmt='simple', stralign='center'))
+                return False
+            else:
+                success += 1
+        if success == len(sheets):
+            print(f"All sheets are up to date with local data.")
+            return True
+
+
+# DEPRECATED
+def sheets_push():
+    df_totals, df_holdings = None, None
+    try:
+        df_totals = pd.read_csv(config.compiled_file)
+    except FileNotFoundError as e:
+        print(f"Missing file: {e}")
+    try:
+        df_holdings = pd.read_csv(config.holdings_file)
+    except FileNotFoundError as e:
+        print(f"Missing file: {e}")
+    dfs = {
+        "Totals2": df_totals,
+        "Holdings2": df_holdings
+    }
+    GoogleAPI = GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
+    new_df = GoogleAPI.get_sheet("Holdings2", "A1:M")
+    cols = new_df.columns.drop('תאריך')
+    new_df[cols] = new_df[cols].apply(pd.to_numeric)
+    new_df.to_csv(config.holdings_file, index=False)
+
+    # for sheet_name, df in dfs.items():
+    #     if df is not None:
+    #         GoogleAPI.write_sheet(df, sheet_name)
+    #         print(f"Written sheet {sheet_name} to Google Sheets")
+
+
+
+def push_monthly_look(gsh):
+    print("Pushing updated monthly look...")
+
+    # Read the CSV file
+    df = pd.read_csv(config.compiled_file)
+    df['תאריך'] = pd.to_datetime(df['תאריך'], format='%Y-%m-%d')
+    df['Month-Year'] = df['תאריך'].dt.to_period('M')
+
+    # Creating a new column to distinguish between expenses and income
+    df['Type'] = df.apply(lambda row: 'Income' if row['בזכות'] > 0 else 'Expense', axis=1)
+    df['Amount'] = df.apply(lambda row: row['בזכות'] if row['בזכות'] > 0 else row['בחובה'], axis=1)
+
+    # Grouping by Month-Year, Category, and Type, and summing the Amounts
+    grouped = df.groupby(['Month-Year', 'קטגוריה', 'Type'])['Amount'].sum().reset_index()
+
+    # Create a complete range of months from January to December for the current year
+    current_year = pd.Timestamp.today().year
+    all_periods = pd.period_range(start=f'{current_year}-01', end=f'{current_year}-12', freq='M')
+
+    # Create a list of all categories
+    all_categories = df['קטגוריה'].unique()
+
+    # Ensure both 'Expense' and 'Income' exist for every category and month-year
+    all_combinations = pd.MultiIndex.from_product([all_categories, ['Expense', 'Income']],
+                                                  names=['קטגוריה', 'Type'])
+
+    # Pivot the table so that 'Type' (Expense/Income) becomes sub-rows instead of sub-columns
+    pivoted = grouped.pivot_table(index=['קטגוריה', 'Type'], columns=['Month-Year'], values='Amount', fill_value=0)
+
+    # Reindex to ensure all combinations of categories, types, and months are present, filling missing values with 0
+    pivoted = pivoted.reindex(all_combinations, fill_value=0)
+    new_columns = pivoted.columns.union(all_periods)
+    pivoted = pivoted.reindex(columns=new_columns, fill_value=0)
+    # Convert the pd.Period index columns to strings (for months)
+    pivoted.columns = pivoted.columns.astype(str)
+    pivoted: pandas.DataFrame
+
+    # Flatten and format the DataFrame
+    def flatten_dataframe(df):
+        # Flatten the MultiIndex columns by ensuring any Period objects are converted to strings
+        df.columns = [' '.join(map(str, col)).strip() if isinstance(col, tuple) else str(col) for col in
+                      df.columns.values]
+
+        # Ensure the index is included in the DataFrame for upload
+        df.reset_index(inplace=True)
+
+        return df
+
+    flattened_df = flatten_dataframe(pivoted)
+
+    # Reformat headers for Google Sheets
+    headers = [list(flattened_df.columns)]
+
+    # Data for Google Sheets
+    data = [flattened_df.columns.values.tolist()] + flattened_df.values.tolist()  # Convert all data to string format
+
+    spreadsheet = gsh.spreadsheet
+
+    # Function to update the Google Sheet with merged cells
+    def update_sheet_with_headers(spreadsheet, headers, data, sheet_name):
+        try:
+            sheet = spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            sheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=100)
+
+        spreadsheet_meta = spreadsheet.fetch_sheet_metadata()
+        worksheet_meta = next(
+            sheet for sheet in spreadsheet_meta['sheets'] if sheet['properties']['title'] == sheet_name)
+
+        merge_ranges = worksheet_meta.get('merges', [])
+        sheet: gspread.worksheet.Worksheet = sheet
+        sheet.batch_clear(['A1:O60'])
+
+        # Update headers and data, use the updated argument order for gspread's update function
+        sheet.update(data, 'A1')
+
+        merged_indexes = [(entry['startRowIndex'], entry['endRowIndex']) for entry in merge_ranges]
+
+        for row in range(2, (len(data) - 1), 2):
+
+            if (row - 1, row + 1) in merged_indexes:
+                continue
+            sheet.merge_cells(f'A{row}:A{row + 1}')
+            print(f"Merging row {row / 2} of {(len(data) - 1) / 2}. sleeping for 2s")
+            # Apply center alignment to the merged cells
+            time.sleep(2)
+        formats = [
+            {
+                "range": "C2:O100",
+                "format": {
+                    "textFormat": {
+                        "bold": False
+                    },
+                    "numberFormat": {
+                        "type": "CURRENCY",
+                        "pattern": "[$₪]#,##0.00"  # ILS currency format
+                    }                }
+            },
+            {
+                "range": "A1:O100",
+                "format":
+                    {
+                        "horizontalAlignment": "CENTER",
+                        "verticalAlignment": "MIDDLE"
+                    }
+
+            }
+        ]
+
+        sheet.batch_format(formats)
+        # print("Initiated flood-protection cooldown.")
+        # for i in range(30):
+        #     time.sleep(1)
+        #     print(f"{i} -> 30s")
+        # print("Finished flood-protection cooldown.")
+        #
+
+    update_sheet_with_headers(spreadsheet, headers, data, 'מבט חודשי')
+    print("Pushed updated monthly look.")
+if __name__ == "__main__":
+    gsh = GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
+
+    gslink = GSLink(gsh)
+    # gslink.update_cloud(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])
+
+    # gslink.update_local(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])
+    # categorizer.CategorizeFile.fix_similar_categories_in_file()
+    # gslink.sync_check(['Holdings2', 'Totals2'], [config.holdings_file, config.compiled_file])
+    # gslink.update_local(['Holdings2', 'Totals2'], [config.holdings_file, config.compiled_file])
+    # print(tabulate.tabulate(pivoted, headers='keys', showindex=True, tablefmt='plain'))
+    # gsh.update_sheet(pivoted, "Monthly Look")
+    push_monthly_look(gsh)
