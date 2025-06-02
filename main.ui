@@ -199,8 +199,8 @@
    <widget class="QPushButton" name="fix_similar_categories">
     <property name="geometry">
      <rect>
-      <x>279</x>
-      <y>378</y>
+      <x>234</x>
+      <y>333</y>
       <width>136</width>
       <height>23</height>
      </rect>
@@ -212,8 +212,8 @@
    <widget class="QPushButton" name="fixNullCategory">
     <property name="geometry">
      <rect>
-      <x>279</x>
-      <y>351</y>
+      <x>234</x>
+      <y>306</y>
       <width>136</width>
       <height>23</height>
      </rect>
@@ -251,8 +251,8 @@
    <widget class="QPushButton" name="dupe_seeker">
     <property name="geometry">
      <rect>
-      <x>279</x>
-      <y>405</y>
+      <x>234</x>
+      <y>360</y>
       <width>136</width>
       <height>23</height>
      </rect>
@@ -344,6 +344,19 @@
     </property>
     <property name="text">
      <string>dd.mm.yy</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="launch_sheets">
+    <property name="geometry">
+     <rect>
+      <x>45</x>
+      <y>432</y>
+      <width>325</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Launch Google Sheets</string>
     </property>
    </widget>
   </widget>

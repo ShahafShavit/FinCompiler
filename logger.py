@@ -8,7 +8,6 @@ class Logger:
 
     PROCESS_NAME_MAP = {
         "fix_null_category": "FIX NULL CATEGORY",
-
     }
 
     STYLE_RESET = "\033[0m"
@@ -44,10 +43,12 @@ class Logger:
         return cls._instance
 
     def _get_caller_function_name(self):
-        return self.PROCESS_NAME_MAP.get(
+        process_name = self.PROCESS_NAME_MAP.get(
             inspect.stack()[0].function,
             inspect.stack()[0].function
         )
+        return process_name
+
 
     def _format_message(self, log_type, process_name, message, details):
         cfg = self.LOG_TYPES.get(log_type, {})
@@ -66,7 +67,7 @@ class Logger:
     def log_process(self, log_type="ongoing", process_name=None, message="", details=""):
         if not process_name:
             process_name = self._get_caller_function_name()
-        print(self._format_message(log_type, process_name, message, details))
+        print(self._format_message(log_type, process_name.upper().replace("_", " "), message, details))
 
     def log_process_started(self, process_name=None, message="", details=""):
         self.log_process("started", process_name, message, details)

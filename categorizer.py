@@ -239,7 +239,6 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         stores_df.to_csv(config.stores_to_categories_file, index=False)
         compiled_df.to_csv(config.compiled_file, index=False)
         backup_df.to_csv(config.transaction_category_file, index=False)
-        print("Done fixing similar categories.")
 
     @staticmethod
     def rename_category(old_name, new_name):
@@ -305,7 +304,6 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
     @staticmethod
     def dupe_seeker():
-        print("Got here")
         df = pd.read_csv(config.compiled_file)
 
         grouped_expenses = df[df['בחובה'] != 0].groupby(['תאריך', 'בחובה']).size().reset_index(name='counts')

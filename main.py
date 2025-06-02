@@ -3,6 +3,8 @@ import glob
 import os
 import time
 import sys
+import webbrowser
+
 from openpyxl.descriptors import NoneSet
 import compile_handler
 import config
@@ -224,6 +226,7 @@ class Process:
 
 def ui():
     def delete_old_files():
+        check_sync()
         input_files = glob.glob(os.path.join(config.input_dir,'*.*'))
         raw_files = glob.glob(os.path.join(config.raw_dir,'*.*'))
         cleaned_files = glob.glob(os.path.join(config.cleaned_dir,'*.*'))
@@ -315,8 +318,7 @@ def ui():
                 f = csv_handler.TransactionFile(file)
                 f.drop_columns(
                     ['סכום עסקה', 'מטבע חיוב', 'מטבע עסקה מקורי', 'מטבע מקור', 'מטבע לחיוב', 'סכום עסקה מקורי',
-                     'סכום מקורי'
-                        , 'מספר שובר', 'תאריך חיוב', 'שער המרה ממטבע מקור/התחשבנות לש"ח', 'אופן ביצוע ההעסקה', 'הערות',
+                     'סכום מקורי', 'מספר שובר', 'תאריך חיוב', 'שער המרה ממטבע מקור/התחשבנות לש"ח', 'אופן ביצוע ההעסקה',
                      'סוג עסקה', 'תאריך ערך', 'הערה', 'אסמכתא', 'קטגוריה', 'היתרה בש"ח'])
                 f.drop_by_column_and_value('מקור עסקה', 'כרטיס דביט')
                 f.drop_by_column_and_value('מקור עסקה', 'קניה-אינטרנט')
@@ -386,6 +388,9 @@ def ui():
         gsh = gs_handler.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gs_handler.push_monthly_look(gsh)
 
+    @log_process
+    def launch_sheet():
+        webbrowser.open(f"https://docs.google.com/spreadsheets/d/{config.GOOGLE_WORKSHEET_ID}")
     app = QtWidgets.QApplication(sys.argv)
 
     MainWindow = QtWidgets.QMainWindow()
@@ -443,6 +448,9 @@ def ui():
 
     monthly_look_btn = MainWindow.findChild(QtWidgets.QPushButton, 'MonthlyLookPush')
     monthly_look_btn.clicked.connect(push_monthly_look)
+
+    gs_launch_btn = MainWindow.findChild(QtWidgets.QPushButton, 'launch_sheets')
+    gs_launch_btn.clicked.connect(launch_sheet)
 
     MainWindow.show()
     sys.exit(app.exec())
