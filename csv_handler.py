@@ -7,6 +7,32 @@ from tabulate import tabulate
 import config
 
 
+def generate_transaction_fingerprint(row):
+    """Creates a robust fingerprint for de-duplication purposes based on the transaction's essence."""
+    try:
+        normalized_date = pd.to_datetime(row['תאריך']).strftime('%Y-%m-%d')
+        amount = row['בחובה'] if row['בחובה'] != 0 else row['בזכות']
+        normalized_amount = f"{float(amount):.2f}"
+        business_name = str(row['מקור עסקה']).lower().strip()
+        business_name = re.sub(r'[^a-z0-9\u0590-\u05ff]', '', business_name)
+        extract_data = ''
+        try:
+            extract_data += (str(row['פירוט נוסף'])).strip().lower()
+        except KeyError:
+            extract_data += "nan"
+        try:
+            extract_data += str(row['תאור מורחב']).strip().lower()
+        except KeyError:
+            extract_data += 'nan'
+
+        extra_data = re.sub(r'[^a-z0-9\u0590-\u05ff]', '', extract_data)
+        fingerprint_key = f"{normalized_date}:{normalized_amount}:{business_name}:{extra_data}"
+        print(f"Generating fingerprint for '{fingerprint_key}'")
+        return fingerprint_key
+        return hashlib.sha256(fingerprint_key.encode()).hexdigest()
+
+    except (ValueError, TypeError):
+        return None
 class TransactionFile:
     def __init__(self, file_path):
         rename_map = {
@@ -24,6 +50,8 @@ class TransactionFile:
         self.clean_nan_rows()
         self.unique_identifier()
         self.unify_columns(rename_map)
+        self.file_df['fingerprint'] = self.file_df.apply(generate_transaction_fingerprint, axis=1)
+        self.file_df.dropna(subset=['fingerprint'], inplace=True)
 
     def __load_data__(self):
         def unify_dataframe(df, expected_headers):
@@ -84,7 +112,6 @@ class TransactionFile:
         self.file_df['מזהה עסקה'] = self.file_df.apply(hash_row, axis=1)
 
     def clean_nan_rows(self):
-        # df = df[pd.to_datetime(df['Date'], errors='coerce').notna()]
         df = self.file_df
         df = df[df.isnull().sum(axis=1) < 4]
         self.file_df = df

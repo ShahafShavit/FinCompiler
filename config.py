@@ -25,3 +25,4 @@ DISCORD_USER_ID = os.getenv('DISCORD_USER_ID')
 GOOGLE_API_USER = os.getenv('GOOGLE_API_USER')
 GOOGLE_WORKSHEET_ID = os.getenv('GOOGLE_WORKSHEET_ID')
 similar_categories_file = 'data\\static\\similar_pairs.csv'
+fingerprint_db_file = os.path.join('data\\static', 'fingerprint_db.csv')

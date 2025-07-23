@@ -1,11 +1,9 @@
 import datetime
 import glob
 import os
-import time
 import sys
 import webbrowser
 
-from openpyxl.descriptors import NoneSet
 import compile_handler
 import config
 import csv_handler
@@ -42,7 +40,9 @@ def log_process(func):
         else:
             logger.log_process_finished(process_name=func.__name__)
             return result
+
     return wrapper
+
 
 class Process:
     def __init__(self, process_type: str):
@@ -94,6 +94,7 @@ class Process:
                 f = input_handler.File(file)
                 f.to_xlsx()
             logger.log_process_ongoing(message="CONVERT PROCESS END")
+
         def _convert_to_csv(type):
             logger.log_process_ongoing(message="CSV CONVERSION START")
             file_list = glob.glob(self.directories['xlsx'] + '*.xls*')
@@ -128,6 +129,7 @@ class Process:
             else:
                 raise ValueError("Type must be 'holdings','credit','bank'.")
             logger.log_process_ongoing(message="CSV CONVERSION END")
+
         def _compile(type):
             if type == 'holdings':
                 logger.log_process_ongoing(message="COMPILER START")
@@ -224,12 +226,13 @@ class Process:
                     logger.log_process_ongoing(message="Retrying untill success")
             del b
 
+
 def ui():
     def delete_old_files():
         check_sync()
-        input_files = glob.glob(os.path.join(config.input_dir,'*.*'))
-        raw_files = glob.glob(os.path.join(config.raw_dir,'*.*'))
-        cleaned_files = glob.glob(os.path.join(config.cleaned_dir,'*.*'))
+        input_files = glob.glob(os.path.join(config.input_dir, '*.*'))
+        raw_files = glob.glob(os.path.join(config.raw_dir, '*.*'))
+        cleaned_files = glob.glob(os.path.join(config.cleaned_dir, '*.*'))
         testing = input_files
         testing += raw_files
         testing += cleaned_files
@@ -247,7 +250,7 @@ def ui():
 
     @log_process
     def process_holdings():
-        holdings = glob.glob(os.path.join(config.input_dir,  '*יתרות*.xls*'))
+        holdings = glob.glob(os.path.join(config.input_dir, '*יתרות*.xls*'))
         for holding in holdings:
             logger.log_process_ongoing(message=f"Processing Holdings file to xlsx >> {holding}")
             f = input_handler.File(holding)
@@ -275,7 +278,7 @@ def ui():
     def push_holdings():
         gsh = gs_handler.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = gs_handler.GSLink(gsh)
-        gslink.update_cloud(['Holdings'], [config.holdings_file], special_columns=[1,2,3,5])
+        gslink.update_cloud(['Holdings'], [config.holdings_file], special_columns=[1, 2, 3, 5])
 
     @log_process
     def grab_transactions():
@@ -287,7 +290,6 @@ def ui():
             logger.log_process_ongoing(message="Launching bank website..")
             downloader = import_handler.Bank(config.bank_username, config.bank_password)
             if credit_grab_checkbox.isChecked():
-
                 logger.log_process_ongoing(message="Downloading credit details...")
                 downloader.download("credit")
             if bank_grab_checkbox.isChecked():
@@ -295,9 +297,13 @@ def ui():
                 start_date = None
                 end_date = None
                 if MainWindow.findChild(QtWidgets.QCheckBox, 'grabByDate').isChecked():
-                    start_date = None if MainWindow.findChild(QtWidgets.QLineEdit, 'startDate').text() == "" else MainWindow.findChild(QtWidgets.QLineEdit, 'startDate').text()
-                    end_date = None if MainWindow.findChild(QtWidgets.QLineEdit, 'endDate').text() == "" else MainWindow.findChild(QtWidgets.QLineEdit, 'endDate').text()
-                downloader.download(file="osh",from_date= start_date, to_date=end_date)
+                    start_date = None if MainWindow.findChild(QtWidgets.QLineEdit,
+                                                              'startDate').text() == "" else MainWindow.findChild(
+                        QtWidgets.QLineEdit, 'startDate').text()
+                    end_date = None if MainWindow.findChild(QtWidgets.QLineEdit,
+                                                            'endDate').text() == "" else MainWindow.findChild(
+                        QtWidgets.QLineEdit, 'endDate').text()
+                downloader.download(file="osh", from_date=start_date, to_date=end_date)
             del downloader
 
         else:
@@ -305,14 +311,14 @@ def ui():
 
     @log_process
     def process_transactions():
-        files = glob.glob(os.path.join(config.input_dir,  '*.xls*'))
+        files = glob.glob(os.path.join(config.input_dir, '*.xls*'))
         for file in files:
             if 'יתרות' not in file:
                 logger.log_process_ongoing(message=f"Processing Transactions file to xlsx >> {file}")
                 f = input_handler.File(file)
                 f.to_xlsx()
 
-        files = glob.glob(os.path.join(config.raw_dir,  '*.xls*'))
+        files = glob.glob(os.path.join(config.raw_dir, '*.xls*'))
         for file in files:
             if 'יתרות' not in file:
                 f = csv_handler.TransactionFile(file)
@@ -340,12 +346,13 @@ def ui():
         c.__compile_new__(config.cleaned_dir, suffix='credit')
         c.compile_to_main()
         c.save_all()
+        c.update_fingerprint_db()
 
     @log_process
     def push_transactions():
         gsh = gs_handler.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = gs_handler.GSLink(gsh)
-        gslink.update_cloud(['Totals'], [config.compiled_file], special_columns=[3,5])
+        gslink.update_cloud(['Totals'], [config.compiled_file], special_columns=[3, 5])
 
     @log_process
     def categorize_transactions():
@@ -391,6 +398,7 @@ def ui():
     @log_process
     def launch_sheet():
         webbrowser.open(f"https://docs.google.com/spreadsheets/d/{config.GOOGLE_WORKSHEET_ID}")
+
     app = QtWidgets.QApplication(sys.argv)
 
     MainWindow = QtWidgets.QMainWindow()
@@ -401,7 +409,6 @@ def ui():
 
     holdingsGrab = MainWindow.findChild(QtWidgets.QPushButton, 'HoldingsGrab')
     holdingsGrab.clicked.connect(grab_holdings)
-
 
     processHoldingsBtn = MainWindow.findChild(QtWidgets.QPushButton, 'HoldingsProcess')
     processHoldingsBtn.clicked.connect(process_holdings)
@@ -414,7 +421,6 @@ def ui():
 
     transactionGrab = MainWindow.findChild(QtWidgets.QPushButton, 'TransactionsGrab')
     transactionGrab.clicked.connect(grab_transactions)
-
 
     processTransactionsBtn = MainWindow.findChild(QtWidgets.QPushButton, 'TransactionsProcess')
     processTransactionsBtn.clicked.connect(process_transactions)
@@ -454,7 +460,6 @@ def ui():
 
     MainWindow.show()
     sys.exit(app.exec())
-
 
 
 if __name__ == "__main__":
