@@ -1,6 +1,6 @@
 import webbrowser
 from pathlib import Path
-
+import numpy as np
 import pandas as pd
 import plotly.io as pio
 import plotly.graph_objects as go
@@ -60,9 +60,14 @@ if __name__ == '__main__':
     income_pivot.sort_index(ascending=False, inplace=True)
 
     # --- 4. Normalize Data for Color Scaling ---
-    expenses_pivot_normalized = expenses_pivot.div(expenses_pivot.max(axis=0), axis=1).fillna(0)
-    income_pivot_normalized = income_pivot.div(income_pivot.max(axis=0), axis=1).fillna(0)
+    # expenses_pivot_normalized = expenses_pivot.div(expenses_pivot.max(axis=0), axis=1).fillna(0)
+    # income_pivot_normalized = income_pivot.div(income_pivot.max(axis=0), axis=1).fillna(0)
 
+    expenses_pivot_log = np.log1p(expenses_pivot)
+    income_pivot_log = np.log1p(income_pivot)
+
+    expenses_pivot_normalized = expenses_pivot_log
+    income_pivot_normalized = income_pivot_log
     # --- NEW 5. Generate Transaction Detail Pages ---
 
     # Basic CSS for the detail pages for a clean look
