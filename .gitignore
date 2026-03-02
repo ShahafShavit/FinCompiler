@@ -1,3 +1,6 @@
 /data/
 /export/
-/.env
+.env
+/web/
+*.html
+*.json

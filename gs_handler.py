@@ -1,4 +1,6 @@
 import time
+from datetime import datetime
+
 import numpy as np
 import gspread
 import pandas
@@ -16,7 +18,7 @@ tabulate.PRESERVE_WHITESPACE = True
 pd.options.display.max_columns = None
 pd.options.display.width = None
 pd.options.styler.latex.multicol_align = 'c'
-
+current_year = str(int(datetime.now().year))
 
 class GoogleSheetsHandler:
     def __init__(self, credentials_file, sheet_id):
@@ -56,13 +58,12 @@ class GoogleSheetsHandler:
 
         print(f"Finished pushing {sheet.title}.")
 
-    def get_sheet(self, sheet_name, range: str):
-
+    def get_sheet(self, sheet_name, range: str, rows = 1000):
         try:
             sheet = self.spreadsheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
             print(f"Worksheet named {sheet_name} is missing")
-            sheet = self.spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=100)
+            sheet = self.spreadsheet.add_worksheet(title=sheet_name, rows=rows, cols=100)
         data = sheet.get(range)
         df = pd.DataFrame(data=data[1:], columns=data[0])
         return df
@@ -71,17 +72,18 @@ class GSLink:
     def __init__(self, gs_handler: GoogleSheetsHandler):
         self.handler = gs_handler
 
-    def update_local(self, sheets, compiled_files):
-        self.sync_check(sheets, compiled_files)
+    def update_local(self, sheets: list, compiled_files:list, rows = 1000, regular_data = True):
+        if regular_data: self.sync_check(sheets, compiled_files)
         input("Are you sure you want to PULL data from the cloud?")
         for sheet_name, compiled_file in zip(sheets, compiled_files):
-            df = self.handler.get_sheet(sheet_name, "A1:Z")
+            df = self.handler.get_sheet(sheet_name, "A1:Z", rows=rows)
             for column in df.columns:
                 try:
                     df[column] = df[column].apply(pd.to_numeric)
                 except ValueError:
                     pass
-            if 'מזהה עסקה' in df.columns:
+
+            if 'מזהה עסקה' in df.columns and regular_data:
                 for index, row in df.iterrows():
                     categorizer.CategorizeFile.category_store_link_backup(transaction_id=row['מזהה עסקה'],
                                                                           category=row['קטגוריה'])
@@ -94,8 +96,6 @@ class GSLink:
 
             print(f"Pulled data for {sheet_name}")
             df.to_csv(compiled_file, index=False)
-
-
 
     def update_cloud(self, sheets, compiled_files, special_columns=None):
         if special_columns is None:
@@ -139,8 +139,12 @@ class GSLink:
         cloud_dfs = []
         diff_dfs = []
         for file, sheet in zip(compiled_files, sheets):
-            local_dfs.append(pd.read_csv(file))
-            cloud_dfs.append(self.handler.get_sheet(sheet, "A1:Z"))
+            try:
+                local_dfs.append(pd.read_csv(file))
+                cloud_dfs.append(self.handler.get_sheet(sheet, "A1:Z", rows=5000))
+            except (FileNotFoundError, pandas.errors.EmptyDataError):
+                local_dfs.append(pd.DataFrame())
+                cloud_dfs.append(self.handler.get_sheet(sheet, "A1:Z", rows=5000))
         for local_df, cloud_df in zip(local_dfs, cloud_dfs):
             local_df = local_df.apply(safe_to_numeric)
             cloud_df = cloud_df.apply(safe_to_numeric)
@@ -172,31 +176,31 @@ class GSLink:
 
 
 # DEPRECATED
-def sheets_push():
-    df_totals, df_holdings = None, None
-    try:
-        df_totals = pd.read_csv(config.compiled_file)
-    except FileNotFoundError as e:
-        print(f"Missing file: {e}")
-    try:
-        df_holdings = pd.read_csv(config.holdings_file)
-    except FileNotFoundError as e:
-        print(f"Missing file: {e}")
-    dfs = {
-        "Totals2": df_totals,
-        "Holdings2": df_holdings
-    }
-    GoogleAPI = GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
-    new_df = GoogleAPI.get_sheet("Holdings2", "A1:M")
-    cols = new_df.columns.drop('תאריך')
-    new_df[cols] = new_df[cols].apply(pd.to_numeric)
-    new_df.to_csv(config.holdings_file, index=False)
-
-    # for sheet_name, df in dfs.items():
-    #     if df is not None:
-    #         GoogleAPI.write_sheet(df, sheet_name)
-    #         print(f"Written sheet {sheet_name} to Google Sheets")
-
+# def sheets_push():
+#     df_totals, df_holdings = None, None
+#     try:
+#         df_totals = pd.read_csv(config.compiled_file)
+#     except FileNotFoundError as e:
+#         print(f"Missing file: {e}")
+#     try:
+#         df_holdings = pd.read_csv(config.holdings_file)
+#     except FileNotFoundError as e:
+#         print(f"Missing file: {e}")
+#     dfs = {
+#         "Totals2": df_totals,
+#         "Holdings2": df_holdings
+#     }
+#     GoogleAPI = GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
+#     new_df = GoogleAPI.get_sheet("Holdings2", "A1:M")
+#     cols = new_df.columns.drop('תאריך')
+#     new_df[cols] = new_df[cols].apply(pd.to_numeric)
+#     new_df.to_csv(config.holdings_file, index=False)
+#
+#     # for sheet_name, df in dfs.items():
+#     #     if df is not None:
+#     #         GoogleAPI.write_sheet(df, sheet_name)
+#     #         print(f"Written sheet {sheet_name} to Google Sheets")
+#
 
 
 def push_monthly_look(gsh):

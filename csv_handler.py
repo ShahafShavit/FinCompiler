@@ -10,7 +10,7 @@ import config
 def generate_transaction_fingerprint(row):
     """Creates a robust fingerprint for de-duplication purposes based on the transaction's essence."""
     try:
-        normalized_date = pd.to_datetime(row['תאריך']).strftime('%Y-%m-%d')
+        normalized_date = pd.to_datetime(row['תאריך'], dayfirst=True, format='mixed').strftime('%Y-%m-%d')
         amount = row['בחובה'] if row['בחובה'] != 0 else row['בזכות']
         normalized_amount = f"{float(amount):.2f}"
         business_name = str(row['מקור עסקה']).lower().strip()
@@ -29,7 +29,7 @@ def generate_transaction_fingerprint(row):
         fingerprint_key = f"{normalized_date}:{normalized_amount}:{business_name}:{extra_data}"
         print(f"Generating fingerprint for '{fingerprint_key}'")
         return fingerprint_key
-        return hashlib.sha256(fingerprint_key.encode()).hexdigest()
+        # return hashlib.sha256(fingerprint_key.encode()).hexdigest()
 
     except (ValueError, TypeError):
         return None
@@ -195,6 +195,8 @@ if __name__ == "__main__":
             f.drop_by_column_and_value('מקור עסקה', 'פקדון אינטר700')
             f.drop_by_column_and_value('מקור עסקה', 'פקדון אינטרנט')
             f.drop_by_column_and_value('מקור עסקה', 'פקדון אינטרנט')
+            f.drop_by_column_and_value('מקור עסקה', 'שינוי בנ"ע')
+            f.drop_by_column_and_value('מקור עסקה', 'נ"ע בבורסה')
             f.to_csv()
         else:
             hf = HoldingsFile(f)

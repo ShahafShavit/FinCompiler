@@ -6,11 +6,12 @@ from main import log_process
 
 logger = Logger()
 
+
 @log_process
 def backfill():
     """
-    Generates fingerprints for all existing transactions in the compiled file
-    and creates the initial fingerprint_db.csv.
+    Generates fingerprints for all existing transactions, populates the 'category' column,
+    and creates/updates the fingerprint_db.csv.
     """
     try:
         logger.log_process_ongoing(message=f"Loading main compiled file from: {config.compiled_file}")
@@ -19,26 +20,36 @@ def backfill():
         logger.log_process_finished(message="Compiled file not found. Nothing to backfill.")
         return
 
-    if 'מזהה עסקה' not in main_df.columns:
-        logger.log_process_finished(message="Column 'מזהה עסקה' not in compiled file. Cannot proceed.")
-        return
+    # Generate fingerprints if they don't exist or are missing
+    if 'fingerprint' not in main_df.columns or main_df['fingerprint'].isnull().any():
+        logger.log_process_ongoing(message=f"Generating fingerprints for {len(main_df)} records...")
+        main_df['fingerprint'] = main_df.apply(generate_transaction_fingerprint, axis=1)
 
-    logger.log_process_ongoing(message=f"Generating fingerprints for {len(main_df)} existing records...")
-    main_df['fingerprint'] = main_df.apply(generate_transaction_fingerprint, axis=1)
+    # Ensure category column exists
+    if 'קטגוריה' not in main_df.columns:
+        main_df['קטגוריה'] = ''
+    main_df['קטגוריה'].fillna('', inplace=True)
 
-    # Filter out any rows where a fingerprint could not be made
-    #  main_df.dropna(subset=['fingerprint'], inplace=True)
+    # Drop rows where a fingerprint could not be generated
+    main_df.dropna(subset=['fingerprint'], inplace=True)
 
-    # Create the database from the two essential columns
-    fingerprint_db_df = main_df[['fingerprint', 'מזהה עסקה']]
+    # Create the database from the three essential columns
+    fingerprint_db_df = main_df[['fingerprint', 'מזהה עסקה', 'קטגוריה']].copy()
+    fingerprint_db_df.rename(columns={'קטגוריה': 'category'}, inplace=True)
 
-    # Remove any potential duplicates to ensure a clean database
+    # De-duplicate, prioritizing keeping entries with categories
+    fingerprint_db_df['category'] = fingerprint_db_df['category'].astype(object).fillna('')
+    fingerprint_db_df.sort_values(by=['fingerprint', 'category'], ascending=[True, False],
+                                  inplace=True)  # Non-empty categories first
     fingerprint_db_df.drop_duplicates(subset=['fingerprint'], keep='first', inplace=True)
 
     logger.log_process_ongoing(message=f"Saving {len(fingerprint_db_df)} fingerprints to: {config.fingerprint_db_file}")
     fingerprint_db_df.to_csv(config.fingerprint_db_file, index=False)
+
+    # Save the main file in case new fingerprints were generated
     main_df.to_csv(config.compiled_file, index=False)
-    logger.log_process_finished(message="Fingerprint database created successfully.")
+    logger.log_process_finished(message="Fingerprint database backfilled successfully.")
+
 
 if __name__ == "__main__":
     backfill()

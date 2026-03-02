@@ -228,6 +228,9 @@ class Process:
 
 
 def ui():
+    current_year = str(int(datetime.datetime.now().year))
+    holdings_sheetname = 'Holdings'+current_year
+    totals_sheetname = 'Totals'+current_year
     def delete_old_files():
         check_sync()
         input_files = glob.glob(os.path.join(config.input_dir, '*.*'))
@@ -278,7 +281,7 @@ def ui():
     def push_holdings():
         gsh = gs_handler.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = gs_handler.GSLink(gsh)
-        gslink.update_cloud(['Holdings'], [config.holdings_file], special_columns=[1, 2, 3, 5])
+        gslink.update_cloud([holdings_sheetname], [config.holdings_file], special_columns=[1, 2, 3, 5])
 
     @log_process
     def grab_transactions():
@@ -336,6 +339,7 @@ def ui():
                 f.drop_by_column_and_value('מקור עסקה', 'פקדון*')
                 f.drop_by_column_and_value('מקור עסקה', 'קנית ני"ע')
                 f.drop_by_column_and_value('מקור עסקה', 'מכירת ני"ע')
+                f.drop_by_column_and_value('מקור עסקה', 'שינוי בנ"ע')
                 f.drop_by_column_and_value('מקור עסקה', 'קנית ני""ע')
                 f.drop_by_column_and_value('מקור עסקה', 'החלפת נייר ערך')
                 f.to_csv()
@@ -352,7 +356,7 @@ def ui():
     def push_transactions():
         gsh = gs_handler.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = gs_handler.GSLink(gsh)
-        gslink.update_cloud(['Totals'], [config.compiled_file], special_columns=[3, 5])
+        gslink.update_cloud([totals_sheetname], [config.compiled_file], special_columns=[3, 5])
 
     @log_process
     def categorize_transactions():
@@ -364,19 +368,19 @@ def ui():
     def check_sync():
         gsh = gs_handler.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = gs_handler.GSLink(gsh)
-        gslink.sync_check(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])
+        gslink.sync_check([holdings_sheetname, totals_sheetname], [config.holdings_file, config.compiled_file])
 
     @log_process
     def pull_data():
         gsh = gs_handler.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = gs_handler.GSLink(gsh)
-        gslink.update_local(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])
+        gslink.update_local([holdings_sheetname, totals_sheetname], [config.holdings_file, config.compiled_file])
 
     @log_process
     def push_data():
         gsh = gs_handler.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = gs_handler.GSLink(gsh)
-        gslink.update_cloud(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])
+        gslink.update_cloud([holdings_sheetname, totals_sheetname], [config.holdings_file, config.compiled_file])
 
     @log_process
     def fix_null_category():

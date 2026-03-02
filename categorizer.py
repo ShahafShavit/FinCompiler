@@ -5,6 +5,7 @@ from numpy import nan
 import pandas as pd
 import config
 from config import similar_categories_file
+from compile_handler import update_category_in_fingerprint_db
 
 
 class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
@@ -104,6 +105,27 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             return category_input
 
     def auto_categorize(self):
+        try:
+            fp_db = pd.read_csv(config.fingerprint_db_file)
+            if 'category' in fp_db.columns and 'fingerprint' in self.file_df.columns:
+                fp_db.dropna(subset=['category', 'fingerprint'], inplace=True)
+                fp_db = fp_db[fp_db['category'] != '']
+                category_map = pd.Series(fp_db.category.values, index=fp_db.fingerprint).to_dict()
+
+                uncategorized_mask = self.file_df['קטגוריה'].fillna('').eq('')
+                fingerprints_to_map = self.file_df.loc[uncategorized_mask, 'fingerprint']
+
+                new_categories = fingerprints_to_map.map(category_map)
+                self.file_df.loc[uncategorized_mask, 'קטגוריה'] = self.file_df.loc[
+                    uncategorized_mask, 'קטגוריה'].fillna(new_categories)
+
+                print("Restored categories from fingerprint database.")
+                self.save_progress()
+        except FileNotFoundError:
+            print("Fingerprint database not found, skipping category restoration.")
+        except Exception as e:
+            print(f"An error occurred during category restoration: {e}")
+
         k_t = self.load_known_transactions()
         if k_t is None:
             k_t = pd.DataFrame(columns=['transaction_id', 'category'])
@@ -124,8 +146,12 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 if category is None:
                     self.awaiting_df.loc[len(self.awaiting_df)] = row
                 if category is not None:
+                    if 'fingerprint' in row:
+                        update_category_in_fingerprint_db(row['fingerprint'], category)
                     self.category_store_link_backup(transaction_id, category)
             else:
+                if 'fingerprint' in row:
+                    update_category_in_fingerprint_db(row['fingerprint'], row['קטגוריה'])
                 self.category_store_link_backup(transaction_id, row['קטגוריה'])
 
     def manual_categorizer(self, through='input'):
@@ -136,9 +162,15 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             if row['קטגוריה'] == "" or row['קטגוריה'] == "awaiting" or pd.isna(row['קטגוריה']):
                 category = self.categorize_storename(row, method='input')
 
-                self.file_df.loc[self.file_df['מזהה עסקה'] == row['מזהה עסקה'], 'קטגוריה'] = category
+                row_mask = self.file_df['מזהה עסקה'] == row['מזהה עסקה']
+                self.file_df.loc[row_mask, 'קטגוריה'] = category
                 self.save_progress()
-                self.awaiting_df.drop(index=index, axis=1)
+                if 'fingerprint' in self.file_df.columns:
+                    fingerprint = self.file_df.loc[row_mask, 'fingerprint'].iloc[0]
+                    if pd.notna(fingerprint):
+                        update_category_in_fingerprint_db(fingerprint, category)
+
+            self.awaiting_df.drop(index=index, axis=1)
         # DISCORD BOT TRY
         # if through == 'discord':
         #     print("Launching discord bot...")

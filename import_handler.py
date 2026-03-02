@@ -64,6 +64,7 @@ class Bank:
     def __login__(self):
         url = 'https://hb2.bankleumi.co.il/H/Login.html'
         self.__driver.get(url)
+        time.sleep(2)
         username = self.__driver.find_element(By.NAME, 'user')
         password = self.__driver.find_element(By.NAME, 'password')
         time.sleep(1)
@@ -130,6 +131,7 @@ class Bank:
             if from_date is None:
                 current_year = str(datetime.now().year)[-2:]
                 date_str = "01.01." + current_year
+                # date_str = "01.01.25"
             else:
                 date_str = from_date
             time.sleep(0.5)
@@ -211,7 +213,6 @@ class Bank:
                 d = DirTracker(download_dir)
                 current_url = self.__driver.current_url
                 domain = urllib.parse.urlparse(current_url).netloc
-                print(domain)
                 if "isracard.co.il" in domain:
                     while True:
                         select_button = WebDriverWait(self.__driver, 10).until(
@@ -246,7 +247,7 @@ class Bank:
                         current_year = current_date.year
 
                         this_month_string = f"{months_hebrew[next_month_index]} {current_year}"
-                        print(this_month_string)
+                        print(f"{next_month_index=} {current_year=} {this_month_string=}")
                         date_combo = WebDriverWait(self.__driver, 10).until(
                             EC.element_to_be_clickable(
                                 (By.XPATH,
@@ -256,7 +257,7 @@ class Bank:
 
                         previous_month = WebDriverWait(self.__driver, 10).until(
                             EC.element_to_be_clickable((By.XPATH,
-                                                        "//li[@class='month selected-month ng-star-inserted']/preceding-sibling::li[1]"))
+                                                        "//li[@class='month selected-month ng-star-inserted']/following-sibling::li[1]"))
                         )
                         previous_month.click()
                         excel_link = WebDriverWait(self.__driver, 10).until(
