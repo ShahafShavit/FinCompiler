@@ -248,7 +248,7 @@ def push_monthly_look(gsh):
 
     # Read the CSV file
     df = pd.read_csv(config.compiled_file)
-    df['תאריך'] = pd.to_datetime(df['תאריך'], format='%Y-%m-%d')
+    df['תאריך'] = pd.to_datetime(df['תאריך'], dayfirst=True, errors='coerce', format='mixed')
     df['Month-Year'] = df['תאריך'].dt.to_period('M')
 
     # Creating a new column to distinguish between expenses and income

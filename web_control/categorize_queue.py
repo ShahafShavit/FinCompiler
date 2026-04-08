@@ -16,6 +16,7 @@ from typing import Any, Optional
 import config
 from categorizer import CategorizeFile, category_cell_needs_manual
 from interactive_categorization.terminal import TerminalCategorizationHandler
+from .json_safe import json_bytes_strict
 
 log = logging.getLogger(__name__)
 
@@ -137,10 +138,10 @@ def revise(data: dict[str, Any]) -> Optional[str]:
 def handle_get(path: str) -> tuple[int, bytes, str]:
     path = path.rstrip("/") or "/"
     if path == "/api/summary":
-        body = json.dumps(summary(), ensure_ascii=False).encode("utf-8")
+        body = json_bytes_strict(summary())
         return (200, body, "application/json; charset=utf-8")
     if path == "/api/next":
-        body = json.dumps(next_payload(), ensure_ascii=False).encode("utf-8")
+        body = json_bytes_strict(next_payload())
         return (200, body, "application/json; charset=utf-8")
     return (404, b"Not Found", "text/plain")
 
@@ -152,7 +153,7 @@ def handle_post(path: str, raw: bytes) -> tuple[int, bytes, str]:
     except json.JSONDecodeError:
         return (
             400,
-            json.dumps({"ok": False, "error": "invalid JSON"}).encode("utf-8"),
+            json_bytes_strict({"ok": False, "error": "invalid JSON"}),
             "application/json; charset=utf-8",
         )
     if path == "/api/respond":
@@ -160,17 +161,17 @@ def handle_post(path: str, raw: bytes) -> tuple[int, bytes, str]:
         if err:
             return (
                 400,
-                json.dumps({"ok": False, "error": err}).encode("utf-8"),
+                json_bytes_strict({"ok": False, "error": err}),
                 "application/json; charset=utf-8",
             )
-        return (200, json.dumps({"ok": True}).encode("utf-8"), "application/json; charset=utf-8")
+        return (200, json_bytes_strict({"ok": True}), "application/json; charset=utf-8")
     if path == "/api/revise":
         err = revise(data)
         if err:
             return (
                 400,
-                json.dumps({"ok": False, "error": err}).encode("utf-8"),
+                json_bytes_strict({"ok": False, "error": err}),
                 "application/json; charset=utf-8",
             )
-        return (200, json.dumps({"ok": True}).encode("utf-8"), "application/json; charset=utf-8")
+        return (200, json_bytes_strict({"ok": True}), "application/json; charset=utf-8")
     return (404, b"Not Found", "text/plain")

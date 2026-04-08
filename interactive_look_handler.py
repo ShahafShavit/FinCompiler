@@ -129,7 +129,7 @@ class InteractiveReportGenerator:
         """Loads the CSV and performs initial data transformations."""
         print("1. Loading and preparing data...")
         self.df = pd.read_csv(self.data_file)
-        self.df['תאריך'] = pd.to_datetime(self.df['תאריך'], dayfirst=False, format="mixed")
+        self.df['תאריך'] = pd.to_datetime(self.df['תאריך'], dayfirst=True, format="mixed")
         self.df['YearMonth'] = self.df['תאריך'].dt.strftime('%Y-%m')
 
     def _prepare_directories(self):

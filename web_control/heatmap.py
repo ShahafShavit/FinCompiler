@@ -45,7 +45,7 @@ def heatmap_page_script_path() -> Path:
 
 
 # Heatmap-only: normalize mixed sheet/CSV date strings for bucketing (ISO YYYY-MM-DD first,
-# then D/M/Y, then pandas fallbacks). Does not affect compile or other pipelines.
+# then D/M/Y, then pandas with dayfirst=True — same contract as fingerprint / compile). Does not affect compile or other pipelines.
 _HEATMAP_ISO_DATE = re.compile(
     r"^(\d{4})-(\d{2})-(\d{2})(?:[ T](?:\d{2}:\d{2}(?::\d{2})?)?(?:\.\d+)?)?"
 )
@@ -95,9 +95,6 @@ def _heatmap_parse_one_date(val: Any) -> pd.Timestamp:
         except ValueError:
             pass
 
-    ts = pd.to_datetime(s, dayfirst=False, format="mixed", errors="coerce")
-    if pd.notna(ts):
-        return ts.normalize()
     ts = pd.to_datetime(s, dayfirst=True, format="mixed", errors="coerce")
     return ts.normalize() if pd.notna(ts) else pd.NaT
 
@@ -106,7 +103,7 @@ def _heatmap_parse_dates(series: pd.Series) -> pd.Series:
     out = series.map(_heatmap_parse_one_date)
     if not isinstance(out, pd.Series):
         out = pd.Series(out, index=series.index)
-    return pd.to_datetime(out, errors="coerce")
+    return pd.to_datetime(out, errors="coerce", dayfirst=True)
 
 
 STAT_DEFINITIONS: dict[str, dict[str, Any]] = {

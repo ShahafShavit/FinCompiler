@@ -29,8 +29,18 @@ def update_category_in_fingerprint_db(fingerprint, category):
 
         db_df['category'] = db_df['category'].astype(object).fillna('')
 
-        # Find the row with the given fingerprint and update its category
-        db_df.loc[db_df['fingerprint'] == fingerprint, 'category'] = category
+        if 'fingerprint' not in db_df.columns:
+            return
+
+        cat_str = '' if category is None else str(category)
+        mask = db_df['fingerprint'] == fingerprint
+        if mask.any():
+            current = db_df.loc[mask, 'category'].iloc[0]
+            current_str = '' if pd.isna(current) else str(current)
+            if current_str.strip() == cat_str.strip():
+                return
+
+        db_df.loc[mask, 'category'] = cat_str
         db_df.to_csv(db_path, index=False)
         log.info("Fingerprint DB: set category for fingerprint (len=%s)", len(str(fingerprint)))
     except Exception as e:

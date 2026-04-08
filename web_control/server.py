@@ -5,7 +5,6 @@ from __future__ import annotations
 import errno
 import json
 import logging
-import math
 import queue
 import re
 import socket
@@ -21,6 +20,7 @@ from interactive_categorization.http_server import categorization_html
 from logger import attach_sink_log_handlers, detach_sink_log_handlers
 
 from web_control import categorize_queue, control_nav, heatmap, jobs
+from web_control.json_safe import json_bytes_strict as _json_bytes_strict
 
 # Forward structured pipeline / Selenium logs to the dashboard SSE (exclude ``pipeline`` — it already uses sink via _notify).
 _JOB_SSE_LOGGERS = [
@@ -436,42 +436,6 @@ def _json_bytes(obj: Any) -> bytes:
     return json.dumps(obj, ensure_ascii=False).encode("utf-8")
 
 
-def _sanitize_for_json(obj: Any) -> Any:
-    """Make ``obj`` JSON-serializable for browsers: Python emits invalid ``NaN`` unless sanitized."""
-    try:
-        import numpy as np
-
-        _np = np
-    except ImportError:
-        _np = None
-
-    if obj is None:
-        return None
-    if isinstance(obj, float):
-        if math.isnan(obj) or math.isinf(obj):
-            return None
-        return obj
-    if _np is not None:
-        if isinstance(obj, _np.generic):
-            return _sanitize_for_json(obj.item())
-        if isinstance(obj, _np.ndarray):
-            return _sanitize_for_json(obj.tolist())
-    if isinstance(obj, dict):
-        return {str(k): _sanitize_for_json(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize_for_json(v) for v in obj]
-    if isinstance(obj, tuple):
-        return [_sanitize_for_json(v) for v in obj]
-    if isinstance(obj, (str, bool, int)):
-        return obj
-    return obj
-
-
-def _json_bytes_strict(obj: Any) -> bytes:
-    """RFC-compliant JSON (no ``NaN`` / ``Infinity`` tokens) for browser ``JSON.parse``."""
-    return json.dumps(_sanitize_for_json(obj), ensure_ascii=False, allow_nan=False).encode("utf-8")
-
-
 def _normalize_http_path(parsed_path: str) -> str:
     """
     Stable URL path for routing: trim, strip BOM, ensure leading slash, collapse ``//``.
@@ -505,6 +469,14 @@ def make_handler_class(state: ControlState):
             path = _normalize_http_path(parsed.path)
 
             if path == "/categorize":
+                self.send_response(302)
+                self.send_header("Location", "/categorize/")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            if path == "/categorizer":
                 self.send_response(302)
                 self.send_header("Location", "/categorize/")
                 self.send_header("Cache-Control", "no-store")

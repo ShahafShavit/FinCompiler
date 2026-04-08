@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
 from interactive_categorization.prompts import FluidStorePrompt, NewStorePrompt, ResolveStaticPrompt
+from web_control.json_safe import json_bytes_strict
 
 log = logging.getLogger(__name__)
 
@@ -376,7 +377,7 @@ class HttpCategorizationHandler:
             payload = self._next_payload()
             return (
                 200,
-                json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                json_bytes_strict(payload),
                 "application/json; charset=utf-8",
             )
         return (404, b"Not Found", "text/plain")
@@ -388,34 +389,34 @@ class HttpCategorizationHandler:
             except json.JSONDecodeError:
                 return (
                     400,
-                    json.dumps({"ok": False, "error": "invalid JSON"}).encode("utf-8"),
+                    json_bytes_strict({"ok": False, "error": "invalid JSON"}),
                     "application/json; charset=utf-8",
                 )
             err = self._complete_prompt(data)
             if err:
                 return (
                     400,
-                    json.dumps({"ok": False, "error": err}).encode("utf-8"),
+                    json_bytes_strict({"ok": False, "error": err}),
                     "application/json; charset=utf-8",
                 )
-            return (200, json.dumps({"ok": True}).encode("utf-8"), "application/json; charset=utf-8")
+            return (200, json_bytes_strict({"ok": True}), "application/json; charset=utf-8")
         if path == "/api/revise":
             try:
                 data = json.loads(body.decode("utf-8"))
             except json.JSONDecodeError:
                 return (
                     400,
-                    json.dumps({"ok": False, "error": "invalid JSON"}).encode("utf-8"),
+                    json_bytes_strict({"ok": False, "error": "invalid JSON"}),
                     "application/json; charset=utf-8",
                 )
             err = self._complete_revise(data)
             if err:
                 return (
                     400,
-                    json.dumps({"ok": False, "error": err}).encode("utf-8"),
+                    json_bytes_strict({"ok": False, "error": err}),
                     "application/json; charset=utf-8",
                 )
-            return (200, json.dumps({"ok": True}).encode("utf-8"), "application/json; charset=utf-8")
+            return (200, json_bytes_strict({"ok": True}), "application/json; charset=utf-8")
         return (404, b"Not Found", "text/plain")
 
     def attach_categorizer(self, categorize_file: Any) -> None:
