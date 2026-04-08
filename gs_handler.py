@@ -1,5 +1,6 @@
 import time
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import gspread
@@ -68,9 +69,48 @@ class GoogleSheetsHandler:
         df = pd.DataFrame(data=data[1:], columns=data[0])
         return df
 
+    def fetch_worksheet_as_dataframe(self, sheet_name: str, cell_range: str = "A1:ZZ") -> pd.DataFrame:
+        """Load an existing worksheet into a DataFrame. Does not create missing sheets."""
+        try:
+            sheet = self.spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound as e:
+            raise FileNotFoundError(f"Worksheet {sheet_name!r} not found in spreadsheet") from e
+        data = sheet.get(cell_range)
+        if not data or len(data) < 2:
+            return pd.DataFrame()
+        return pd.DataFrame(data=data[1:], columns=data[0])
+
+
 class GSLink:
     def __init__(self, gs_handler: GoogleSheetsHandler):
         self.handler = gs_handler
+
+    def pull_sheet_readonly_to_csv(
+        self,
+        sheet_name: str,
+        dest_path: str,
+        *,
+        cell_range: str = "A1:ZZ",
+    ) -> tuple[bool, str]:
+        """
+        Read-only export from Google Sheets to CSV (no prompts, no categorizer updates).
+        """
+        try:
+            df = self.handler.fetch_worksheet_as_dataframe(sheet_name, cell_range)
+        except FileNotFoundError as e:
+            return False, str(e)
+        except Exception as e:  # noqa: BLE001
+            return False, f"{type(e).__name__}: {e}"
+        if df.empty:
+            return False, f"Worksheet {sheet_name!r} is empty or has no data rows"
+        for column in df.columns:
+            try:
+                df[column] = df[column].apply(pd.to_numeric)
+            except ValueError:
+                pass
+        Path(dest_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(dest_path, index=False)
+        return True, f"Pulled {len(df)} rows from sheet {sheet_name!r} → {dest_path}"
 
     def update_local(self, sheets: list, compiled_files:list, rows = 1000, regular_data = True):
         if regular_data: self.sync_check(sheets, compiled_files)

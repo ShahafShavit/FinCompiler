@@ -68,6 +68,7 @@ def _clear_files_in_dir(folder: str) -> None:
 def ui():
     current_year = str(int(datetime.datetime.now().year))
     holdings_sheetname = 'Holdings'+current_year
+    # Year-scoped tabs for compiled/holdings sync — not the all-time ``Totals`` tab used by the web heatmap.
     totals_sheetname = 'Totals'+current_year
     def delete_old_files():
         check_sync()

@@ -20,10 +20,7 @@ log = logging.getLogger(__name__)
 
 def main() -> int:
     configure_pipeline_logging(logging.INFO)
-    host = getattr(config, "control_http_host", "127.0.0.1")
-    port = int(getattr(config, "control_http_port", 8780))
     log.info("Workspace root: %s", config.workspace_root() or "(default cwd layout)")
-    log.info("Listening on http://%s:%s/", host, port)
     serve_forever()
     return 0
 

@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
+import math
 import queue
+import re
+import socket
 import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import config
 from interactive_categorization.http_server import categorization_html
 from logger import attach_sink_log_handlers, detach_sink_log_handlers
 
-from web_control import categorize_queue, jobs
+from web_control import categorize_queue, control_nav, heatmap, jobs
 
 # Forward structured pipeline / Selenium logs to the dashboard SSE (exclude ``pipeline`` — it already uses sink via _notify).
 _JOB_SSE_LOGGERS = [
@@ -31,13 +35,17 @@ _JOB_SSE_LOGGERS = [
 
 log = logging.getLogger(__name__)
 
-_DASHBOARD_HTML = """<!DOCTYPE html>
+_DASHBOARD_HTML = (
+    """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Finance pipeline control</title>
   <style>
+"""
+    + control_nav.control_topnav_css()
+    + """
     :root {
       font-family: system-ui, Segoe UI, Roboto, sans-serif;
       background: #121316;
@@ -123,6 +131,9 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
+"""
+    + control_nav.control_topnav_html()
+    + """
   <h1>Finance pipeline control</h1>
   <p class="sub">Local dashboard for fetches, routing, compile, and categorization.
     <a href="/categorize/">Categorization</a>
@@ -342,6 +353,7 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
 </body>
 </html>
 """
+)
 
 class EventHub:
     def __init__(self) -> None:
@@ -424,6 +436,55 @@ def _json_bytes(obj: Any) -> bytes:
     return json.dumps(obj, ensure_ascii=False).encode("utf-8")
 
 
+def _sanitize_for_json(obj: Any) -> Any:
+    """Make ``obj`` JSON-serializable for browsers: Python emits invalid ``NaN`` unless sanitized."""
+    try:
+        import numpy as np
+
+        _np = np
+    except ImportError:
+        _np = None
+
+    if obj is None:
+        return None
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if _np is not None:
+        if isinstance(obj, _np.generic):
+            return _sanitize_for_json(obj.item())
+        if isinstance(obj, _np.ndarray):
+            return _sanitize_for_json(obj.tolist())
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, (str, bool, int)):
+        return obj
+    return obj
+
+
+def _json_bytes_strict(obj: Any) -> bytes:
+    """RFC-compliant JSON (no ``NaN`` / ``Infinity`` tokens) for browser ``JSON.parse``."""
+    return json.dumps(_sanitize_for_json(obj), ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def _normalize_http_path(parsed_path: str) -> str:
+    """
+    Stable URL path for routing: trim, strip BOM, ensure leading slash, collapse ``//``.
+    Fixes spurious 404s when ``self.path`` differs slightly from ``/heatmap/`` (CR/LF, ``//``, etc.).
+    """
+    p = unquote(parsed_path or "/", errors="replace")
+    p = p.strip().lstrip("\ufeff")
+    if not p.startswith("/"):
+        p = "/" + p
+    p = re.sub(r"/{2,}", "/", p)
+    return p if p else "/"
+
+
 def make_handler_class(state: ControlState):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -441,7 +502,7 @@ def make_handler_class(state: ControlState):
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            path = parsed.path
+            path = _normalize_http_path(parsed.path)
 
             if path == "/categorize":
                 self.send_response(302)
@@ -449,6 +510,55 @@ def make_handler_class(state: ControlState):
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", "0")
                 self.end_headers()
+                return
+
+            # Heatmap before ``/categorize/*`` so paths never interact.
+            if path == "/heatmap":
+                self.send_response(302)
+                self.send_header("Location", "/heatmap/")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            if path in ("/heatmap/", "/heatmap/index.html"):
+                self._send(200, heatmap.heatmap_shell_html().encode("utf-8"), "text/html; charset=utf-8")
+                return
+
+            if path == "/heatmap/heatmap_page_script.js":
+                js_path = heatmap.heatmap_page_script_path()
+                if not js_path.is_file():
+                    log.error("heatmap script missing at %s", js_path)
+                    self._send(
+                        404,
+                        b"// heatmap_page_script.js not found on server\n",
+                        "text/plain; charset=utf-8",
+                    )
+                    return
+                self._send(200, js_path.read_bytes(), "application/javascript; charset=utf-8")
+                return
+
+            if path == "/heatmap/api/data":
+                try:
+                    snap = heatmap.api_snapshot()
+                    body = _json_bytes_strict(snap)
+                except Exception:  # noqa: BLE001
+                    log.exception("GET /heatmap/api/data failed")
+                    err = {
+                        "ok": False,
+                        "error": "server_error",
+                        "message": "Heatmap snapshot failed (see server log).",
+                        "sourceStatus": {},
+                        "views": {},
+                        "statsHtml": {},
+                    }
+                    body = _json_bytes_strict(err)
+                self._send(200, body, "application/json; charset=utf-8")
+                return
+
+            if path == "/heatmap/detail":
+                code, body, ct = heatmap.handle_detail_query(parsed.query)
+                self._send(code, body, ct)
                 return
 
             if path.startswith("/categorize/"):
@@ -523,11 +633,36 @@ def make_handler_class(state: ControlState):
                     state.hub.unsubscribe(q)
                 return
 
+            if "/heatmap" in path or "/heatmap" in self.path:
+                log.warning("control HTTP 404 GET heatmap-like raw=%r path=%r", self.path, path)
             self._send(404, b"Not Found", "text/plain")
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            path = parsed.path
+            path = _normalize_http_path(parsed.path)
+
+            if path == "/heatmap/api/refresh":
+                # Must drain the request body (fetch sends ``{}``) or keep-alive breaks: the next
+                # request line on the same socket becomes ``{}GET /...`` → HTTP 501.
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                if clen > 0:
+                    self.rfile.read(clen)
+
+                from web_control import totals_sheet_sync
+
+                try:
+                    ok, msg = totals_sheet_sync.refresh_totals_from_cloud()
+                except Exception:  # noqa: BLE001
+                    log.exception("POST /heatmap/api/refresh failed")
+                    self._send(
+                        500,
+                        _json_bytes_strict({"ok": False, "message": "Refresh failed (see server log)."}),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+                code = 200 if ok else 502
+                self._send(code, _json_bytes_strict({"ok": ok, "message": msg}), "application/json; charset=utf-8")
+                return
 
             if path.startswith("/categorize/"):
                 rest = path[len("/categorize") :] or "/"
@@ -594,13 +729,65 @@ def make_handler_class(state: ControlState):
     return Handler
 
 
+def _address_already_in_use(err: OSError) -> bool:
+    if getattr(err, "winerror", None) == 10048:
+        return True
+    return err.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", -1))
+
+
+def _fail_port_in_use(host: str, port: int, cause: OSError) -> None:
+    log.error(
+        "Control HTTP port %s:%s is already in use — another process holds it "
+        "(often a second `python -m web_control`). Stop that process, then retry.\n"
+        "  Windows:  netstat -ano | findstr \":%s\"\n"
+        "            Stop-Process -Id <PID> -Force\n"
+        "  Unix:     lsof -i :%s   or   ss -lntp | grep %s",
+        host,
+        port,
+        port,
+        port,
+        port,
+    )
+    raise SystemExit(1) from cause
+
+
+def _assert_control_port_available(host: str, port: int) -> None:
+    """Fail fast with a clear message if the port is taken (avoids two servers / confusing 404s)."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, port))
+    except OSError as e:
+        if _address_already_in_use(e):
+            _fail_port_in_use(host, port, e)
+        raise
+    finally:
+        probe.close()
+
+
+class ControlHTTPServer(ThreadingHTTPServer):
+    """Single-instance friendly: do not reuse the address (no stacked listeners)."""
+
+    allow_reuse_address = False
+
+
 def serve_forever() -> None:
     host = getattr(config, "control_http_host", "127.0.0.1")
     port = int(getattr(config, "control_http_port", 8780))
+    _assert_control_port_available(host, port)
     state = ControlState()
     handler = make_handler_class(state)
-    server = ThreadingHTTPServer((host, port), handler)
-    log.info("Dashboard and categorization: http://%s:%s/ (categorize at …/categorize/)", host, port)
+    try:
+        server = ControlHTTPServer((host, port), handler)
+    except OSError as e:
+        if _address_already_in_use(e):
+            _fail_port_in_use(host, port, e)
+        raise
+    log.info("Listening on http://%s:%s/ (single instance; stop other servers on this port first)", host, port)
+    log.info(
+        "Dashboard: http://%s:%s/ — heatmap …/heatmap/ — categorize …/categorize/",
+        host,
+        port,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -27,8 +27,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   <base href="{BASE_HREF}"/>
   <title>קטגוריזציה</title>
   <style>
+{CONTROL_NAV_CSS}
     :root { font-family: system-ui, Segoe UI, Arial, sans-serif; background: #1a1b1e; color: #e8e8ea; }
-    body { max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }
+    body { max-width: 42rem; margin: 1rem auto 2rem; padding: 0 1rem; }
     h1 { font-size: 1.25rem; font-weight: 600; }
     h2 { font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem 0; opacity: 0.95; }
     .card { background: #25262b; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; }
@@ -67,6 +68,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   </style>
 </head>
 <body>
+{CONTROL_NAV}
   <h1>קטגוריזציה ידנית</h1>
   <div id="app" class="card"><p id="wait">טוען…</p></div>
   <div id="hist"></div>
@@ -326,10 +328,16 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def categorization_html(base_href: str) -> str:
+    from web_control.control_nav import control_topnav_css, control_topnav_html
+
     b = (base_href or "/").strip()
     if not b.endswith("/"):
         b = b + "/"
-    return _HTML_TEMPLATE.replace("{BASE_HREF}", b)
+    return (
+        _HTML_TEMPLATE.replace("{BASE_HREF}", b)
+        .replace("{CONTROL_NAV_CSS}", control_topnav_css())
+        .replace("{CONTROL_NAV}", control_topnav_html())
+    )
 
 
 class HttpCategorizationHandler:
