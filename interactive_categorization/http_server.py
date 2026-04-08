@@ -283,5 +283,9 @@ class HttpCategorizationHandler:
                 self._server.shutdown()
             except Exception as e:  # noqa: BLE001
                 log.debug("HTTP server shutdown: %s", e)
+            try:
+                self._server.server_close()
+            except Exception as e:  # noqa: BLE001
+                log.debug("HTTP server socket close: %s", e)
             self._server = None
         self._thread = None
