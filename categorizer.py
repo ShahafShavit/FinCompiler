@@ -1,7 +1,7 @@
 import asyncio
 import difflib
 import logging
-import os.path
+import os
 import re
 import uuid
 
@@ -56,7 +56,19 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         self.interaction = interaction_handler or TerminalCategorizationHandler()
 
     def load_stores(self):
-        self.stores_df = pd.read_csv(config.stores_to_categories_file)
+        path = config.stores_to_categories_file
+        if not os.path.isfile(path):
+            log.warning(
+                "Store list not found at %s; creating empty stores_to_categories.csv",
+                path,
+            )
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            self.stores_df = pd.DataFrame(
+                columns=["store_name", "category", "is_static"],
+            )
+            self.save_stores()
+            return
+        self.stores_df = pd.read_csv(path)
 
     def save_stores(self):
         self.stores_df.to_csv(config.stores_to_categories_file, index=False)

@@ -34,6 +34,8 @@ Data flow (short version):
   - holdings pipeline only touches .../workspace/holdings/{inbox,raw,clean}
   - transactions pipeline only touches .../workspace/transactions/{inbox,raw,clean}
   - Final CSVs are always: export/compiled/holdings.csv and export/compiled/compiled.csv
+  - Optional: set FINANCE_WORKSPACE_ROOT to a directory to use a separate data/export/web
+    tree (safe for tests or experiments; see config.py).
 
 Pick a COMMAND below. Every command has its own options - use:
   python run_pipeline.py COMMAND --help
@@ -48,16 +50,17 @@ commands:
   both-process   No browser: route whatever is already in data/input, then BOTH pipelines.
 
 typical workflows:
-  # You already downloaded everything into data/input/
+  # Full run: all portal downloads, route, both pipelines (needs .env credentials)
+  python run_pipeline.py all
+
+  # Same pipelines without browsers (files already in data/input/)
+  python run_pipeline.py all --no-fetch
   python run_pipeline.py both-process
 
   # Or explicitly: sort downloads, then run each side
   python run_pipeline.py route
   python run_pipeline.py holdings --no-route
   python run_pipeline.py transactions --no-route
-
-  # One shot: fetch from bank, then process everything (needs .env credentials)
-  python run_pipeline.py all --fetch-holdings --fetch-bank-credit --fetch-bank-osh
 
 classification rule for route:
   - Filename contains the bank balances marker (see inbox_router.HOLDINGS_MARKERS) -> holdings inbox
@@ -118,35 +121,40 @@ notes:
   - Bank credit + bank osh can run in one Leumi session (enable both flags).
   - --from-date / --to-date only affect --fetch-bank-osh (same strings as in the bank UI).
   - drop-profile: full = GUI-style filters; batch = smaller legacy drop set.
+  - --categorize: interactive prompts after compile; set FINANCE_CATEGORIZE_UI=http for browser.
 
 examples:
   python run_pipeline.py transactions
   python run_pipeline.py transactions --fetch-bank-credit --fetch-bank-osh
   python run_pipeline.py transactions --fetch-max-isracard
   python run_pipeline.py transactions --no-route --auto-categorize
+  python run_pipeline.py transactions --categorize
 """
 
 
 ALL_DESCRIPTION = """\
-Optional portal downloads, then one shared route, then BOTH pipelines.
+Full portal downloads (unless --no-fetch), then one shared route, then BOTH pipelines.
 
 Order:
-  1. Run every fetch flag you passed (each talks to the bank/cards as configured).
+  1. By default: download holdings, Max/Isracard exports, and Leumi credit + osh (one session
+     for the bank flags). Use --no-fetch to skip all browsers (same as placing files in
+     data/input/ yourself).
   2. route - split everything in data/input into holdings vs transactions inboxes.
-  3. Run the full holdings pipeline (no second route).
-  4. Run the full transactions pipeline (no second route).
-
-Use this when you want a single command after "download everything from the browser"
-or when combining automated fetches in one shot.
+  3. Full holdings pipeline (no second route).
+  4. Full transactions pipeline (no second route).
+  5. Optional: --categorize for interactive prompts (set FINANCE_CATEGORIZE_UI=http for browser).
 """
 
 ALL_EPILOG = """\
-See the option groups above for each fetch. If you skip all fetches, put files in
-data/input/ first (same as both-process). --drop-profile and --auto-categorize match
-`transactions --help`.
+  python run_pipeline.py all
+  python run_pipeline.py all --no-fetch
+  python run_pipeline.py all --categorize
+  python run_pipeline.py all --no-fetch --categorize
 
-example:
-  python run_pipeline.py all --fetch-holdings --fetch-bank-credit --fetch-bank-osh
+--from-date / --to-date apply to the bank osh download inside the Leumi session.
+
+--auto-categorize runs only the automatic category pass (no prompts). --categorize runs
+auto + manual prompts (HTTP or terminal); do not combine with --auto-categorize.
 """
 
 
@@ -165,6 +173,7 @@ BOTH_PROCESS_EPILOG = """\
 examples:
   python run_pipeline.py both-process
   python run_pipeline.py both-process --auto-categorize
+  python run_pipeline.py both-process --categorize
   python run_pipeline.py both-process --drop-profile batch
 """
 
@@ -177,11 +186,17 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=textwrap.dedent(MAIN_EPILOG),
         formatter_class=fmt,
     )
-    p.add_argument(
+    log_grp = p.add_mutually_exclusive_group()
+    log_grp.add_argument(
         "-q",
         "--quiet",
         action="store_true",
-        help="Log at INFO instead of DEBUG (less noise on the terminal).",
+        help="Minimal logging (WARNING): only warnings and errors.",
+    )
+    log_grp.add_argument(
+        "--debug",
+        action="store_true",
+        help="Verbose logging (DEBUG): full pipeline diagnostics.",
     )
 
     sub = p.add_subparsers(
@@ -302,7 +317,12 @@ def _build_parser() -> argparse.ArgumentParser:
     tg_out.add_argument(
         "--auto-categorize",
         action="store_true",
-        help="Run CategorizeFile.auto_categorize() on compiled.csv after a successful compile.",
+        help="After compile: automatic category pass only (no prompts). Ignored if --categorize.",
+    )
+    tg_out.add_argument(
+        "--categorize",
+        action="store_true",
+        help="After compile: auto + interactive prompts (FINANCE_CATEGORIZE_UI=http for browser).",
     )
     tg_out.add_argument(
         "--drop-profile",
@@ -319,46 +339,36 @@ def _build_parser() -> argparse.ArgumentParser:
         description=textwrap.dedent(ALL_DESCRIPTION),
         epilog=textwrap.dedent(ALL_EPILOG),
         formatter_class=fmt,
-        help="Optional fetches, then route, then holdings + transactions pipelines.",
+        help="Default: fetch all portals, route, holdings + transactions. Use --no-fetch to skip downloads.",
     )
-    ag = a.add_argument_group("portal fetches (optional; combine as needed)")
+    ag = a.add_argument_group("portal fetches")
     ag.add_argument(
-        "--fetch-holdings",
+        "--no-fetch",
         action="store_true",
-        help="Download Leumi balances file into data/input/.",
-    )
-    ag.add_argument(
-        "--fetch-max-isracard",
-        action="store_true",
-        help="Download Max + Isracard exports into data/input/.",
-    )
-    ag.add_argument(
-        "--fetch-bank-credit",
-        action="store_true",
-        help="Leumi session: credit card exports.",
-    )
-    ag.add_argument(
-        "--fetch-bank-osh",
-        action="store_true",
-        help="Leumi session: account transactions (osh).",
+        help="Skip all browser downloads; use files already in data/input/ (same idea as both-process).",
     )
     ag.add_argument(
         "--from-date",
         metavar="DD.MM.YY",
         default=None,
-        help="With --fetch-bank-osh: transaction start date.",
+        help="Leumi osh export: start date (same format as in the bank UI).",
     )
     ag.add_argument(
         "--to-date",
         metavar="DD.MM.YY",
         default=None,
-        help="With --fetch-bank-osh: transaction end date.",
+        help="Leumi osh export: end date (optional).",
     )
     ag2 = a.add_argument_group("after route + pipelines")
     ag2.add_argument(
         "--auto-categorize",
         action="store_true",
-        help="Run automatic categorization when the transactions compile step finishes.",
+        help="After compile: automatic category pass only (no prompts). Ignored if --categorize.",
+    )
+    ag2.add_argument(
+        "--categorize",
+        action="store_true",
+        help="After compile: auto categorization then interactive prompts (terminal or HTTP via .env).",
     )
     ag2.add_argument(
         "--drop-profile",
@@ -379,7 +389,12 @@ def _build_parser() -> argparse.ArgumentParser:
     b.add_argument(
         "--auto-categorize",
         action="store_true",
-        help="After transactions compile, run auto_categorize on compiled.csv.",
+        help="After compile: automatic category pass only (no prompts). Ignored if --categorize.",
+    )
+    b.add_argument(
+        "--categorize",
+        action="store_true",
+        help="After compile: auto + interactive prompts (FINANCE_CATEGORIZE_UI=http for browser).",
     )
     b.add_argument(
         "--drop-profile",
@@ -394,9 +409,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    configure_pipeline_logging(
-        logging.INFO if args.quiet else logging.DEBUG,
-    )
+    if args.quiet:
+        log_level = logging.WARNING
+    elif args.debug:
+        log_level = logging.DEBUG
+    else:
+        log_level = logging.INFO
+    configure_pipeline_logging(log_level)
 
     os.makedirs(config.compiled_dir, exist_ok=True)
     pipeline.ensure_workspace_dirs()
@@ -416,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "transactions":
+        do_interactive_cat = args.categorize
         pipeline.run_transactions_pipeline(
             fetch_max_isracard=args.fetch_max_isracard,
             fetch_bank_credit=args.fetch_bank_credit,
@@ -426,34 +446,40 @@ def main(argv: list[str] | None = None) -> int:
             ingest=not args.no_ingest,
             to_csv=not args.no_csv,
             compile_=not args.no_compile,
-            auto_categorize=args.auto_categorize,
+            auto_categorize=args.auto_categorize and not do_interactive_cat,
             drop_profile=args.drop_profile,
         )
+        if do_interactive_cat:
+            pipeline.run_categorization_interactive()
         return 0
 
     if args.command == "all":
-        if args.fetch_holdings:
+        if not args.no_fetch:
             pipeline.fetch_holdings()
-        if args.fetch_max_isracard:
             pipeline.fetch_transactions_max_isracard()
-        if args.fetch_bank_credit or args.fetch_bank_osh:
             pipeline.fetch_transactions_bank_credit_and_osh(
-                credit=args.fetch_bank_credit,
-                bank_osh=args.fetch_bank_osh,
+                credit=True,
+                bank_osh=True,
                 from_date=args.from_date,
                 to_date=args.to_date,
             )
+        auto_only = args.auto_categorize and not args.categorize
         pipeline.run_all_pipelines_after_shared_downloads(
             drop_profile=args.drop_profile,
-            auto_categorize=args.auto_categorize,
+            auto_categorize=auto_only,
         )
+        if args.categorize:
+            pipeline.run_categorization_interactive()
         return 0
 
     if args.command == "both-process":
+        auto_only = args.auto_categorize and not args.categorize
         pipeline.run_all_pipelines_after_shared_downloads(
             drop_profile=args.drop_profile,
-            auto_categorize=args.auto_categorize,
+            auto_categorize=auto_only,
         )
+        if args.categorize:
+            pipeline.run_categorization_interactive()
         return 0
 
     return 1

@@ -18,6 +18,7 @@ import inbox_router
 import portal_fetch
 import spreadsheet_ingest
 from categorizer import CategorizeFile
+from interactive_categorization import create_interaction_handler
 
 log = logging.getLogger(__name__)
 
@@ -230,6 +231,32 @@ def compile_holdings_main(*, sink: Optional[Callable[[str], None]] = None) -> No
     d.__compile_new__(config.holdings_clean_dir, suffix="holdings")
     d.compile_to_main()
     d.save_all()
+
+
+def run_categorization_interactive(
+    *,
+    sink: Optional[Callable[[str], None]] = None,
+) -> None:
+    """
+    Same as the GUI categorize step: ``auto_categorize`` then ``manual_categorizer`` using
+    ``create_interaction_handler()`` (terminal or HTTP per ``FINANCE_CATEGORIZE_UI``).
+    """
+    if not os.path.isfile(config.compiled_file):
+        _notify("CATEGORIZE: skip (compiled.csv missing)", sink)
+        return
+    _notify(
+        "CATEGORIZE: interactive (auto, then prompts) — FINANCE_CATEGORIZE_UI=http uses the browser",
+        sink,
+    )
+    h = create_interaction_handler()
+    try:
+        f = CategorizeFile(config.compiled_file, interaction_handler=h)
+        f.auto_categorize()
+        f.manual_categorizer()
+    finally:
+        closer = getattr(h, "close", None)
+        if callable(closer):
+            closer()
 
 
 def compile_transactions_main(

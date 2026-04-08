@@ -5,24 +5,30 @@ import threading
 from typing import Optional
 
 
-def configure_pipeline_logging(level: int = logging.DEBUG) -> None:
+def configure_pipeline_logging(level: int = logging.INFO) -> None:
     """
-    Configure the root logger once for detailed pipeline diagnostics.
-    Safe to call multiple times (no duplicate handlers).
+    Configure the root logger for pipeline CLI output.
+
+    Safe to call multiple times: attaches a single StreamHandler if none exist, and
+    always applies ``level`` to the root logger and all root handlers (so logging is
+    not stuck on a previous level when the root was configured earlier).
     """
     root = logging.getLogger()
-    if root.handlers:
-        return
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
-    handler.setFormatter(
-        logging.Formatter(
-            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
+    fmt = logging.Formatter(
+        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
-    root.addHandler(handler)
+    if not root.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(fmt)
+        root.addHandler(handler)
+    else:
+        for h in root.handlers:
+            if h.formatter is None:
+                h.setFormatter(fmt)
     root.setLevel(level)
+    for h in root.handlers:
+        h.setLevel(level)
 
 
 def get_pipeline_logger(name: Optional[str] = None) -> logging.Logger:
