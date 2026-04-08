@@ -8,6 +8,7 @@ import config
 import gs_handler
 import pipeline
 from categorizer import CategorizeFile
+from interactive_categorization import create_interaction_handler
 from PyQt6 import QtWidgets, uic
 from logger import Logger, configure_pipeline_logging
 import functools
@@ -151,7 +152,7 @@ def ui():
 
     @log_process
     def categorize_transactions():
-        f = CategorizeFile(config.compiled_file)
+        f = CategorizeFile(config.compiled_file, interaction_handler=create_interaction_handler())
         f.auto_categorize()
         f.manual_categorizer()
 

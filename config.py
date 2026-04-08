@@ -54,3 +54,10 @@ web_dir = "web\\"
 web_totals_file = web_dir + "data\\web_totals.csv"
 expenses_web_file = web_dir + "expenses_web.html"
 incomes_web_file = web_dir + "incomes_web.html"
+
+# Manual categorization UI: "terminal" | "http" (browser on localhost)
+categorize_ui_mode = os.environ.get("FINANCE_CATEGORIZE_UI", "terminal").strip().lower()
+categorize_http_host = os.environ.get("FINANCE_CATEGORIZE_HTTP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+categorize_http_port = int(os.environ.get("FINANCE_CATEGORIZE_HTTP_PORT", "0") or "0")
+_categorize_open = os.environ.get("FINANCE_CATEGORIZE_HTTP_OPEN_BROWSER", "1").strip().lower()
+categorize_http_open_browser = _categorize_open not in ("0", "false", "no", "off")

@@ -3,6 +3,7 @@ import difflib
 import logging
 import os.path
 import re
+import uuid
 
 import pandas as pd
 from bidi.algorithm import get_display
@@ -11,6 +12,8 @@ from numpy import nan
 import config
 from compile_handler import update_category_in_fingerprint_db
 from config import similar_categories_file
+from interactive_categorization.prompts import FluidStorePrompt, NewStorePrompt, ResolveStaticPrompt
+from interactive_categorization.terminal import TerminalCategorizationHandler
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +44,7 @@ def _terminal_bidi_seq(seq, left="{", right="}", *, sort=True):
 
 
 class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
-    def __init__(self, file_path):
+    def __init__(self, file_path, interaction_handler=None):
         log.info("CategorizeFile: loading %s", file_path)
         self.stores_df = None
         self.file_path = file_path
@@ -50,6 +53,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         if 'קטגוריה' not in self.file_df.columns:
             self.file_df['קטגוריה'] = ""
         self.awaiting_df = pd.DataFrame(columns=self.file_df.columns)
+        self.interaction = interaction_handler or TerminalCategorizationHandler()
 
     def load_stores(self):
         self.stores_df = pd.read_csv(config.stores_to_categories_file)
@@ -60,7 +64,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     def save_progress(self):
         self.file_df.to_csv(self.file_path, index=False)
 
-    def categorize_storename(self, row_data, method='auto'):
+    def categorize_storename(self, row_data, method='auto', interaction_handler=None):
         store_name: str = row_data['מקור עסקה']
         date = row_data['תאריך']
         expense = row_data['בחובה']
@@ -82,78 +86,61 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 return None
             return None
         elif method == 'input':
+            h = interaction_handler or self.interaction
             all_categories = set(self.stores_df['category'].tolist())
             for _, row in self.stores_df.iterrows():
                 recorded_store, category, is_static = row['store_name'], row['category'], row['is_static']
                 if store_name == recorded_store:
                     if is_static == 1:
                         return category
-                    elif is_static == 0:
+                    if is_static == 0:
                         dynamic_categories = self.stores_df[self.stores_df['store_name'] == store_name][
                             'category'].tolist()
-                        log.info("Transaction details (interactive categorize)")
-                        log.info(
-                            "Transaction source: %s | Date: %s | Expense: %s | Income: %s | Details: %s | Digits: %s",
-                            _terminal_bidi(store_name),
-                            date,
-                            expense,
-                            income,
-                            _terminal_bidi(details),
-                            _terminal_bidi(digits),
+                        prompt = FluidStorePrompt(
+                            store_name=store_name,
+                            date=date,
+                            expense=expense,
+                            income=income,
+                            details=details,
+                            digits=digits,
+                            dynamic_categories=tuple(dynamic_categories),
+                            all_categories=tuple(sorted(all_categories, key=str)),
+                            prompt_id=uuid.uuid4().hex,
                         )
-                        log.info(
-                            "Past categories for %s: %s",
-                            _terminal_bidi(store_name),
-                            _terminal_bidi_seq(dynamic_categories, "[", "]", sort=False),
-                        )
-                        log.info("All categories: %s", _terminal_bidi_seq(all_categories))
-
-                        category_input = input(
-                            f"Choose a category for {_terminal_bidi(store_name)} from the categories, or type a new one: ").strip()
+                        category_input = h.prompt_fluid_store(prompt).strip()
                         if category_input in dynamic_categories:
                             return category_input
-                        else:
-                            log.info("New category added to store list for existing fluid store")
-                            new_row = {'store_name': store_name, 'category': category_input, 'is_static': is_static}
-                            self.stores_df.loc[len(self.stores_df)] = new_row
-                            self.save_stores()
-                            return category_input
-                    else:  # is_static is fucked (-1 or anything else)
-                        log.info("Transaction details (fix static flag)")
-                        log.info(
-                            "Transaction source: %s | Date: %s | Expense: %s | Income: %s | Details: %s | Digits: %s",
-                            _terminal_bidi(store_name),
-                            date,
-                            expense,
-                            income,
-                            _terminal_bidi(details),
-                            _terminal_bidi(digits),
-                        )
-
-                        is_static_input = input(
-                            f"Is this category: [{_terminal_bidi(category)}] for {_terminal_bidi(store_name)} static?"
-                            f"\n (Type '0' if dynamic, type '1' if static): ").strip()
-                        is_static = int(is_static_input) if int(is_static_input) == 1 or 0 else -1
-                        self.stores_df.loc[self.stores_df['store_name'] == store_name, 'is_static'] = is_static
+                        log.info("New category added to store list for existing fluid store")
+                        new_row = {'store_name': store_name, 'category': category_input, 'is_static': is_static}
+                        self.stores_df.loc[len(self.stores_df)] = new_row
                         self.save_stores()
-                        return category
-            log.info("Transaction details (new store)")
-            log.info(
-                "Transaction source: %s | Date: %s | Expense: %s | Income: %s | Details: %s | Digits: %s",
-                _terminal_bidi(store_name),
-                date,
-                expense,
-                income,
-                _terminal_bidi(details),
-                _terminal_bidi(digits),
+                        return category_input
+                    # is_static is ambiguous (-1 or other)
+                    prompt = ResolveStaticPrompt(
+                        store_name=store_name,
+                        category=category,
+                        date=date,
+                        expense=expense,
+                        income=income,
+                        details=details,
+                        digits=digits,
+                        prompt_id=uuid.uuid4().hex,
+                    )
+                    is_static_new = h.prompt_resolve_static(prompt)
+                    self.stores_df.loc[self.stores_df['store_name'] == store_name, 'is_static'] = is_static_new
+                    self.save_stores()
+                    return category
+            prompt = NewStorePrompt(
+                store_name=store_name,
+                date=date,
+                expense=expense,
+                income=income,
+                details=details,
+                digits=digits,
+                all_categories=tuple(sorted(all_categories, key=str)),
+                prompt_id=uuid.uuid4().hex,
             )
-            log.info("All categories: %s", _terminal_bidi_seq(all_categories))
-            category_input = input(
-                f"{_terminal_bidi(store_name)} is not in the store list. Choose a category from the list or type a new one: ").strip()
-
-            is_static_input = input(
-                f"Should {_terminal_bidi(store_name)} be under static category? Type 1 for static and 0 for fluid: ").strip()
-
+            category_input, is_static_input = h.prompt_new_store(prompt)
             new_row = {'store_name': store_name, 'category': category_input, 'is_static': int(is_static_input)}
             self.stores_df.loc[len(self.stores_df)] = new_row
             self.save_stores()
@@ -215,58 +202,31 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         else:
             log.info("auto_categorize: complete (no awaiting rows)")
 
-    def manual_categorizer(self, through='input'):
+    def manual_categorizer(self, through='input', interaction_handler=None):
         log.info("manual_categorizer: engine=%s awaiting rows=%s", through, len(self.awaiting_df))
         if through.lower() not in ['input', 'discord']:
             raise ValueError("you must specify an engine manually (input, discord)")
         self.load_stores()
-        for index, row in self.awaiting_df.iterrows():
-            if row['קטגוריה'] == "" or row['קטגוריה'] == "awaiting" or pd.isna(row['קטגוריה']):
-                category = self.categorize_storename(row, method='input')
+        h = interaction_handler or self.interaction
+        try:
+            for index, row in self.awaiting_df.iterrows():
+                if row['קטגוריה'] == "" or row['קטגוריה'] == "awaiting" or pd.isna(row['קטגוריה']):
+                    category = self.categorize_storename(row, method='input', interaction_handler=h)
 
-                row_mask = self.file_df['מזהה עסקה'] == row['מזהה עסקה']
-                self.file_df.loc[row_mask, 'קטגוריה'] = category
-                self.save_progress()
-                if 'fingerprint' in self.file_df.columns:
-                    fingerprint = self.file_df.loc[row_mask, 'fingerprint'].iloc[0]
-                    if pd.notna(fingerprint):
-                        update_category_in_fingerprint_db(fingerprint, category)
+                    row_mask = self.file_df['מזהה עסקה'] == row['מזהה עסקה']
+                    self.file_df.loc[row_mask, 'קטגוריה'] = category
+                    self.save_progress()
+                    if 'fingerprint' in self.file_df.columns:
+                        fingerprint = self.file_df.loc[row_mask, 'fingerprint'].iloc[0]
+                        if pd.notna(fingerprint):
+                            update_category_in_fingerprint_db(fingerprint, category)
 
-            self.awaiting_df.drop(index=index, inplace=True)
+                self.awaiting_df.drop(index=index, inplace=True)
+        finally:
+            closer = getattr(h, "close", None)
+            if callable(closer):
+                closer()
         log.info("manual_categorizer: loop complete, awaiting_df rows=%s", len(self.awaiting_df))
-        # DISCORD BOT TRY
-        # if through == 'discord':
-        #     print("Launching discord bot...")
-        #     bot = DiscordBot(config.DISCORD_BOT_TOKEN, config.DISCORD_USER_ID)
-        #
-        #     async def main():
-        #         for index, transaction_row in self.awaiting_df.iterrows():
-        #             print(transaction_row)
-        #             for idx, store_row in self.stores_df.iterrows():
-        #                 store_name, category, is_static = store_row['store_name'], store_row['category'], store_row[
-        #                     'is_static']
-        #                 print(store_name)
-        #                 if store_name == transaction_row['מקור עסקה'] and is_static == 0:
-        #                     dynamic_categories = set(self.stores_df['category'].tolist())
-        #                     await bot.send(f"Transaction details:\n"
-        #                                    f"מקור עסקה: {transaction_row['מקור עסקה']}\n"
-        #                                    f"תאריך: {transaction_row['תאריך']}\n"
-        #                                    f"בזכות: {transaction_row['בזכות']}\n"
-        #                                    f"בחובה: {transaction_row['בחובה']}\n"
-        #                                    f"קטגוריות: {dynamic_categories}\n"
-        #                                    f"Please enter category:")
-        #                     response = await bot.receive()
-        #                     if response:
-        #                         print(f"Chosen category: {response}")
-        #                         self.awaiting_df.loc[index, 'קטגוריה'] = response
-        #                         self.stores_df.loc[self.stores_df['store_name'] == store_name, 'category'] = response
-        #                         save_stores()
-        #                 else:
-        #                     print("Got to the what else..")
-        #         await asyncio.sleep(1)  # Add a short delay to avoid spamming
-        #
-        #     bot.run()
-        #     asyncio.get_event_loop().create_task(main())
 
     @staticmethod
     def fix_null_category_status():
