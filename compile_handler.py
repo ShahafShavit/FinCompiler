@@ -1,10 +1,15 @@
 import datetime
 import glob
+import logging
 import re
 import os
+
 import pandas as pd
 import pandas.errors
+
 import config
+
+log = logging.getLogger(__name__)
 
 
 def update_category_in_fingerprint_db(fingerprint, category):
@@ -15,7 +20,7 @@ def update_category_in_fingerprint_db(fingerprint, category):
     try:
         db_path = config.fingerprint_db_file
         if not os.path.exists(db_path):
-            # This can happen if the categorizer runs before any compilation created the DB.
+            log.debug("update_category_in_fingerprint_db: no DB at %s (skip)", db_path)
             return
 
         db_df = pd.read_csv(db_path)
@@ -27,22 +32,27 @@ def update_category_in_fingerprint_db(fingerprint, category):
         # Find the row with the given fingerprint and update its category
         db_df.loc[db_df['fingerprint'] == fingerprint, 'category'] = category
         db_df.to_csv(db_path, index=False)
+        log.info("Fingerprint DB: set category for fingerprint (len=%s)", len(str(fingerprint)))
     except Exception as e:
-        print(f"Error updating category in fingerprint DB: {e}")
+        log.exception("update_category_in_fingerprint_db failed: %s", e)
 
 
 class Compiler:
     def __init__(self, path_to_main):
+        log.info("Compiler init main_file=%s", path_to_main)
         self.main_file = path_to_main
         self.new_df = pd.DataFrame()
         self.added_transactions = pd.DataFrame()
         try:
             self.main_df = pd.read_csv(self.main_file)
+            log.debug("Loaded main CSV rows=%s", len(self.main_df))
         except (FileNotFoundError, pandas.errors.EmptyDataError):
+            log.info("Main file missing or empty; starting fresh: %s", path_to_main)
             self.main_df = pd.DataFrame()
             self.main_df.to_csv(self.main_file, index=False)
 
     def __compile_new__(self, path_to_files, suffix):
+        log.info("__compile_new__: path=%s suffix=%s", path_to_files, suffix)
         self.suffix = suffix
 
         def standardize_date_format(date_str):
@@ -50,16 +60,19 @@ class Compiler:
             return re.sub(r'[-/.]', '-', date_str)
 
         file_list = glob.glob(os.path.join(path_to_files, '*.csv'))
+        log.debug("Found %s csv file(s) under %s", len(file_list), path_to_files)
         new_df_list = []
         for file in file_list:
             df = pd.read_csv(file)
+            log.debug("Read %s rows=%s", file, len(df))
             new_df_list.append(df)
         if not new_df_list:
-            print("No new files to compile.")
+            log.warning("No CSV files to compile in %s", path_to_files)
             self.new_df = pd.DataFrame()
             return
 
         self.new_df = pd.concat(new_df_list, ignore_index=True)
+        log.info("Concatenated new_df rows=%s", len(self.new_df))
         self.new_df['תאריך'] = self.new_df['תאריך'].apply(standardize_date_format)
         self.new_df['תאריך'] = pd.to_datetime(self.new_df['תאריך'], dayfirst=True, errors='coerce', format='mixed')
         self.new_df['תאריך'] = self.new_df['תאריך'].dt.date
@@ -69,11 +82,12 @@ class Compiler:
             self.new_df['תאריך עדכון'] = datetime.date.today()
 
     def compile_to_main(self):
-
+        log.info("compile_to_main: new_df empty=%s", self.new_df.empty)
         if self.new_df.empty:
-            print("Nothing to process.")
+            log.info("Nothing to merge into main (new_df empty).")
             return
         if 'מזהה עסקה' in self.new_df.columns:  # transactions branch
+            log.debug("compile_to_main: transactions branch (fingerprints)")
             original_fingerprints = set()
             if not self.main_df.empty and 'fingerprint' in self.main_df.columns:
                 original_fingerprints = set(self.main_df['fingerprint'].dropna())
@@ -105,7 +119,10 @@ class Compiler:
             newly_added_fingerprints = current_fingerprints - original_fingerprints
             self.added_transactions = self.main_df[self.main_df['fingerprint'].isin(newly_added_fingerprints)].copy()
 
-            print(f"After intelligent de-duplication, {len(self.added_transactions)} new transactions were added.")
+            log.info(
+                "De-duplication done: %s new transaction rows (by fingerprint)",
+                len(self.added_transactions),
+            )
 
             self.main_df['תאריך'] = pd.to_datetime(self.main_df['תאריך'], dayfirst=True, errors='coerce',
                                                    format='mixed')
@@ -113,6 +130,7 @@ class Compiler:
             self.main_df.reset_index(drop=True, inplace=True)
             self.main_df['תאריך'] = self.main_df['תאריך'].dt.date
         else:  # In Holdings Mode
+            log.debug("compile_to_main: holdings branch (dedupe by date)")
             concat_df = pd.concat([self.main_df, self.new_df], ignore_index=True)
             concat_df['תאריך'] = pd.to_datetime(concat_df['תאריך'], dayfirst=True, format='mixed')
             concat_df.drop_duplicates(subset=['תאריך'], ignore_index=True, inplace=True, keep='first')
@@ -126,7 +144,7 @@ class Compiler:
 
     def update_fingerprint_db(self):
         if self.added_transactions.empty:
-            print("No new transactions were added, fingerprint database is up-to-date.")
+            log.info("Fingerprint DB unchanged (no new transactions).")
             return
 
         new_fingerprints_df = self.added_transactions[['fingerprint', 'מזהה עסקה']].copy()
@@ -150,17 +168,20 @@ class Compiler:
         updated_df.drop_duplicates(subset=['fingerprint'], keep='first', inplace=True)
 
         updated_df.to_csv(db_path, index=False)
-        print(f"Updated fingerprint database with {len(new_fingerprints_df)} new entries.")
+        log.info("Fingerprint DB updated with %s new entries -> %s", len(new_fingerprints_df), db_path)
 
     def save_new(self):
         today_date = f"{datetime.datetime.now().date()}_{datetime.datetime.now().hour}-{datetime.datetime.now().minute}"
         output_path = os.path.join(config.compiled_dir, f"new_{today_date}_{self.suffix}.csv")
         self.new_df.to_csv(output_path, index=False)
+        log.info("Wrote new slice CSV %s (%s rows)", output_path, len(self.new_df))
         return output_path
 
     def save_main(self):
         self.main_df.to_csv(self.main_file, index=False)
+        log.info("Wrote main ledger %s (%s rows)", self.main_file, len(self.main_df))
         return self.main_file
 
     def save_all(self):
+        log.debug("save_all: main + new")
         return self.save_main(), self.save_new()

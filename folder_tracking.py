@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 import time
@@ -5,12 +6,15 @@ from datetime import datetime
 
 import config
 
+log = logging.getLogger(__name__)
+
 
 class FolderTracker:
     def __init__(self, folder_path):
         """
         Initialize the tracker with the folder path and store the initial state.
         """
+        log.debug("FolderTracker init path=%s", folder_path)
         self.folder_path = folder_path
         self.previous_state = self._get_folder_state()
         self.history = []
@@ -58,6 +62,11 @@ class FolderTracker:
         }
 
         if added or removed:
+            log.debug(
+                "FolderTracker check_changes: added=%s removed=%s",
+                list(added.keys()),
+                list(removed.keys()),
+            )
             self.history.append(changes)
 
         # Update the previous state
@@ -82,6 +91,13 @@ class FolderTracker:
         Monitor the folder in a separate thread until the expected number of files
         has been added or the timeout is reached. Returns True if successful, False otherwise.
         """
+        log.info(
+            "monitor_folder: path=%s expect=%s new files timeout=%ss",
+            self.folder_path,
+            expected_files,
+            timeout,
+        )
+
         def monitor():
             start_time = time.time()
             self.running = True
@@ -91,11 +107,11 @@ class FolderTracker:
                 self.check_changes()
                 if self.total_files_added >= expected_files:
                     self.success = True  # Success: expected files added
-                    print(f"Expected files added: {self.total_files_added}")
+                    log.info("monitor_folder: success total_files_added=%s", self.total_files_added)
                     break
                 if time.time() - start_time >= timeout:
                     self.success = False  # Failure: timeout reached
-                    print(f"Timeout reached: {timeout} seconds")
+                    log.warning("monitor_folder: timeout after %ss (added=%s)", timeout, self.total_files_added)
                     break
                 time.sleep(1)  # Sleep for a second before checking again
 
@@ -104,6 +120,7 @@ class FolderTracker:
         thread = threading.Thread(target=monitor, daemon=True)
         thread.start()
         thread.join()  # Wait for the thread to complete
+        log.debug("monitor_folder: returning success=%s", self.success)
         return self.success
 
     def stop_monitoring(self):
@@ -113,16 +130,17 @@ class FolderTracker:
         self.running = False
 
 if __name__ == '__main__':
-    tracker = FolderTracker(config.input_dir)
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s %(message)s")
+    tracker = FolderTracker(config.download_inbox_dir)
 
     expected_files = 5
     timeout = 60
     result = tracker.monitor_folder(expected_files, timeout)
 
     if result:
-        print("Monitoring successful: All expected files were added.")
+        log.info("Monitoring successful: expected files arrived.")
     else:
-        print("Monitoring failed: Timeout reached before all expected files were added.")
+        log.error("Monitoring failed: timeout before expected files.")
 
-    print("History of changes:", tracker.get_history())
-    print("Total files added:", tracker.get_total_files_added())
+    log.info("History: %s", tracker.get_history())
+    log.info("Total files added: %s", tracker.get_total_files_added())

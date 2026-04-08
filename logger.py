@@ -1,5 +1,32 @@
 import inspect
+import logging
+import sys
 import threading
+from typing import Optional
+
+
+def configure_pipeline_logging(level: int = logging.DEBUG) -> None:
+    """
+    Configure the root logger once for detailed pipeline diagnostics.
+    Safe to call multiple times (no duplicate handlers).
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter(
+            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    root.addHandler(handler)
+    root.setLevel(level)
+
+
+def get_pipeline_logger(name: Optional[str] = None) -> logging.Logger:
+    return logging.getLogger(name if name else "finance_compiler")
 
 
 class Logger:

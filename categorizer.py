@@ -1,14 +1,18 @@
 import asyncio
 import difflib
+import logging
 import os.path
 import re
-from numpy import nan
+
 import pandas as pd
 from bidi.algorithm import get_display
+from numpy import nan
 
 import config
-from config import similar_categories_file
 from compile_handler import update_category_in_fingerprint_db
+from config import similar_categories_file
+
+log = logging.getLogger(__name__)
 
 _HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
 
@@ -38,6 +42,7 @@ def _terminal_bidi_seq(seq, left="{", right="}", *, sort=True):
 
 class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     def __init__(self, file_path):
+        log.info("CategorizeFile: loading %s", file_path)
         self.stores_df = None
         self.file_path = file_path
         self.file_name = os.path.basename(file_path)
@@ -86,30 +91,44 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                     elif is_static == 0:
                         dynamic_categories = self.stores_df[self.stores_df['store_name'] == store_name][
                             'category'].tolist()
-                        print("Transaction details:")
-                        print(
-                            f"Transaction source: {_terminal_bidi(store_name)}\nDate: {date}\nExpense: {expense}\n"
-                            f"Income: {income}\nAdditional details: {_terminal_bidi(details)}\nDigits: {_terminal_bidi(digits)}")
-                        print(
-                            f"Past categories for {_terminal_bidi(store_name)}: "
-                            f"{_terminal_bidi_seq(dynamic_categories, '[', ']', sort=False)}")
-                        print(f"All categories: {_terminal_bidi_seq(all_categories)}")
+                        log.info("Transaction details (interactive categorize)")
+                        log.info(
+                            "Transaction source: %s | Date: %s | Expense: %s | Income: %s | Details: %s | Digits: %s",
+                            _terminal_bidi(store_name),
+                            date,
+                            expense,
+                            income,
+                            _terminal_bidi(details),
+                            _terminal_bidi(digits),
+                        )
+                        log.info(
+                            "Past categories for %s: %s",
+                            _terminal_bidi(store_name),
+                            _terminal_bidi_seq(dynamic_categories, "[", "]", sort=False),
+                        )
+                        log.info("All categories: %s", _terminal_bidi_seq(all_categories))
 
                         category_input = input(
                             f"Choose a category for {_terminal_bidi(store_name)} from the categories, or type a new one: ").strip()
                         if category_input in dynamic_categories:
                             return category_input
                         else:
-                            print("Added to list")
+                            log.info("New category added to store list for existing fluid store")
                             new_row = {'store_name': store_name, 'category': category_input, 'is_static': is_static}
                             self.stores_df.loc[len(self.stores_df)] = new_row
                             self.save_stores()
                             return category_input
                     else:  # is_static is fucked (-1 or anything else)
-                        print("Transaction details:")
-                        print(
-                            f"Transaction source: {_terminal_bidi(store_name)}\nDate: {date}\nExpense: {expense}\n"
-                            f"Income: {income}\nAdditional details: {_terminal_bidi(details)}\nDigits: {_terminal_bidi(digits)}")
+                        log.info("Transaction details (fix static flag)")
+                        log.info(
+                            "Transaction source: %s | Date: %s | Expense: %s | Income: %s | Details: %s | Digits: %s",
+                            _terminal_bidi(store_name),
+                            date,
+                            expense,
+                            income,
+                            _terminal_bidi(details),
+                            _terminal_bidi(digits),
+                        )
 
                         is_static_input = input(
                             f"Is this category: [{_terminal_bidi(category)}] for {_terminal_bidi(store_name)} static?"
@@ -118,11 +137,17 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                         self.stores_df.loc[self.stores_df['store_name'] == store_name, 'is_static'] = is_static
                         self.save_stores()
                         return category
-            print("Transaction details:")
-            print(
-                f"Transaction source: {_terminal_bidi(store_name)}\nDate: {date}\nExpense: {expense}\n"
-                f"Income: {income}\nAdditional details: {_terminal_bidi(details)}\nDigits: {_terminal_bidi(digits)}")
-            print(f"All categories: {_terminal_bidi_seq(all_categories)}")
+            log.info("Transaction details (new store)")
+            log.info(
+                "Transaction source: %s | Date: %s | Expense: %s | Income: %s | Details: %s | Digits: %s",
+                _terminal_bidi(store_name),
+                date,
+                expense,
+                income,
+                _terminal_bidi(details),
+                _terminal_bidi(digits),
+            )
+            log.info("All categories: %s", _terminal_bidi_seq(all_categories))
             category_input = input(
                 f"{_terminal_bidi(store_name)} is not in the store list. Choose a category from the list or type a new one: ").strip()
 
@@ -135,6 +160,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             return category_input
 
     def auto_categorize(self):
+        log.info("auto_categorize: rows=%s file=%s", len(self.file_df), self.file_path)
         try:
             fp_db = pd.read_csv(config.fingerprint_db_file)
             if 'category' in fp_db.columns and 'fingerprint' in self.file_df.columns:
@@ -149,12 +175,12 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 self.file_df.loc[uncategorized_mask, 'קטגוריה'] = self.file_df.loc[
                     uncategorized_mask, 'קטגוריה'].fillna(new_categories)
 
-                print("Restored categories from fingerprint database.")
+                log.info("Restored categories from fingerprint DB for uncategorized rows")
                 self.save_progress()
         except FileNotFoundError:
-            print("Fingerprint database not found, skipping category restoration.")
+            log.warning("Fingerprint DB not found; skipping category restoration")
         except Exception as e:
-            print(f"An error occurred during category restoration: {e}")
+            log.exception("Category restoration from fingerprint DB failed: %s", e)
 
         k_t = self.load_known_transactions()
         if k_t is None:
@@ -166,7 +192,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 category = k_t[k_t['transaction_id'] == transaction_id]['category'].values[0]
                 if category != row['קטגוריה']:
                     self.file_df.loc[index, 'קטגוריה'] = category
-                    print(f"Category loaded for ID from backup {transaction_id}.")
+                    log.debug("Category from backup for transaction_id=%s -> %s", transaction_id, category)
                     self.category_store_link_backup(transaction_id, category)
 
             if row['קטגוריה'] == "" or row['קטגוריה'] == "awaiting" or pd.isna(row['קטגוריה']):
@@ -183,8 +209,14 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 if 'fingerprint' in row:
                     update_category_in_fingerprint_db(row['fingerprint'], row['קטגוריה'])
                 self.category_store_link_backup(transaction_id, row['קטגוריה'])
+        awaiting = len(self.awaiting_df)
+        if awaiting:
+            log.info("auto_categorize: %s rows still awaiting manual category", awaiting)
+        else:
+            log.info("auto_categorize: complete (no awaiting rows)")
 
     def manual_categorizer(self, through='input'):
+        log.info("manual_categorizer: engine=%s awaiting rows=%s", through, len(self.awaiting_df))
         if through.lower() not in ['input', 'discord']:
             raise ValueError("you must specify an engine manually (input, discord)")
         self.load_stores()
@@ -201,6 +233,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                         update_category_in_fingerprint_db(fingerprint, category)
 
             self.awaiting_df.drop(index=index, inplace=True)
+        log.info("manual_categorizer: loop complete, awaiting_df rows=%s", len(self.awaiting_df))
         # DISCORD BOT TRY
         # if through == 'discord':
         #     print("Launching discord bot...")
@@ -245,8 +278,11 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 category = row['category']
                 store_name = row['store_name']
                 if row['is_static'] not in [1, 0]:
-                    print(
-                        f"Fixing store {_terminal_bidi(row['store_name'])} with category {_terminal_bidi(row['category'])}.")
+                    log.info(
+                        "fix_null_category_status: store=%s category=%s",
+                        _terminal_bidi(row["store_name"]),
+                        _terminal_bidi(row["category"]),
+                    )
                     is_static_input = input(
                         f"Is this category: [{_terminal_bidi(category)}] for {_terminal_bidi(store_name)} static?"
                         f"\n (Type '0' if dynamic, type '1' if static): ")
@@ -265,6 +301,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
     @staticmethod
     def fix_similar_categories_in_file():
+        log.info("fix_similar_categories_in_file: starting")
         stores_df = pd.read_csv(config.stores_to_categories_file)
         stores_df['category'] = stores_df['category'].replace(nan, "NULL")
         compiled_df = pd.read_csv(config.compiled_file)
@@ -282,9 +319,9 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                         pair = [ans[0], ans[1]]
                         if pair in linked_pairs.values.tolist() or list(reversed(pair)) in linked_pairs.values.tolist():
                             continue
-                        print(f"Checking {_terminal_bidi(category)}:")
+                        log.info("Similar categories check for: %s", _terminal_bidi(category))
                         for i, option in enumerate(ans, 1):
-                            print(f"{i}. {_terminal_bidi(option)}")
+                            log.info("  %s. %s", i, _terminal_bidi(option))
                         ans_input = input(f"Choose:\n1. Keep first\n2. Keep second\n3. Keep both\n")
                         if ans_input in ['1', '2']:
                             choice = int(ans_input) - 1
@@ -345,9 +382,12 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         elif len(match) == 1:
             if match['category'].item() != category:
                 if match['is_static'].item() == 1:
-                    print(
-                        f"Found new category '{_terminal_bidi(category)}' for {_terminal_bidi(store_name)}, "
-                        f"which was previously defined as {_terminal_bidi(match['category'].item())}")
+                    log.warning(
+                        "Store %s: new category %s vs existing static %s",
+                        _terminal_bidi(store_name),
+                        _terminal_bidi(category),
+                        _terminal_bidi(match["category"].item()),
+                    )
                     ans = input(
                         "Type: \n1 to modify current static category for store. \n2 to change store to dynamic and add "
                         "category.\n3 to ignore.\n")
@@ -357,17 +397,18 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                         df.loc[df['store_name'] == store_name, 'is_static'] = 0
                         df.loc[len(df)] = [store_name, category, 0]
                     else:
-                        print("Typed 3 or invalid input, either way- not doing anything.")
+                        log.info("User skipped category update (option 3 or invalid)")
                         return
                 if match['is_static'].item() == 0:
                     df.loc[len(df)] = [store_name, category, 0]
         else:
-            print("STORE NOT CACHED IN STORE_CATEGORY file. PEBKAC")
+            log.error("update_store_category: store not in stores file (no match)")
             return
         df.to_csv(config.stores_to_categories_file, index=False)
 
     @staticmethod
     def dupe_seeker():
+        log.info("dupe_seeker: scanning %s", config.compiled_file)
         df = pd.read_csv(config.compiled_file)
 
         grouped_expenses = df[df['בחובה'] != 0].groupby(['תאריך', 'בחובה']).size().reset_index(name='counts')
@@ -378,11 +419,10 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         filtered_groups = grouped_incomes[grouped_incomes['counts'] > 1]
         result_incomes = pd.merge(df, filtered_groups[['תאריך', 'בזכות']], on=['תאריך', 'בזכות'], how='inner')
 
-        # Display the results
-        print("Expenses:")
-        print(result_expenses)
-        print("\nIncomes:")
-        print(result_incomes)
+        log.info("Duplicate expense rows (by date+amount): %s", len(result_expenses))
+        log.debug("Expense dupes:\n%s", result_expenses)
+        log.info("Duplicate income rows (by date+amount): %s", len(result_incomes))
+        log.debug("Income dupes:\n%s", result_incomes)
 
 
 if __name__ == "__main__":

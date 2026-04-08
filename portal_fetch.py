@@ -1,5 +1,13 @@
+"""
+Fetch transaction and holdings files from bank/credit portals via Selenium.
+
+Pipeline position: writes into ``config.download_inbox_dir`` (browser download folder).
+Next step: ``inbox_router.route_shared_download_inbox`` then ``spreadsheet_ingest`` into each pipeline's ``raw`` dir.
+"""
+import logging
 import urllib.parse
 from datetime import datetime, timedelta
+
 import config
 from selenium import webdriver, common
 from selenium.common.exceptions import TimeoutException
@@ -12,8 +20,11 @@ import time
 
 from folder_tracking import FolderTracker
 
+log = logging.getLogger(__name__)
+
 project_dir = os.path.abspath(os.path.dirname(__file__))
-download_dir = os.path.join(project_dir, config.input_dir)
+download_dir = os.path.join(project_dir, config.download_inbox_dir)
+log.debug("Portal download directory resolved to %s", download_dir)
 
 # Set FINANCE_SELENIUM_DEBUG=1 to print optional-click outcomes and pause hints.
 # Set FINANCE_SELENIUM_PAUSE=1 to wait for Enter after each flow_debug_pause(...) call.
@@ -25,7 +36,7 @@ def _selenium_debug() -> bool:
 
 def _flow_debug_log(message: str) -> None:
     if _selenium_debug():
-        print(f"[selenium] {message}")
+        log.debug("[selenium] %s", message)
 
 
 def flow_debug_pause(_driver, label: str) -> None:
@@ -72,12 +83,13 @@ def timestamp_latest_file_in_dir(directory, file_extension=".xlsx"):
         current_time = datetime.now().strftime('%d-%m-%Y')
         new_filename = f"{os.path.splitext(latest_file)[0]}_{current_time}{os.path.splitext(latest_file)[1]}"
         os.rename(latest_file, new_filename)
-        print(f"TransactionFile renamed to: {new_filename}")
+        log.info("Renamed latest download to timestamped name: %s", new_filename)
     else:
-        print("No files with the specified extension found.")
+        log.warning("timestamp_latest_file_in_dir: no %s files in %s", file_extension, directory)
 
 
 def load_driver():
+    log.info("Starting Chrome WebDriver (download dir=%s)", download_dir)
     os.makedirs(download_dir, exist_ok=True)
 
     chrome_options = webdriver.ChromeOptions()
@@ -90,18 +102,22 @@ def load_driver():
 
     driver = webdriver.Chrome(options=chrome_options)
     driver.maximize_window()
+    log.debug("Chrome WebDriver ready")
     return driver
 
 
 class Bank:
     def __init__(self, username, password):
+        log.info("Bank portal session: initializing (Leumi)")
         self.__username = username
         self.__password = password
         self.__driver = load_driver()
         self.__driver = self.__login__()
+        log.info("Bank portal session: login flow completed")
 
     def __login__(self):
         url = 'https://hb2.bankleumi.co.il/H/Login.html'
+        log.debug("Navigating to Leumi login: %s", url)
         self.__driver.get(url)
         optional_click(
             self.__driver,
@@ -125,9 +141,16 @@ class Bank:
         WebDriverWait(self.__driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//span[contains(@class, 'welcome-text')]"))
         )
+        log.debug("Leumi welcome element present; login assumed successful")
         return self.__driver
 
     def download(self, file: str, from_date=None, to_date=None):
+        log.info(
+            "Bank.download requested: kind=%r from_date=%r to_date=%r",
+            file,
+            from_date,
+            to_date,
+        )
         if file.lower() == 'holdings':
             self.__driver.get('https://hb2.bankleumi.co.il/ebanking/Accounts/DisplayBalances.aspx#/')
 
@@ -146,9 +169,9 @@ class Bank:
             result = folder_tracker.monitor_folder(1, 10)
             download_btn.click()
             if result:
-                print("File downloaded successfully.")
+                log.info("Holdings export: folder monitor reported success")
             else:
-                print("File download failed or timed out.")
+                log.error("Holdings export: folder monitor reported failure or timeout")
 
             time.sleep(2)
         elif file.lower() == 'osh':
@@ -177,7 +200,7 @@ class Bank:
             if from_date is None:
                 current_year = str(datetime.now().year)[-2:]
                 date_str = "01.01." + current_year
-                # date_str = "01.01.25"
+                log.debug("Osh export: defaulting start date to %s", date_str)
             else:
                 date_str = from_date
             time.sleep(0.5)
@@ -198,6 +221,7 @@ class Bank:
             )
             filter_button.click()
 
+            log.debug("Osh export: waiting for grid after filter")
             time.sleep(5)
             export_button = WebDriverWait(self.__driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//button[@title='יצוא לאקסל']"))
@@ -221,7 +245,7 @@ class Bank:
                 actions.move_to_element(continue_btn).click().perform()
 
             else:
-                print("Continue button not found")
+                log.error("Osh export modal: continue button (המשך) not found")
         elif file.lower() == 'credit':
             self.__driver.get('https://hb2.bankleumi.co.il/ebanking/SO/SPA.aspx#/ts/CardsWorld')
 
@@ -235,8 +259,10 @@ class Bank:
             for index, card in enumerate(cards):
                 amount_text = card.find_element(By.CSS_SELECTOR, "span.ng-star-inserted").text
                 if amount_text == '':
+                    log.debug("Credit card slide %s: skipping (empty balance text)", index)
                     continue
                 if float(amount_text.replace(',', '')) <= 0:
+                    log.debug("Credit card slide %s: skipping (non-positive balance)", index)
                     continue
                 self.__driver.execute_script("arguments[0].scrollIntoView();", card)
                 WebDriverWait(self.__driver, 10).until(EC.element_to_be_clickable(card)).click()
@@ -293,7 +319,12 @@ class Bank:
                         current_year = current_date.year
 
                         this_month_string = f"{months_hebrew[next_month_index]} {current_year}"
-                        print(f"{next_month_index=} {current_year=} {this_month_string=}")
+                        log.debug(
+                            "Max credit UI: month_index=%s year=%s label=%r",
+                            next_month_index,
+                            current_year,
+                            this_month_string,
+                        )
                         date_combo = WebDriverWait(self.__driver, 10).until(
                             EC.element_to_be_clickable(
                                 (By.XPATH,
@@ -321,25 +352,33 @@ class Bank:
         downloaded, new_file = verify_download(download_dir, 15, 60)
 
         if downloaded:
-            print(
-                f"{file.capitalize()} was downloaded successfully. at {os.path.join(download_dir, os.path.basename(new_file))}")
+            log.info(
+                "Bank.download finished: kind=%r path=%s",
+                file,
+                os.path.join(download_dir, os.path.basename(new_file)) if new_file else new_file,
+            )
         else:
+            log.error("Bank.download verify_download failed for kind=%r", file)
             raise FileNotFoundError(f"Failed to download {file.capitalize()} file.")
         return True
 
     def __del__(self):
+        log.debug("Bank portal session: closing WebDriver")
         self.__driver.quit()
 
 
 class IsracardCredit:
     def __init__(self, username, password, last6):
+        log.info("Isracard portal session: initializing")
         self.__username = username
         self.__last6 = last6
         self.__password = password
         self.__driver = load_driver()
         self.__driver = self.__login()
+        log.info("Isracard portal session: login completed")
 
     def __login(self):
+        log.debug("Isracard: opening login page")
         self.__driver.get('https://digital.isracard.co.il/personalarea/Login/')
         time.sleep(2)
 
@@ -365,9 +404,11 @@ class IsracardCredit:
         WebDriverWait(self.__driver, 20).until(
             EC.presence_of_element_located((By.XPATH, "//h1[contains(@class, 'page-title')]"))
         )
+        log.debug("Isracard: page title visible after login")
         return self.__driver
 
     def download(self):
+        log.info("Isracard.download: starting Excel export flow")
         WebDriverWait(self.__driver, 20).until(
             EC.presence_of_element_located((By.XPATH, "//h1[contains(@class, 'page-title')]"))
         )
@@ -398,23 +439,32 @@ class IsracardCredit:
 
         downloaded, new_file = verify_download(download_dir, 15, 60)
         if downloaded:
-            print(f"{new_file} was downloaded successfully. at {os.path.join(download_dir, new_file)}")
+            log.info(
+                "Isracard.download: success file=%r path=%s",
+                new_file,
+                os.path.join(download_dir, new_file) if new_file else None,
+            )
         else:
+            log.error("Isracard.download: verify_download failed")
             raise FileNotFoundError(f"Failed to download {new_file}.")
         return True
 
     def __del__(self):
+        log.debug("Isracard portal session: closing WebDriver")
         self.__driver.quit()
 
 
 class MaxCredit:
     def __init__(self, username, password):
+        log.info("Max portal session: initializing")
         self.username = username
         self.password = password
         self.__driver = load_driver()
         self.__driver = self.__login()
+        log.info("Max portal session: login completed")
 
     def __login(self):
+        log.debug("Max: opening homepage")
         self.__driver.get('https://www.max.co.il/')
         link = WebDriverWait(self.__driver, 10).until(
             EC.element_to_be_clickable(
@@ -458,9 +508,11 @@ class MaxCredit:
         WebDriverWait(self.__driver, 120).until(
             EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'go-to-personal-area')]"))
         )
+        log.debug("Max: personal area marker visible")
         return self.__driver
 
     def download(self, card_digits=None):
+        log.info("Max.download: starting card_digits=%r", card_digits)
         self.__driver.get("https://www.max.co.il/transaction-details/personal")
         time.sleep(2)
         element = WebDriverWait(self.__driver, 10).until(
@@ -475,6 +527,7 @@ class MaxCredit:
             text = card.text
             last_four_digits = text.split()[0]
             card_digits_list.append(last_four_digits)
+        log.debug("Max.download: discovered card last-four list=%s", card_digits_list)
         if not card_digits:
             for card in card_digits_list:
                 time.sleep(1)
@@ -491,8 +544,13 @@ class MaxCredit:
                 time.sleep(10)
                 downloaded, new_file = verify_download(download_dir, 15, 60)
                 if downloaded:
-                    print(f"{new_file} was downloaded successfully. at {os.path.join(download_dir, new_file)}")
+                    log.info(
+                        "Max.download: card=%r saved as %r",
+                        card,
+                        new_file,
+                    )
                 else:
+                    log.error("Max.download: verify failed for card=%r", card)
                     raise FileNotFoundError(f"Failed to download {new_file}.")
 
                 timestamp_latest_file_in_dir(download_dir, ".xlsx")
@@ -516,16 +574,19 @@ class MaxCredit:
             time.sleep(10)
             downloaded, new_file = verify_download(download_dir, 15, 30)
             if downloaded:
-                print(f"{new_file} was downloaded successfully. at {os.path.join(download_dir, new_file)}")
+                log.info("Max.download: single card=%r file=%r", card, new_file)
             else:
+                log.error("Max.download: verify failed for card=%r", card)
                 raise FileNotFoundError(f"Failed to download {new_file}.")
 
             timestamp_latest_file_in_dir(download_dir, ".xlsx")
             time.sleep(5)
         else:
+            log.error("Max.download: card_digits %r not in %s", card_digits, card_digits_list)
             raise Exception(f"Card digits {card_digits} not found within list inside website")
 
     def __del__(self):
+        log.debug("Max portal session: closing WebDriver")
         self.__driver.quit()
 
 
@@ -555,16 +616,35 @@ def verify_download(download_dir, check_interval, timeout):
         paths = [os.path.join(directory, basename) for basename in files]
         return max(paths, key=os.path.getctime) if paths else None
 
+    log.debug(
+        "verify_download: polling dir=%s every %.1fs for up to %ss",
+        download_dir,
+        check_interval / 2,
+        timeout,
+    )
     end_time = datetime.now() + timedelta(seconds=timeout)
+    poll_n = 0
     while datetime.now() < end_time:
+        poll_n += 1
         latest_file = get_latest_file(download_dir)
         if latest_file:
             file_creation_time = datetime.fromtimestamp(os.path.getctime(latest_file))
             current_time = datetime.now()
             time_difference = current_time - file_creation_time
+            log.debug(
+                "verify_download poll=%s latest=%s age=%s threshold=%ss",
+                poll_n,
+                latest_file,
+                time_difference,
+                check_interval,
+            )
             if time_difference < timedelta(seconds=check_interval):
+                log.info("verify_download: accepting new file %s", latest_file)
                 return True, os.path.basename(latest_file)
+        else:
+            log.debug("verify_download poll=%s: directory empty", poll_n)
         time.sleep(check_interval / 2)
+    log.warning("verify_download: timeout after %ss (dir=%s)", timeout, download_dir)
     return False, None
 
 
@@ -572,14 +652,22 @@ class DirTracker:
     def __init__(self, dir: str):
         self.directory = dir
         self.__filelist__ = set(os.listdir(dir))
+        log.debug("DirTracker snapshot %s files=%s", dir, len(self.__filelist__))
 
     def new_file(self):
         current: set = set(os.listdir(self.directory))
-        return len(current.symmetric_difference(self.__filelist__)) != 0, current.symmetric_difference(
-            self.__filelist__)
+        diff = current.symmetric_difference(self.__filelist__)
+        changed = len(diff) != 0
+        if changed:
+            log.debug("DirTracker new_file diff=%s", diff)
+        return changed, diff
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    )
 
     # maxCard = MaxCredit(config.max_username, config.max_password)
     # maxCard.download()

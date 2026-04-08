@@ -1,10 +1,15 @@
 import glob
 import hashlib
+import logging
 import os
 import re
+
 import pandas as pd
 from tabulate import tabulate
+
 import config
+
+log = logging.getLogger(__name__)
 
 
 def generate_transaction_fingerprint(row):
@@ -27,7 +32,7 @@ def generate_transaction_fingerprint(row):
 
         extra_data = re.sub(r'[^a-z0-9\u0590-\u05ff]', '', extract_data)
         fingerprint_key = f"{normalized_date}:{normalized_amount}:{business_name}:{extra_data}"
-        print(f"Generating fingerprint for '{fingerprint_key}'")
+        log.debug("Fingerprint key: %s", fingerprint_key)
         return fingerprint_key
         # return hashlib.sha256(fingerprint_key.encode()).hexdigest()
 
@@ -35,6 +40,7 @@ def generate_transaction_fingerprint(row):
         return None
 class TransactionFile:
     def __init__(self, file_path):
+        log.info("TransactionFile: loading %s", file_path)
         rename_map = {
             'סכום חיוב': 'בחובה',
             'תאריך עסקה': 'תאריך',
@@ -52,6 +58,7 @@ class TransactionFile:
         self.unify_columns(rename_map)
         self.file_df['fingerprint'] = self.file_df.apply(generate_transaction_fingerprint, axis=1)
         self.file_df.dropna(subset=['fingerprint'], inplace=True)
+        log.debug("TransactionFile: after fingerprint rows=%s", len(self.file_df))
 
     def __load_data__(self):
         def unify_dataframe(df, expected_headers):
@@ -94,6 +101,7 @@ class TransactionFile:
                 return None
 
         dfs = pd.read_excel(self.file_path, None)
+        log.debug("TransactionFile __load_data__: sheets=%s", list(dfs.keys()))
 
         file_df = pd.DataFrame()
         for index, df in enumerate(dfs.values()):
@@ -141,19 +149,27 @@ class TransactionFile:
         self.file_df['בזכות'] = self.file_df.apply(update, axis=1)
         self.file_df['בחובה'] = self.file_df['בחובה'].apply(lambda x: float(0) if x < 0 else float(x))
 
-    def to_csv(self):
-        self.file_df.to_csv(os.path.join(config.cleaned_dir, os.path.basename(self.file_path).split('.')[0]) + '.csv',
-                            index=False)
+    def to_csv(self, output_clean_dir=None):
+        out_dir = output_clean_dir or config.cleaned_dir
+        os.makedirs(out_dir, exist_ok=True)
+        out = os.path.join(
+            out_dir,
+            os.path.basename(self.file_path).split(".")[0],
+        ) + ".csv"
+        self.file_df.to_csv(out, index=False)
+        log.info("TransactionFile: wrote cleaned CSV %s rows=%s", out, len(self.file_df))
 
 
 class HoldingsFile:
     def __init__(self, file_path):
+        log.info("HoldingsFile: loading %s", file_path)
         self.file_path = file_path
         self.file_df = pd.read_excel(file_path)
         self.file_df = self.file_df[self.file_df['סוג פעילות'] != 'כ.א. חוץ בנקאיים']
         self.file_df = self.file_df[self.file_df['סוג פעילות'] != 'סה"כ']
         self.file_df = self.file_df.pivot(index='נכון לתאריך', columns='סוג פעילות', values='יתרה בש"ח')
         self.file_df = self.file_df.groupby('נכון לתאריך').first().reset_index()
+        log.debug("HoldingsFile: pivoted shape=%s", self.file_df.shape)
 
     def drop_columns(self, column_list):
         current_columns = self.file_df.columns
@@ -166,7 +182,9 @@ class HoldingsFile:
         merged_row = self.file_df.max()
         self.file_df = pd.DataFrame([merged_row])
 
-    def to_csv(self):
+    def to_csv(self, output_clean_dir=None):
+        out_dir = output_clean_dir or config.cleaned_dir
+        os.makedirs(out_dir, exist_ok=True)
         filename = os.path.basename(self.file_path)
         date_pattern = re.compile(r'(\d{1,2}-\d{1,2}-\d{4})')
 
@@ -177,8 +195,9 @@ class HoldingsFile:
             self.file_df['תאריך'] = formatted_date
         else:
             formatted_date = "00-00-00 00:00:00"
-        self.file_df.to_csv(os.path.join(config.cleaned_dir, f"Holdings_{formatted_date}.csv"),
-                            index=False)
+        out_path = os.path.join(out_dir, f"Holdings_{formatted_date}.csv")
+        self.file_df.to_csv(out_path, index=False)
+        log.info("HoldingsFile: wrote %s rows=%s", out_path, len(self.file_df))
 
 
 if __name__ == "__main__":

@@ -1,26 +1,30 @@
 import datetime
-import glob
+import logging
 import os
 import sys
 import webbrowser
 
-import compile_handler
 import config
-import csv_handler
 import gs_handler
-import import_handler
-import input_handler
+import pipeline
 from categorizer import CategorizeFile
 from PyQt6 import QtWidgets, uic
-from logger import Logger
+from logger import Logger, configure_pipeline_logging
 import functools
 import inspect
 
 logger = Logger()
+_py_log = logging.getLogger("main.ui")
+
+
+def _pipeline_sink(message: str) -> None:
+    logger.log_process_ongoing(message=message)
+
 
 def log_process(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        _py_log.debug("UI action started: %s", func.__name__)
         logger.log_process_started(process_name=func.__name__)
         try:
             # Determine how many positional parameters the function actually accepts.
@@ -32,199 +36,32 @@ def log_process(func):
             else:
                 result = func(*args, **kwargs)
         except Exception as e:
+            _py_log.exception("UI action failed: %s", func.__name__)
             logger.log_process_finished(
                 process_name=func.__name__,
                 message=f"Failed with: {e}"
             )
             raise
         else:
+            _py_log.debug("UI action finished: %s", func.__name__)
             logger.log_process_finished(process_name=func.__name__)
             return result
 
     return wrapper
 
 
-class Process:
-    def __init__(self, process_type: str):
-        """
-        :param process_type: can be only: credit, bank or holdings. anyting else returns an error.
-        """
-        if process_type.lower() not in ['credit', 'bank', 'holdings']:
-            raise Exception("process type not Credit, Bank, Holdings.")
-        self.type = process_type.lower()
-        self.directories = {
-            'input': config.input_dir,
-            'xlsx': config.raw_dir,
-            'csvs': config.cleaned_dir,
-            'compiled': config.compiled_dir,
-        }
-        for directory in self.directories.values():
-            os.makedirs(directory, exist_ok=True)
-        os.makedirs(os.path.dirname(config.transaction_category_file), exist_ok=True)
-
-    def clean_history(self, keys_to_ignore=None):
-        if keys_to_ignore is None:
-            keys_to_ignore = []
-        for key, folder in self.directories.items():
-            if not os.path.isdir(folder):
-                logger.log_process_ongoing(message=f"The folder {folder} does not exist.")
-                continue
-            if key in keys_to_ignore:
-                logger.log_process_ongoing(message=f"Skipping {folder} as requested.")
-                continue
-            if keys_to_ignore == ['All']:
-                logger.log_process_ongoing(message=f"Not deleting any file.")
-                return
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-
-                if os.path.isfile(file_path):
-                    try:
-                        os.remove(file_path)
-                        logger.log_process_ongoing(message=f"Deleted file: {file_path}")
-                    except Exception as e:
-                        logger.log_process_ongoing(message=f"Failed to delete {file_path}. Reason: {e}")
-        logger.log_process_ongoing(message="All used files has been removed.")
-
-    def launch(self, from_date=None, to_date=None):
-        def _convert_to_xlsx():
-            logger.log_process_ongoing(message="CONVERT PROCESS START")
-            file_list = glob.glob(self.directories['input'] + '*.xls*')
-            for file in file_list:
-                f = input_handler.File(file)
-                f.to_xlsx()
-            logger.log_process_ongoing(message="CONVERT PROCESS END")
-
-        def _convert_to_csv(type):
-            logger.log_process_ongoing(message="CSV CONVERSION START")
-            file_list = glob.glob(self.directories['xlsx'] + '*.xls*')
-            if type == 'holdings':
-                logger.log_process_ongoing(message="CSV CONVERSION START")
-                for f in file_list:
-                    hf = csv_handler.HoldingsFile(f)
-                    rename_map = {
-                        'נכון לתאריך': 'תאריך',
-                    }
-                    hf.unify_columns(rename_map)
-                    hf.to_csv()
-                logger.log_process_ongoing(message="CSV CONVERSION END")
-
-            elif type in ['credit', 'bank']:
-                for file in file_list:
-                    f = csv_handler.TransactionFile(file)
-                    f.drop_columns(
-                        ['סכום עסקה', 'מטבע חיוב', 'מטבע עסקה מקורי', 'מטבע מקור', 'מטבע לחיוב', 'סכום עסקה מקורי',
-                         'סכום מקורי'
-                            , 'מספר שובר', 'תאריך חיוב', 'שער המרה ממטבע מקור/התחשבנות לש"ח', 'אופן ביצוע ההעסקה',
-                         'הערות',
-                         'סוג עסקה', 'תאריך ערך', 'הערה', 'אסמכתא', 'קטגוריה', 'היתרה בש"ח'])
-                    f.drop_by_column_and_value('מקור עסקה', 'כרטיס דביט')
-                    f.drop_by_column_and_value('מקור עסקה', 'ישראכרט בע"מ-י')
-                    f.drop_by_column_and_value('מקור עסקה', 'מקס איט פיננ-י')
-                    f.drop_by_column_and_value('מקור עסקה', 'פקדון אינטר700')
-
-                    f.to_csv()
-                del file_list
-
-            else:
-                raise ValueError("Type must be 'holdings','credit','bank'.")
-            logger.log_process_ongoing(message="CSV CONVERSION END")
-
-        def _compile(type):
-            if type == 'holdings':
-                logger.log_process_ongoing(message="COMPILER START")
-                d = compile_handler.Compiler(config.holdings_file)
-                d.__compile_new__(self.directories['csvs'], suffix=type)
-                d.compile_to_main()
-                d.save_all()
-                logger.log_process_ongoing(message="COMPILER END")
-            elif type in ['credit', 'bank']:
-                logger.log_process_ongoing(message="COMPILER START")
-                c = compile_handler.Compiler(config.compiled_file)
-                c.__compile_new__(self.directories['csvs'], suffix=type)
-                c.compile_to_main()
-                main_file, new_file = c.save_all()
-                del c
-                logger.log_process_ongoing(message="COMPILER END")
-                categorizer = CategorizeFile(main_file)
-                categorizer.auto_categorize()
-            else:
-                raise ValueError("Type must be 'holdings','credit','bank'.")
-
-        self.import_(from_date=from_date, to_date=to_date)
-        _convert_to_xlsx()
-        _convert_to_csv(self.type)
-        _compile(self.type)
-        self.clean_history(keys_to_ignore=['compiled', 'input'])
-
-    def import_(self, from_date=None, to_date=None):
-        if self.type == 'credit':
-            # FILE IMPORT START
-            logger.log_process_ongoing(message="IMPORT PROCESS START")
-            # importer = import_handler.MaxCredit(config.max_username, config.max_password)
-            failed = True
-            while failed:
-                try:
-                    importer = import_handler.MaxCredit(config.max_username, config.max_password)
-                    try:
-                        importer.download()
-                        failed = False
-                    except FileNotFoundError as e:
-                        logger.log_process_ongoing(message=e)
-                        logger.log_process_ongoing(message="Retrying download until success")
-                except Exception as e:
-                    logger.log_process_ongoing(message=e)
-                    logger.log_process_ongoing(message="retrying untill success")
-
-            del importer
-            failed = True
-
-            while failed:
-                try:
-                    importer = import_handler.IsracardCredit(config.credit_username, config.credit_password,
-                                                             config.credit_last6)
-                    try:
-                        importer.download()
-                        failed = False
-                    except FileNotFoundError as e:
-                        logger.log_process_ongoing(message=e)
-                        logger.log_process_ongoing(message="Retrying download until success")
-                except Exception as e:
-                    logger.log_process_ongoing(message=e)
-                    logger.log_process_ongoing(message="Retrying untill success")
-            del importer
-            logger.log_process_ongoing(message="IMPORT PROCESS END")
-        elif self.type == 'bank':
-            failed = True
-
-            while failed:
-                try:
-                    b = import_handler.Bank(config.bank_username, config.bank_password)
-                    try:
-                        b.download('osh', from_date=from_date, to_date=to_date)
-                        failed = False
-                    except FileNotFoundError as e:
-                        logger.log_process_ongoing(message=e)
-                        logger.log_process_ongoing(message="Retrying file download.")
-                except Exception as e:
-                    logger.log_process_ongoing(message=e)
-                    logger.log_process_ongoing(message="Retrying untill success")
-        elif self.type == 'holdings':
-
-            failed = True
-            while failed:
-                try:
-                    b = import_handler.Bank(config.bank_username, config.bank_password)
-                    try:
-                        b.download('holdings')
-                        failed = False
-                    except FileNotFoundError as e:
-                        logger.log_process_ongoing(message=e)
-                        logger.log_process_ongoing(message="Retrying download until success")
-                except Exception as e:
-                    logger.log_process_ongoing(message=e)
-                    logger.log_process_ongoing(message="Retrying untill success")
-            del b
+def _clear_files_in_dir(folder: str) -> None:
+    folder = os.path.normpath(folder)
+    if not os.path.isdir(folder):
+        return
+    for name in os.listdir(folder):
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+                logger.log_process_ongoing(message=f"Removed old file -> {path}")
+            except Exception as e:
+                logger.log_process_ongoing(message=f"Failed removing {path}, error message: {e}")
 
 
 def ui():
@@ -233,50 +70,36 @@ def ui():
     totals_sheetname = 'Totals'+current_year
     def delete_old_files():
         check_sync()
-        input_files = glob.glob(os.path.join(config.input_dir, '*.*'))
-        raw_files = glob.glob(os.path.join(config.raw_dir, '*.*'))
-        cleaned_files = glob.glob(os.path.join(config.cleaned_dir, '*.*'))
-        testing = input_files
-        testing += raw_files
-        testing += cleaned_files
-        for file in testing:
-            try:
-                os.remove(file)
-                logger.log_process_ongoing(message=f"Removed old file -> {file}")
-            except Exception as e:
-                logger.log_process_ongoing(message=f"Failed removing {file}, error message: {e}")
+        pipeline.ensure_workspace_dirs()
+        os.makedirs(config.unclassified_download_dir, exist_ok=True)
+        for folder in (
+            config.download_inbox_dir,
+            config.unclassified_download_dir,
+            config.holdings_inbox_dir,
+            config.holdings_raw_dir,
+            config.holdings_clean_dir,
+            config.transactions_inbox_dir,
+            config.transactions_raw_dir,
+            config.transactions_clean_dir,
+            config.raw_dir.rstrip(os.sep),
+            config.cleaned_dir.rstrip(os.sep),
+        ):
+            _clear_files_in_dir(folder)
 
     @log_process
     def grab_holdings():
-        b = import_handler.Bank(config.bank_username, config.bank_password)
-        b.download("holdings")
+        pipeline.fetch_holdings(sink=_pipeline_sink)
 
     @log_process
     def process_holdings():
-        holdings = glob.glob(os.path.join(config.input_dir, '*יתרות*.xls*'))
-        for holding in holdings:
-            logger.log_process_ongoing(message=f"Processing Holdings file to xlsx >> {holding}")
-            f = input_handler.File(holding)
-            f.to_xlsx()
-            logger.log_process_ongoing(message=f"Finished converting to xlsx {holding}")
-        holdings = glob.glob(os.path.join(config.raw_dir, '*יתרות*.xls*'))
-        for holding in holdings:
-            hf = csv_handler.HoldingsFile(holding)
-            rename_map = {
-                'נכון לתאריך': 'תאריך',
-            }
-            hf.unify_columns(rename_map)
-            hf.to_csv()
-            logger.log_process_ongoing(message=f"Finished converting to csv {holding}")
+        pipeline.ensure_workspace_dirs()
+        pipeline.route_inbox(sink=_pipeline_sink)
+        pipeline.ingest_holdings_inbox(sink=_pipeline_sink)
+        pipeline.csv_from_raw_holdings(sink=_pipeline_sink)
 
     @log_process
     def compile_holdings():
-        holdings_file = glob.glob(config.cleaned_dir + '*Holdings*.csv')
-        if len(holdings_file) == 1:
-            d = compile_handler.Compiler(config.holdings_file)
-            d.__compile_new__(config.cleaned_dir, suffix='holdings')
-            d.compile_to_main()
-            d.save_all()
+        pipeline.compile_holdings_main(sink=_pipeline_sink)
 
     def push_holdings():
         gsh = gs_handler.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
@@ -290,67 +113,35 @@ def ui():
         if not credit_grab_checkbox or not bank_grab_checkbox:
             logger.log_process_ongoing(message="Error locating check boxes")
         if credit_grab_checkbox.isChecked() or bank_grab_checkbox.isChecked():
-            logger.log_process_ongoing(message="Launching bank website..")
-            downloader = import_handler.Bank(config.bank_username, config.bank_password)
-            if credit_grab_checkbox.isChecked():
-                logger.log_process_ongoing(message="Downloading credit details...")
-                downloader.download("credit")
-            if bank_grab_checkbox.isChecked():
-                logger.log_process_ongoing(message="Downloading bank transactions details...")
-                start_date = None
-                end_date = None
-                if MainWindow.findChild(QtWidgets.QCheckBox, 'grabByDate').isChecked():
-                    start_date = None if MainWindow.findChild(QtWidgets.QLineEdit,
-                                                              'startDate').text() == "" else MainWindow.findChild(
-                        QtWidgets.QLineEdit, 'startDate').text()
-                    end_date = None if MainWindow.findChild(QtWidgets.QLineEdit,
-                                                            'endDate').text() == "" else MainWindow.findChild(
-                        QtWidgets.QLineEdit, 'endDate').text()
-                downloader.download(file="osh", from_date=start_date, to_date=end_date)
-            del downloader
-
+            start_date = None
+            end_date = None
+            if MainWindow.findChild(QtWidgets.QCheckBox, 'grabByDate').isChecked():
+                start_date = None if MainWindow.findChild(QtWidgets.QLineEdit,
+                                                          'startDate').text() == "" else MainWindow.findChild(
+                    QtWidgets.QLineEdit, 'startDate').text()
+                end_date = None if MainWindow.findChild(QtWidgets.QLineEdit,
+                                                        'endDate').text() == "" else MainWindow.findChild(
+                    QtWidgets.QLineEdit, 'endDate').text()
+            pipeline.fetch_transactions_bank_credit_and_osh(
+                credit=credit_grab_checkbox.isChecked(),
+                bank_osh=bank_grab_checkbox.isChecked(),
+                from_date=start_date,
+                to_date=end_date,
+                sink=_pipeline_sink,
+            )
         else:
             logger.log_process_ongoing(message="No checkbox selected... not doing anything.")
 
     @log_process
     def process_transactions():
-        files = glob.glob(os.path.join(config.input_dir, '*.xls*'))
-        for file in files:
-            if 'יתרות' not in file:
-                logger.log_process_ongoing(message=f"Processing Transactions file to xlsx >> {file}")
-                f = input_handler.File(file)
-                f.to_xlsx()
-
-        files = glob.glob(os.path.join(config.raw_dir, '*.xls*'))
-        for file in files:
-            if 'יתרות' not in file:
-                f = csv_handler.TransactionFile(file)
-                f.drop_columns(
-                    ['סכום עסקה', 'מטבע חיוב', 'מטבע עסקה מקורי', 'מטבע מקור', 'מטבע לחיוב', 'סכום עסקה מקורי',
-                     'סכום מקורי', 'מספר שובר', 'תאריך חיוב', 'שער המרה ממטבע מקור/התחשבנות לש"ח', 'אופן ביצוע ההעסקה',
-                     'סוג עסקה', 'תאריך ערך', 'הערה', 'אסמכתא', 'קטגוריה', 'היתרה בש"ח'])
-                f.drop_by_column_and_value('מקור עסקה', 'כרטיס דביט')
-                f.drop_by_column_and_value('מקור עסקה', 'קניה-אינטרנט')
-                f.drop_by_column_and_value('מקור עסקה', 'מכירה-אינטרנט')
-                f.drop_by_column_and_value('מקור עסקה', 'ישראכרט בע"מ-י')
-                f.drop_by_column_and_value('מקור עסקה', 'מקס איט פיננ-י')
-                f.drop_by_column_and_value('מקור עסקה', 'פקדון אינטר700')
-                f.drop_by_column_and_value('מקור עסקה', 'פקדון אינטרנט')
-                f.drop_by_column_and_value('מקור עסקה', 'פקדון*')
-                f.drop_by_column_and_value('מקור עסקה', 'קנית ני"ע')
-                f.drop_by_column_and_value('מקור עסקה', 'מכירת ני"ע')
-                f.drop_by_column_and_value('מקור עסקה', 'שינוי בנ"ע')
-                f.drop_by_column_and_value('מקור עסקה', 'קנית ני""ע')
-                f.drop_by_column_and_value('מקור עסקה', 'החלפת נייר ערך')
-                f.to_csv()
+        pipeline.ensure_workspace_dirs()
+        pipeline.route_inbox(sink=_pipeline_sink)
+        pipeline.ingest_transactions_inbox(sink=_pipeline_sink)
+        pipeline.csv_from_raw_transactions(drop_profile="full", sink=_pipeline_sink)
 
     @log_process
     def compile_transactions():
-        c = compile_handler.Compiler(config.compiled_file)
-        c.__compile_new__(config.cleaned_dir, suffix='credit')
-        c.compile_to_main()
-        c.save_all()
-        c.update_fingerprint_db()
+        pipeline.compile_transactions_main(run_auto_categorize=False, sink=_pipeline_sink)
 
     @log_process
     def push_transactions():
@@ -403,6 +194,7 @@ def ui():
     def launch_sheet():
         webbrowser.open(f"https://docs.google.com/spreadsheets/d/{config.GOOGLE_WORKSHEET_ID}")
 
+    configure_pipeline_logging()
     app = QtWidgets.QApplication(sys.argv)
 
     MainWindow = QtWidgets.QMainWindow()
@@ -467,4 +259,8 @@ def ui():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] in ("--pipeline", "-p"):
+        from run_pipeline import main as pipeline_cli_main
+
+        raise SystemExit(pipeline_cli_main(sys.argv[2:]))
     ui()
