@@ -2,6 +2,7 @@ import urllib.parse
 from datetime import datetime, timedelta
 import config
 from selenium import webdriver, common
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver import Keys, ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -13,6 +14,44 @@ from folder_tracking import FolderTracker
 
 project_dir = os.path.abspath(os.path.dirname(__file__))
 download_dir = os.path.join(project_dir, config.input_dir)
+
+# Set FINANCE_SELENIUM_DEBUG=1 to print optional-click outcomes and pause hints.
+# Set FINANCE_SELENIUM_PAUSE=1 to wait for Enter after each flow_debug_pause(...) call.
+
+
+def _selenium_debug() -> bool:
+    return os.environ.get("FINANCE_SELENIUM_DEBUG", "").strip() in ("1", "true", "yes")
+
+
+def _flow_debug_log(message: str) -> None:
+    if _selenium_debug():
+        print(f"[selenium] {message}")
+
+
+def flow_debug_pause(_driver, label: str) -> None:
+    """Block until Enter when FINANCE_SELENIUM_PAUSE is set (step-through debugging)."""
+    if not os.environ.get("FINANCE_SELENIUM_PAUSE", "").strip() in ("1", "true", "yes"):
+        return
+    input(f"[selenium pause] {label}\nPress Enter to continue… ")
+
+
+def optional_click(driver, locator, timeout: float = 5.0, description: str = "") -> bool:
+    """
+    Click if the element becomes clickable within timeout; otherwise return False.
+    Does not raise — use for cookie banners, one-off overlays, etc.
+    """
+    by, value = locator
+    try:
+        el = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, value)))
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
+        el.click()
+        if description:
+            _flow_debug_log(f"optional click OK: {description}")
+        return True
+    except TimeoutException:
+        if description:
+            _flow_debug_log(f"optional click skipped (not found in {timeout}s): {description}")
+        return False
 
 
 def timestamp_latest_file_in_dir(directory, file_extension=".xlsx"):
@@ -64,6 +103,13 @@ class Bank:
     def __login__(self):
         url = 'https://hb2.bankleumi.co.il/H/Login.html'
         self.__driver.get(url)
+        optional_click(
+            self.__driver,
+            (By.CSS_SELECTOR, "button.app-close-cookies-btn"),
+            timeout=5,
+            description="Leumi login — cookie banner close",
+        )
+        flow_debug_pause(self.__driver, "Leumi login page loaded (after cookie dismiss attempt)")
         time.sleep(2)
         username = self.__driver.find_element(By.NAME, 'user')
         password = self.__driver.find_element(By.NAME, 'password')

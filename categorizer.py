@@ -1,11 +1,39 @@
 import asyncio
 import difflib
 import os.path
+import re
 from numpy import nan
 import pandas as pd
+from bidi.algorithm import get_display
+
 import config
 from config import similar_categories_file
 from compile_handler import update_category_in_fingerprint_db
+
+_HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
+
+
+def _terminal_bidi(s):
+    """Hebrew reads correctly in LTR-only terminals (logical → visual order)."""
+    if s is None:
+        return ""
+    if isinstance(s, float) and pd.isna(s):
+        return "nan"
+    text = str(s)
+    if _HEBREW_RE.search(text):
+        return get_display(text)
+    return text
+
+
+def _terminal_bidi_seq(seq, left="{", right="}", *, sort=True):
+    items = sorted(seq, key=lambda v: str(v)) if sort else list(seq)
+    parts = []
+    for x in items:
+        if isinstance(x, float) and pd.isna(x):
+            parts.append("nan")
+        else:
+            parts.append(repr(_terminal_bidi(str(x))))
+    return left + ", ".join(parts) + right
 
 
 class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
@@ -60,13 +88,15 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                             'category'].tolist()
                         print("Transaction details:")
                         print(
-                            f"Transaction source: {store_name}\nDate: {date}\nExpense: {expense}\n"
-                            f"Income: {income}\nAdditional details: {details}\nDigits: {digits}")
-                        print(f"Past categories for {store_name}: {dynamic_categories}")
-                        print(f"All categories: {all_categories}")
+                            f"Transaction source: {_terminal_bidi(store_name)}\nDate: {date}\nExpense: {expense}\n"
+                            f"Income: {income}\nAdditional details: {_terminal_bidi(details)}\nDigits: {_terminal_bidi(digits)}")
+                        print(
+                            f"Past categories for {_terminal_bidi(store_name)}: "
+                            f"{_terminal_bidi_seq(dynamic_categories, '[', ']', sort=False)}")
+                        print(f"All categories: {_terminal_bidi_seq(all_categories)}")
 
                         category_input = input(
-                            f"Choose a category for {store_name} from the categories, or type a new one: ").strip()
+                            f"Choose a category for {_terminal_bidi(store_name)} from the categories, or type a new one: ").strip()
                         if category_input in dynamic_categories:
                             return category_input
                         else:
@@ -78,11 +108,11 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                     else:  # is_static is fucked (-1 or anything else)
                         print("Transaction details:")
                         print(
-                            f"Transaction source: {store_name}\nDate: {date}\nExpense: {expense}\n"
-                            f"Income: {income}\nAdditional details: {details}\nDigits: {digits}")
+                            f"Transaction source: {_terminal_bidi(store_name)}\nDate: {date}\nExpense: {expense}\n"
+                            f"Income: {income}\nAdditional details: {_terminal_bidi(details)}\nDigits: {_terminal_bidi(digits)}")
 
                         is_static_input = input(
-                            f"Is this category: [{category}] for {store_name} static?"
+                            f"Is this category: [{_terminal_bidi(category)}] for {_terminal_bidi(store_name)} static?"
                             f"\n (Type '0' if dynamic, type '1' if static): ").strip()
                         is_static = int(is_static_input) if int(is_static_input) == 1 or 0 else -1
                         self.stores_df.loc[self.stores_df['store_name'] == store_name, 'is_static'] = is_static
@@ -90,14 +120,14 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                         return category
             print("Transaction details:")
             print(
-                f"Transaction source: {store_name}\nDate: {date}\nExpense: {expense}\n"
-                f"Income: {income}\nAdditional details: {details}\nDigits: {digits}")
-            print(f"All categories: {all_categories}")
+                f"Transaction source: {_terminal_bidi(store_name)}\nDate: {date}\nExpense: {expense}\n"
+                f"Income: {income}\nAdditional details: {_terminal_bidi(details)}\nDigits: {_terminal_bidi(digits)}")
+            print(f"All categories: {_terminal_bidi_seq(all_categories)}")
             category_input = input(
-                f"{store_name} is not in the store list. Choose a category from the list or type a new one: ").strip()
+                f"{_terminal_bidi(store_name)} is not in the store list. Choose a category from the list or type a new one: ").strip()
 
             is_static_input = input(
-                f"Should {store_name} be under static category? Type 1 for static and 0 for fluid: ").strip()
+                f"Should {_terminal_bidi(store_name)} be under static category? Type 1 for static and 0 for fluid: ").strip()
 
             new_row = {'store_name': store_name, 'category': category_input, 'is_static': int(is_static_input)}
             self.stores_df.loc[len(self.stores_df)] = new_row
@@ -170,7 +200,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                     if pd.notna(fingerprint):
                         update_category_in_fingerprint_db(fingerprint, category)
 
-            self.awaiting_df.drop(index=index, axis=1)
+            self.awaiting_df.drop(index=index, inplace=True)
         # DISCORD BOT TRY
         # if through == 'discord':
         #     print("Launching discord bot...")
@@ -215,9 +245,10 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 category = row['category']
                 store_name = row['store_name']
                 if row['is_static'] not in [1, 0]:
-                    print(f"Fixing store {row['store_name']} with category {row['category']}.")
+                    print(
+                        f"Fixing store {_terminal_bidi(row['store_name'])} with category {_terminal_bidi(row['category'])}.")
                     is_static_input = input(
-                        f"Is this category: [{category}] for {store_name} static?"
+                        f"Is this category: [{_terminal_bidi(category)}] for {_terminal_bidi(store_name)} static?"
                         f"\n (Type '0' if dynamic, type '1' if static): ")
                     is_static = int(is_static_input) if int(is_static_input) in [1, 0] else -1
                     stores_df.loc[stores_df['store_name'] == store_name, 'is_static'] = is_static
@@ -251,9 +282,9 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                         pair = [ans[0], ans[1]]
                         if pair in linked_pairs.values.tolist() or list(reversed(pair)) in linked_pairs.values.tolist():
                             continue
-                        print(f"Checking {category}:")
+                        print(f"Checking {_terminal_bidi(category)}:")
                         for i, option in enumerate(ans, 1):
-                            print(f"{i}. {option}")
+                            print(f"{i}. {_terminal_bidi(option)}")
                         ans_input = input(f"Choose:\n1. Keep first\n2. Keep second\n3. Keep both\n")
                         if ans_input in ['1', '2']:
                             choice = int(ans_input) - 1
@@ -315,7 +346,8 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             if match['category'].item() != category:
                 if match['is_static'].item() == 1:
                     print(
-                        f"Found new category '{category}' for {store_name}, which was previously defined as {match['category'].item()}")
+                        f"Found new category '{_terminal_bidi(category)}' for {_terminal_bidi(store_name)}, "
+                        f"which was previously defined as {_terminal_bidi(match['category'].item())}")
                     ans = input(
                         "Type: \n1 to modify current static category for store. \n2 to change store to dynamic and add "
                         "category.\n3 to ignore.\n")

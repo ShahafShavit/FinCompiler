@@ -79,7 +79,9 @@ class TransactionFile:
                     process_current_df(current_df)
                     current_df = pd.DataFrame(columns=row)
                 if current_df is not None:
-                    current_df = current_df._append(row, ignore_index=True)
+                    current_df = pd.concat(
+                        [current_df, row.to_frame().T], ignore_index=True
+                    )
 
             # Process the last chunk
             process_current_df(current_df)
