@@ -311,32 +311,41 @@ class Bank:
                     while True:
                         months_hebrew = [
                             "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
-                            "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"
+                            "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",
                         ]
                         current_date = datetime.now()
-
-                        next_month_index = current_date.month
-                        current_year = current_date.year
-
-                        this_month_string = f"{months_hebrew[next_month_index]} {current_year}"
-                        log.debug(
-                            "Max credit UI: month_index=%s year=%s label=%r",
-                            next_month_index,
-                            current_year,
-                            this_month_string,
+                        # Calendar month name is 1..12; array is 0..11 (was using month as index → off by one).
+                        target_month_label = (
+                            f"{months_hebrew[current_date.month - 1]} {current_date.year}"
                         )
+                        log.debug(
+                            "Max credit UI: target billing month label=%r (calendar month=%s year=%s)",
+                            target_month_label,
+                            current_date.month,
+                            current_date.year,
+                        )
+                        # Open combo by structure — display may be מאי / default, not our target month.
                         date_combo = WebDriverWait(self.__driver, 10).until(
                             EC.element_to_be_clickable(
-                                (By.XPATH,
-                                 f"//div[contains(@class, 'combo-text dates') and text()=' {this_month_string} ']"))
+                                (
+                                    By.CSS_SELECTOR,
+                                    "div.combo.dates div.open-menu[role='button']",
+                                )
+                            )
                         )
                         date_combo.click()
 
-                        previous_month = WebDriverWait(self.__driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH,
-                                                        "//li[@class='month selected-month ng-star-inserted']/following-sibling::li[1]"))
+                        month_option = WebDriverWait(self.__driver, 10).until(
+                            EC.element_to_be_clickable(
+                                (
+                                    By.XPATH,
+                                    "//ul[contains(@class,'month-wrapper')]"
+                                    "//li[contains(@class,'month')]"
+                                    f"[normalize-space()='{target_month_label}']",
+                                )
+                            )
                         )
-                        previous_month.click()
+                        month_option.click()
                         excel_link = WebDriverWait(self.__driver, 10).until(
                             EC.element_to_be_clickable(
                                 (By.XPATH, "//a[contains(text(),'להורדת פירוט החיובים כקובץ אקסל')]"))
