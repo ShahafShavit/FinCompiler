@@ -10,7 +10,7 @@ import glob
 import logging
 import os
 import signal
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import compile_handler
 import config
@@ -131,6 +131,36 @@ def fetch_transactions_bank_credit_and_osh(
         del downloader
 
 
+def run_portal_fetches(
+    *,
+    holdings: bool = False,
+    max_isracard: bool = False,
+    bank_credit: bool = False,
+    bank_osh: bool = False,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    sink: Optional[Callable[[str], None]] = None,
+) -> None:
+    """
+    Run only the selected Selenium downloads into the shared inbox (``data/input/``).
+
+    Order matches ``run_pipeline.py all``: holdings, then Max/Isracard, then one Leumi
+    session for the requested credit/osh exports.
+    """
+    if holdings:
+        fetch_holdings(sink=sink)
+    if max_isracard:
+        fetch_transactions_max_isracard(sink=sink)
+    if bank_credit or bank_osh:
+        fetch_transactions_bank_credit_and_osh(
+            credit=bank_credit,
+            bank_osh=bank_osh,
+            from_date=from_date,
+            to_date=to_date,
+            sink=sink,
+        )
+
+
 def fetch_transactions_max_isracard(*, sink: Optional[Callable[[str], None]] = None) -> None:
     """Standalone Max + Isracard downloads (legacy Process type 'credit')."""
     _notify("FETCH: Max credit cards", sink)
@@ -237,10 +267,12 @@ def compile_holdings_main(*, sink: Optional[Callable[[str], None]] = None) -> No
 def run_categorization_interactive(
     *,
     sink: Optional[Callable[[str], None]] = None,
+    interaction_handler: Optional[Any] = None,
 ) -> None:
     """
     Same as the GUI categorize step: ``auto_categorize`` then ``manual_categorizer`` using
-    ``create_interaction_handler()`` (terminal or HTTP per ``FINANCE_CATEGORIZE_UI``).
+    ``create_interaction_handler()`` (terminal or HTTP per ``FINANCE_CATEGORIZE_UI``), or a
+    caller-supplied handler (e.g. web control server with a fixed HTTP port).
     """
     if not os.path.isfile(config.compiled_file):
         _notify("CATEGORIZE: skip (compiled.csv missing)", sink)
@@ -249,7 +281,7 @@ def run_categorization_interactive(
         "CATEGORIZE: interactive (auto, then prompts); FINANCE_CATEGORIZE_UI=http uses the browser",
         sink,
     )
-    h = create_interaction_handler()
+    h = interaction_handler if interaction_handler is not None else create_interaction_handler()
     old_sigint = signal.getsignal(signal.SIGINT)
 
     def _sigint(_signum, _frame) -> None:  # noqa: ARG001

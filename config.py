@@ -89,3 +89,7 @@ categorize_http_host = os.environ.get("FINANCE_CATEGORIZE_HTTP_HOST", "127.0.0.1
 categorize_http_port = int(os.environ.get("FINANCE_CATEGORIZE_HTTP_PORT", "0") or "0")
 _categorize_open = os.environ.get("FINANCE_CATEGORIZE_HTTP_OPEN_BROWSER", "1").strip().lower()
 categorize_http_open_browser = _categorize_open not in ("0", "false", "no", "off")
+
+# Local web control dashboard: pipeline at / and categorization at /categorize/ on the same port
+control_http_host = os.environ.get("FINANCE_CONTROL_HTTP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+control_http_port = int(os.environ.get("FINANCE_CONTROL_HTTP_PORT", "8780") or "8780")

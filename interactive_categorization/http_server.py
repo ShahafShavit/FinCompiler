@@ -1,8 +1,7 @@
-"""Browser-based categorization UI: local HTTP server.
+"""Browser-based categorization UI: local HTTP server (blocking prompts).
 
-The categorizer thread posts one pending prompt at a time (see ``_pending``). The page **does not
-poll**: it calls ``GET /api/next`` once on load and once after each successful ``POST /api/respond``
-or ``POST /api/revise`` to refresh the pending prompt, session category list, and in-session history.
+The control dashboard serves a **queue** at ``/categorize/`` via ``web_control.categorize_queue`` instead.
+This handler is used by ``run_pipeline.py --categorize`` / Qt when ``FINANCE_CATEGORIZE_UI=http``.
 """
 
 from __future__ import annotations
@@ -19,11 +18,13 @@ from interactive_categorization.prompts import FluidStorePrompt, NewStorePrompt,
 
 log = logging.getLogger(__name__)
 
-_HTML = """<!DOCTYPE html>
+# {BASE_HREF} is "/" for a standalone server or "/categorize/" when mounted on the control dashboard.
+_HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <base href="{BASE_HREF}"/>
   <title>קטגוריזציה</title>
   <style>
     :root { font-family: system-ui, Segoe UI, Arial, sans-serif; background: #1a1b1e; color: #e8e8ea; }
@@ -33,6 +34,26 @@ _HTML = """<!DOCTYPE html>
     .card { background: #25262b; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; }
     label { display: block; margin: 0.5rem 0 0.25rem; font-size: 0.85rem; opacity: 0.85; }
     input, select, button { font: inherit; padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid #3f4046; background: #1a1b1e; color: inherit; width: 100%; box-sizing: border-box; }
+    /* Firefox hides the native <input list> trigger until hover; show our own affordance always. */
+    .combo-cat-wrap { position: relative; display: block; width: 100%; }
+    input.combo-cat {
+      width: 100%;
+      padding-inline-end: 2.1rem;
+      margin: 0;
+    }
+    .combo-cat-affordance {
+      position: absolute;
+      inset-inline-end: 0.55rem;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: #adb5bd;
+      font-size: 0.55rem;
+      line-height: 1;
+      letter-spacing: 0;
+      user-select: none;
+      opacity: 0.95;
+    }
     button { cursor: pointer; background: #4c6ef5; border-color: #4c6ef5; color: #fff; margin-top: 0.75rem; }
     button.secondary { background: transparent; color: #adb5bd; border-color: #495057; }
     button.small { margin-top: 0.35rem; padding: 0.35rem 0.5rem; font-size: 0.85rem; width: auto; }
@@ -94,36 +115,24 @@ _HTML = """<!DOCTYPE html>
     return out;
   }
 
-  function categorySelectHtml(selectId, selected, sessionCats, pending) {
+  function categoryComboboxHtml(inputId, selected, sessionCats, pending) {
     const opts = mergeCategoryOptions(sessionCats, pending);
-    let h = '<select id="' + escAttr(selectId) + '">';
-    h += '<option value="">— בחר קטגוריה —</option>';
+    const dlId = inputId + '-dl';
+    let h = '<div class="combo-cat-wrap">';
+    h += '<input type="text" class="combo-cat" id="' + escAttr(inputId) + '" list="' + escAttr(dlId) + '" autocomplete="off" placeholder="בחר מהרשימה או הקלד" value="' + escAttr(selected || '') + '"/>';
+    h += '<span class="combo-cat-affordance" aria-hidden="true" title="ניתן לבחור מהרשימה או להקליד">▼</span>';
+    h += '</div>';
+    h += '<datalist id="' + escAttr(dlId) + '">';
     for (const c of opts) {
-      const sel = c === selected ? ' selected' : '';
-      h += '<option value="' + escAttr(c) + '"' + sel + '>' + esc(c) + '</option>';
+      h += '<option value="' + escAttr(c) + '"></option>';
     }
-    h += '<option value="__custom__">אחר (הקלד)…</option></select>';
-    h += '<input id="' + escAttr(selectId) + '-custom" type="text" style="display:none;margin-top:0.5rem" placeholder="קטגוריה חדשה"/>';
+    h += '</datalist>';
     return h;
   }
 
-  function wireCategorySelect(selectId) {
-    const sel = document.getElementById(selectId);
-    const cust = document.getElementById(selectId + '-custom');
-    if (!sel || !cust) return;
-    const sync = () => {
-      cust.style.display = sel.value === '__custom__' ? 'block' : 'none';
-    };
-    sel.onchange = sync;
-    sync();
-  }
-
-  function readCategorySelect(selectId) {
-    const sel = document.getElementById(selectId);
-    const cust = document.getElementById(selectId + '-custom');
-    if (!sel) return '';
-    if (sel.value === '__custom__') return (cust && cust.value || '').trim();
-    return (sel.value || '').trim();
+  function readCategoryCombobox(inputId) {
+    const inp = document.getElementById(inputId);
+    return inp ? String(inp.value || '').trim() : '';
   }
 
   function transactionDetailsHtml(data) {
@@ -141,7 +150,7 @@ _HTML = """<!DOCTYPE html>
 
   async function fetchNext() {
     try {
-      const r = await fetch('/api/next', { cache: 'no-store' });
+      const r = await fetch('api/next', { cache: 'no-store' });
       if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
       const data = await r.json();
       render(normalizeApi(data));
@@ -154,7 +163,7 @@ _HTML = """<!DOCTYPE html>
   async function postRevise(body) {
     statusEl.textContent = 'מעדכן…';
     try {
-      const r = await fetch('/api/revise', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch('api/revise', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || r.statusText);
       statusEl.textContent = 'עודכן.';
@@ -179,13 +188,13 @@ _HTML = """<!DOCTYPE html>
       if (item.kind === 'fluid') {
         const sid = 'hcat-' + item.prompt_id;
         h += '<p class="mono">' + esc(item.store_name) + '</p>';
-        h += '<label>קטגוריה</label>' + categorySelectHtml(sid, (item.response && item.response.category) || '', sessionCats, { kind: 'fluid', dynamic_categories: [], all_categories: [] });
+        h += '<label>קטגוריה</label>' + categoryComboboxHtml(sid, (item.response && item.response.category) || '', sessionCats, { kind: 'fluid', dynamic_categories: [], all_categories: [] });
         h += '<button type="button" class="small" data-action="rev-fluid" data-prompt-id="' + pid + '">עדכן קטגוריה</button>';
       } else if (item.kind === 'new_store') {
         const sid = 'hncat-' + item.prompt_id;
         const st = item.response && item.response.is_static;
         h += '<p class="mono">' + esc(item.store_name) + ' <span class="hint">(חנות חדשה)</span></p>';
-        h += '<label>קטגוריה</label>' + categorySelectHtml(sid, (item.response && item.response.category) || '', sessionCats, { kind: 'new_store', all_categories: [] });
+        h += '<label>קטגוריה</label>' + categoryComboboxHtml(sid, (item.response && item.response.category) || '', sessionCats, { kind: 'new_store', all_categories: [] });
         h += '<label>סוג</label><select id="hnst-' + pid + '"><option value="1"' + (st === 1 ? ' selected' : '') + '>סטטית (1)</option><option value="0"' + (st === 0 ? ' selected' : '') + '>דינמית (0)</option></select>';
         h += '<button type="button" class="small" data-action="rev-new" data-prompt-id="' + pid + '">עדכן</button>';
       } else if (item.kind === 'resolve_static') {
@@ -195,10 +204,6 @@ _HTML = """<!DOCTYPE html>
       h += '</div>';
     }
     histEl.innerHTML = h;
-    for (const item of history) {
-      if (item.kind === 'fluid') wireCategorySelect('hcat-' + item.prompt_id);
-      if (item.kind === 'new_store') wireCategorySelect('hncat-' + item.prompt_id);
-    }
     function pidFromBtn(btn) {
       const raw = btn.getAttribute('data-prompt-id') || '';
       const found = history.find((x) => x.prompt_id === raw);
@@ -209,7 +214,7 @@ _HTML = """<!DOCTYPE html>
         const id = pidFromBtn(btn);
         const item = history.find((x) => x.prompt_id === id);
         if (!item) return;
-        const cat = readCategorySelect('hcat-' + item.prompt_id);
+        const cat = readCategoryCombobox('hcat-' + item.prompt_id);
         if (!cat) { statusEl.textContent = 'בחר קטגוריה'; return; }
         postRevise({ kind: 'fluid', prompt_id: item.prompt_id, category: cat });
       };
@@ -219,9 +224,9 @@ _HTML = """<!DOCTYPE html>
         const id = pidFromBtn(btn);
         const item = history.find((x) => x.prompt_id === id);
         if (!item) return;
-        const cat = readCategorySelect('hncat-' + item.prompt_id);
+        const cat = readCategoryCombobox('hncat-' + item.prompt_id);
         if (!cat) { statusEl.textContent = 'בחר קטגוריה'; return; }
-        const nst = document.getElementById('hnst-' + escAttr(item.prompt_id));
+        const nst = document.getElementById('hnst-' + item.prompt_id);
         const is_static = nst ? parseInt(nst.value, 10) : 1;
         postRevise({ kind: 'new_store', prompt_id: item.prompt_id, category: cat, is_static: is_static });
       };
@@ -251,12 +256,11 @@ _HTML = """<!DOCTYPE html>
         <p class="mono">${esc(p.store_name)}</p>
         ${transactionDetailsHtml(p)}
         <label for="cat">קטגוריה</label>
-        ${categorySelectHtml('cat', '', sessionCats, p)}
+        ${categoryComboboxHtml('cat', '', sessionCats, p)}
         <p class="hint">קטגוריות דינמיות קיימות: ${esc((p.dynamic_categories || []).join(', '))}</p>
         <button type="button" id="go">שמור</button>`;
-      wireCategorySelect('cat');
       document.getElementById('go').onclick = () => {
-        const cat = readCategorySelect('cat');
+        const cat = readCategoryCombobox('cat');
         if (!cat) { statusEl.textContent = 'בחר או הקלד קטגוריה'; return; }
         submit({ kind: 'fluid', prompt_id: p.prompt_id, category: cat });
       };
@@ -279,16 +283,15 @@ _HTML = """<!DOCTYPE html>
         <p>חנות חדשה: <span class="mono">${esc(p.store_name)}</span></p>
         ${transactionDetailsHtml(p)}
         <label>קטגוריה</label>
-        ${categorySelectHtml('ncat', '', sessionCats, p)}
+        ${categoryComboboxHtml('ncat', '', sessionCats, p)}
         <label>סוג</label>
         <select id="nst">
           <option value="1">סטטית (1)</option>
           <option value="0">דינמית (0)</option>
         </select>
         <button type="button" id="ngo">שמור</button>`;
-      wireCategorySelect('ncat');
       document.getElementById('ngo').onclick = () => {
-        const cat = readCategorySelect('ncat');
+        const cat = readCategoryCombobox('ncat');
         if (!cat) { statusEl.textContent = 'בחר או הקלד קטגוריה'; return; }
         submit({
           kind: 'new_store',
@@ -305,7 +308,7 @@ _HTML = """<!DOCTYPE html>
   async function submit(body) {
     statusEl.textContent = 'שולח…';
     try {
-      const r = await fetch('/api/respond', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch('api/respond', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || r.statusText);
       statusEl.textContent = 'נשמר.';
@@ -322,6 +325,13 @@ _HTML = """<!DOCTYPE html>
 """
 
 
+def categorization_html(base_href: str) -> str:
+    b = (base_href or "/").strip()
+    if not b.endswith("/"):
+        b = b + "/"
+    return _HTML_TEMPLATE.replace("{BASE_HREF}", b)
+
+
 class HttpCategorizationHandler:
     """Blocks the categorizer thread until each prompt is answered in the browser."""
 
@@ -335,16 +345,70 @@ class HttpCategorizationHandler:
         self._host = host
         self._port = port
         self._open_browser = open_browser
+        self._html_base_href = "/"
+        self.base_url = ""
         self._lock = threading.Lock()
         self._pending: Optional[dict[str, Any]] = None
         self._waiter = threading.Event()
         self._result: Any = None
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
-        self.base_url = ""
         self._categorize_file: Any = None
         self._history: list[dict[str, Any]] = []
         self._session_categories: list[str] = []
+
+    def _html_bytes(self) -> bytes:
+        return categorization_html(self._html_base_href).encode("utf-8")
+
+    def handle_http_get(self, path: str) -> tuple[int, bytes, str]:
+        """Serve categorization UI and ``GET api/next`` (path is server-root-relative, e.g. ``/``)."""
+        if path in ("/", "/index.html") or path.startswith("/?"):
+            return (200, self._html_bytes(), "text/html; charset=utf-8")
+        if path == "/api/next":
+            payload = self._next_payload()
+            return (
+                200,
+                json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                "application/json; charset=utf-8",
+            )
+        return (404, b"Not Found", "text/plain")
+
+    def handle_http_post(self, path: str, body: bytes) -> tuple[int, bytes, str]:
+        if path == "/api/respond":
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except json.JSONDecodeError:
+                return (
+                    400,
+                    json.dumps({"ok": False, "error": "invalid JSON"}).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                )
+            err = self._complete_prompt(data)
+            if err:
+                return (
+                    400,
+                    json.dumps({"ok": False, "error": err}).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                )
+            return (200, json.dumps({"ok": True}).encode("utf-8"), "application/json; charset=utf-8")
+        if path == "/api/revise":
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except json.JSONDecodeError:
+                return (
+                    400,
+                    json.dumps({"ok": False, "error": "invalid JSON"}).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                )
+            err = self._complete_revise(data)
+            if err:
+                return (
+                    400,
+                    json.dumps({"ok": False, "error": err}).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                )
+            return (200, json.dumps({"ok": True}).encode("utf-8"), "application/json; charset=utf-8")
+        return (404, b"Not Found", "text/plain")
 
     def attach_categorizer(self, categorize_file: Any) -> None:
         """Link the live :class:`~categorizer.CategorizeFile` so /api/revise can update rows."""
@@ -411,49 +475,15 @@ class HttpCategorizationHandler:
 
             def do_GET(self) -> None:  # noqa: N802
                 path = self.path.split("?", 1)[0]
-                if path == "/" or path.startswith("/?"):
-                    self._send(200, _HTML.encode("utf-8"), "text/html; charset=utf-8")
-                    return
-                if path == "/api/next":
-                    payload = outer._next_payload()
-                    self._send(
-                        200,
-                        json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                        "application/json; charset=utf-8",
-                    )
-                    return
-                self._send(404, b"Not Found", "text/plain")
+                code, body, ct = outer.handle_http_get(path)
+                self._send(code, body, ct)
 
             def do_POST(self) -> None:  # noqa: N802
-                if self.path == "/api/respond":
-                    length = int(self.headers.get("Content-Length", "0"))
-                    raw = self.rfile.read(length)
-                    try:
-                        data = json.loads(raw.decode("utf-8"))
-                    except json.JSONDecodeError:
-                        self._send(400, json.dumps({"ok": False, "error": "invalid JSON"}).encode("utf-8"), "application/json")
-                        return
-                    err = outer._complete_prompt(data)
-                    if err:
-                        self._send(400, json.dumps({"ok": False, "error": err}).encode("utf-8"), "application/json")
-                    else:
-                        self._send(200, json.dumps({"ok": True}).encode("utf-8"), "application/json")
-                    return
-                if self.path == "/api/revise":
-                    length = int(self.headers.get("Content-Length", "0"))
-                    raw = self.rfile.read(length)
-                    try:
-                        data = json.loads(raw.decode("utf-8"))
-                    except json.JSONDecodeError:
-                        self._send(400, json.dumps({"ok": False, "error": "invalid JSON"}).encode("utf-8"), "application/json")
-                        return
-                    err = outer._complete_revise(data)
-                    if err:
-                        self._send(400, json.dumps({"ok": False, "error": err}).encode("utf-8"), "application/json")
-                    else:
-                        self._send(200, json.dumps({"ok": True}).encode("utf-8"), "application/json")
-                    return
-                self._send(404, b"Not Found", "text/plain")
+                path = self.path.split("?", 1)[0]
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length) if length > 0 else b""
+                code, body, ct = outer.handle_http_post(path, raw)
+                self._send(code, body, ct)
 
         # ThreadingHTTPServer: browsers keep connections alive; a second fetch must not block
         # behind the first socket waiting for the next request (std HTTPServer is single-threaded).

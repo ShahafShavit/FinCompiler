@@ -5,7 +5,7 @@ import os
 import re
 import threading
 import uuid
-from typing import Optional
+from typing import Optional, Union
 
 import pandas as pd
 from bidi.algorithm import get_display
@@ -20,6 +20,26 @@ from interactive_categorization.terminal import TerminalCategorizationHandler
 log = logging.getLogger(__name__)
 
 _HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
+
+ManualPrompt = Union[FluidStorePrompt, ResolveStaticPrompt, NewStorePrompt]
+
+
+def category_cell_needs_manual(cat) -> bool:
+    """True if compiled row still needs a user-chosen category."""
+    if cat is None:
+        return True
+    try:
+        if isinstance(cat, float) and pd.isna(cat):
+            return True
+    except Exception:
+        pass
+    try:
+        if pd.isna(cat) and not isinstance(cat, str):
+            return True
+    except Exception:
+        pass
+    s = str(cat).strip()
+    return s == "" or s.lower() == "awaiting"
 
 
 def _terminal_bidi(s):
@@ -227,6 +247,224 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             self.stores_df.loc[len(self.stores_df)] = new_row
             self.save_stores()
             return category_input
+
+    def build_manual_prompt_for_row(self, row_data) -> ManualPrompt:
+        """
+        Same branching as ``categorize_storename(..., method='input')`` up to the first prompt,
+        but returns the prompt object instead of blocking. ``prompt_id`` is the transaction id
+        so the queue API stays stable across polls.
+        """
+        self.load_stores()
+        store_name = str(row_data["מקור עסקה"])
+        transaction_id = str(row_data["מזהה עסקה"])
+        date = row_data["תאריך"]
+        expense = row_data["בחובה"]
+        income = row_data["בזכות"]
+        details = row_data["תאור מורחב"] if "תאור מורחב" in row_data.keys() else None
+        digits = row_data["4 ספרות"] if "4 ספרות" in row_data.keys() else None
+        pid = transaction_id
+        if self.stores_df is None or self.stores_df.empty:
+            all_categories: tuple[str, ...] = tuple()
+        else:
+            all_categories = tuple(sorted(set(self.stores_df["category"].tolist()), key=str))
+        def _static_flag(s) -> int:
+            if s is None or (isinstance(s, float) and pd.isna(s)):
+                return -999
+            try:
+                return int(float(s))
+            except (TypeError, ValueError):
+                return -999
+
+        for _, srow in self.stores_df.iterrows():
+            recorded_store = srow["store_name"]
+            category = srow["category"]
+            iv = _static_flag(srow["is_static"])
+            if store_name != recorded_store:
+                continue
+            if iv == 1:
+                raise ValueError(
+                    f"queue inconsistency: store {store_name!r} is static but row lacks category"
+                )
+            if iv == 0:
+                dynamic_categories = tuple(
+                    self.stores_df[self.stores_df["store_name"] == store_name]["category"].tolist()
+                )
+                return FluidStorePrompt(
+                    store_name=store_name,
+                    date=date,
+                    expense=expense,
+                    income=income,
+                    details=details,
+                    digits=digits,
+                    dynamic_categories=dynamic_categories,
+                    all_categories=all_categories,
+                    transaction_id=transaction_id,
+                    prompt_id=pid,
+                )
+            prompt = ResolveStaticPrompt(
+                store_name=store_name,
+                category=category,
+                date=date,
+                expense=expense,
+                income=income,
+                details=details,
+                digits=digits,
+                transaction_id=transaction_id,
+                prompt_id=pid,
+            )
+            return prompt
+        return NewStorePrompt(
+            store_name=store_name,
+            date=date,
+            expense=expense,
+            income=income,
+            details=details,
+            digits=digits,
+            all_categories=all_categories,
+            transaction_id=transaction_id,
+            prompt_id=pid,
+        )
+
+    def _persist_category_for_transaction(self, transaction_id: str, category: str) -> None:
+        row_mask = self.file_df["מזהה עסקה"].astype(str) == str(transaction_id)
+        with self._io_lock:
+            self.file_df.loc[row_mask, "קטגוריה"] = category
+            self.save_progress()
+            if "fingerprint" in self.file_df.columns:
+                fingerprint = self.file_df.loc[row_mask, "fingerprint"].iloc[0]
+                if pd.notna(fingerprint):
+                    update_category_in_fingerprint_db(fingerprint, category)
+        self.category_store_link_backup(transaction_id, category)
+
+    def apply_manual_http_response(self, row_data, kind: str, data: dict) -> None:
+        """Apply one queue answer (first unanswered row only); same side effects as interactive input."""
+        self.load_stores()
+        store_name = str(row_data["מקור עסקה"])
+        transaction_id = str(row_data["מזהה עסקה"])
+        row_mask = self.file_df["מזהה עסקה"].astype(str) == transaction_id
+
+        if kind == "fluid":
+            category_input = (data.get("category") or "").strip()
+            if not category_input:
+                raise ValueError("category required")
+            dynamic_categories = self.stores_df[self.stores_df["store_name"] == store_name][
+                "category"
+            ].tolist()
+            if category_input not in dynamic_categories:
+                sub = self.stores_df[self.stores_df["store_name"] == store_name]
+                is_static_val = 0
+                for _, r in sub.iterrows():
+                    try:
+                        if int(float(r["is_static"])) == 0:
+                            is_static_val = 0
+                            break
+                    except (TypeError, ValueError):
+                        continue
+                new_row = {
+                    "store_name": store_name,
+                    "category": category_input,
+                    "is_static": is_static_val,
+                }
+                self.stores_df.loc[len(self.stores_df)] = new_row
+                self.save_stores()
+            self._persist_category_for_transaction(transaction_id, category_input)
+            return
+
+        if kind == "resolve_static":
+            v = data.get("is_static")
+            if v not in (0, 1):
+                raise ValueError("is_static must be 0 or 1")
+            ambig = self.stores_df[
+                (self.stores_df["store_name"] == store_name)
+                & (~self.stores_df["is_static"].isin([0, 1]))
+            ]
+            if ambig.empty:
+                raise ValueError("no ambiguous static row for store")
+            category = ambig.iloc[0]["category"]
+            self.stores_df.loc[self.stores_df["store_name"] == store_name, "is_static"] = int(v)
+            self.save_stores()
+            self._persist_category_for_transaction(transaction_id, str(category))
+            return
+
+        if kind == "new_store":
+            category_input = (data.get("category") or "").strip()
+            v = data.get("is_static")
+            if not category_input:
+                raise ValueError("category required")
+            if v not in (0, 1):
+                raise ValueError("is_static must be 0 or 1")
+            new_row = {
+                "store_name": store_name,
+                "category": category_input,
+                "is_static": int(v),
+            }
+            self.stores_df.loc[len(self.stores_df)] = new_row
+            self.save_stores()
+            self._persist_category_for_transaction(transaction_id, category_input)
+            return
+
+        raise ValueError("unknown kind")
+
+    def apply_queue_revise(self, data: dict) -> Optional[str]:
+        """Correction after an answer (same idea as HTTP revise); uses ``prompt_id`` = transaction id."""
+        tid = str(data.get("prompt_id") or "")
+        kind = data.get("kind")
+        if not tid or not kind:
+            return "prompt_id and kind required"
+        self.load_stores()
+        row_mask = self.file_df["מזהה עסקה"].astype(str) == tid
+        if not row_mask.any():
+            return "transaction not in compiled file"
+        store_name = str(self.file_df.loc[row_mask, "מקור עסקה"].iloc[0])
+        try:
+            if kind == "fluid":
+                new_cat = (data.get("category") or "").strip()
+                if not new_cat:
+                    return "category required"
+                prev = str(self.file_df.loc[row_mask, "קטגוריה"].iloc[0])
+                self.apply_session_category_revision(
+                    tid, store_name, new_cat, previous_category=prev
+                )
+            elif kind == "new_store":
+                new_cat = (data.get("category") or "").strip()
+                v = data.get("is_static")
+                if not new_cat:
+                    return "category required"
+                if v not in (0, 1):
+                    return "is_static must be 0 or 1"
+                prev_cat = str(self.file_df.loc[row_mask, "קטגוריה"].iloc[0])
+                if str(prev_cat or "").strip() != new_cat:
+                    self.apply_session_category_revision(
+                        tid, store_name, new_cat, previous_category=prev_cat
+                    )
+                self.apply_session_new_store_static_revision(store_name, new_cat, int(v))
+            elif kind == "resolve_static":
+                v = data.get("is_static")
+                if v not in (0, 1):
+                    return "is_static must be 0 or 1"
+                ambig = self.stores_df[
+                    (self.stores_df["store_name"] == store_name)
+                    & (~self.stores_df["is_static"].isin([0, 1]))
+                ]
+                if ambig.empty:
+                    return "store/category not ambiguous"
+                cat = str(ambig.iloc[0]["category"])
+                self.apply_session_resolve_static_revision(store_name, cat, int(v))
+            else:
+                return "unknown kind"
+        except ValueError as e:
+            return str(e)
+        except Exception as e:  # noqa: BLE001
+            log.exception("queue revise failed: %s", e)
+            return str(e)
+        return None
+
+    def count_rows_needing_category(self) -> int:
+        """Fast count from current ``file_df`` (no auto pass)."""
+        if self.file_df is None or self.file_df.empty:
+            return 0
+        col = self.file_df["קטגוריה"]
+        return int(col.map(lambda c: category_cell_needs_manual(c)).sum())
 
     def auto_categorize(self):
         log.info("auto_categorize: rows=%s file=%s", len(self.file_df), self.file_path)

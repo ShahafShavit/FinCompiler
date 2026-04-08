@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Fetch transaction and holdings files from bank/credit portals via Selenium.
 
@@ -6,7 +8,7 @@ Next step: ``inbox_router.route_shared_download_inbox`` then ``spreadsheet_inges
 """
 import logging
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import config
 from selenium import webdriver, common
@@ -17,8 +19,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import os
 import time
-
-from folder_tracking import FolderTracker
 
 log = logging.getLogger(__name__)
 
@@ -52,17 +52,33 @@ def optional_click(driver, locator, timeout: float = 5.0, description: str = "")
     Does not raise — use for cookie banners, one-off overlays, etc.
     """
     by, value = locator
+    label = description or f"{by}={value!r}"
     try:
         el = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, value)))
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
         el.click()
-        if description:
-            _flow_debug_log(f"optional click OK: {description}")
+        log.info("SELENIUM optional ok: %s", label)
+        _flow_debug_log(f"optional click OK: {label}")
         return True
     except TimeoutException:
-        if description:
-            _flow_debug_log(f"optional click skipped (not found in {timeout}s): {description}")
+        log.info("SELENIUM optional skip: %s (not clickable within %ss)", label, timeout)
+        _flow_debug_log(f"optional click skipped (not found in {timeout}s): {label}")
         return False
+
+
+def wait_click(driver, locator, timeout: float, description: str):
+    """Wait until clickable, scroll into view, click; log and re-raise on timeout."""
+    by, value = locator
+    log.info("SELENIUM → %s", description)
+    try:
+        el = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, value)))
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
+        el.click()
+        log.info("SELENIUM ok: %s", description)
+        return el
+    except TimeoutException as e:
+        log.error("SELENIUM TIMEOUT: %s (%s=%r)", description, by, value)
+        raise TimeoutException(f"{description}: element not clickable within {timeout}s") from e
 
 
 def timestamp_latest_file_in_dir(directory, file_extension=".xlsx"):
@@ -117,7 +133,7 @@ class Bank:
 
     def __login__(self):
         url = 'https://hb2.bankleumi.co.il/H/Login.html'
-        log.debug("Navigating to Leumi login: %s", url)
+        log.info("SELENIUM: Leumi — open login URL")
         self.__driver.get(url)
         optional_click(
             self.__driver,
@@ -127,21 +143,23 @@ class Bank:
         )
         flow_debug_pause(self.__driver, "Leumi login page loaded (after cookie dismiss attempt)")
         time.sleep(2)
-        username = self.__driver.find_element(By.NAME, 'user')
-        password = self.__driver.find_element(By.NAME, 'password')
+        log.info("SELENIUM: Leumi — enter credentials")
+        username = self.__driver.find_element(By.NAME, "user")
+        password = self.__driver.find_element(By.NAME, "password")
         time.sleep(1)
         username.send_keys(self.__username)
         time.sleep(1)
         password.send_keys(self.__password)
-        submit_button = WebDriverWait(self.__driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//button[@type='submit' and contains(@class, 'cursor-pointer')]"))
+        wait_click(
+            self.__driver,
+            (By.XPATH, "//button[@type='submit' and contains(@class, 'cursor-pointer')]"),
+            10,
+            "Leumi — submit login",
         )
-        submit_button.click()
-
         WebDriverWait(self.__driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//span[contains(@class, 'welcome-text')]"))
         )
-        log.debug("Leumi welcome element present; login assumed successful")
+        log.info("SELENIUM: Leumi — welcome screen (login OK)")
         return self.__driver
 
     def download(self, file: str, from_date=None, to_date=None):
@@ -151,42 +169,40 @@ class Bank:
             from_date,
             to_date,
         )
-        if file.lower() == 'holdings':
-            self.__driver.get('https://hb2.bankleumi.co.il/ebanking/Accounts/DisplayBalances.aspx#/')
-
-            export_button = WebDriverWait(self.__driver, 10).until(
-                EC.element_to_be_clickable((By.ID, 'BTNEXCEL'))
-            )
-            export_button.click()
-
+        if file.lower() == "holdings":
+            log.info("Bank: holdings — open balances page")
+            self.__driver.get("https://hb2.bankleumi.co.il/ebanking/Accounts/DisplayBalances.aspx#/")
+            wait_click(self.__driver, (By.ID, "BTNEXCEL"), 10, "Leumi holdings — BTNEXCEL (open export popup)")
             WebDriverWait(self.__driver, 10).until(EC.number_of_windows_to_be(2))
             self.__driver.switch_to.window(self.__driver.window_handles[1])
-
-            download_btn = WebDriverWait(self.__driver, 10).until(
-                EC.element_to_be_clickable((By.ID, 'ImgContinue'))
-            )
-            folder_tracker = FolderTracker(download_dir)
-            result = folder_tracker.monitor_folder(1, 10)
-            download_btn.click()
-            if result:
-                log.info("Holdings export: folder monitor reported success")
-            else:
-                log.error("Holdings export: folder monitor reported failure or timeout")
-
-            time.sleep(2)
-        elif file.lower() == 'osh':
+            log.info("Bank: holdings — switched to export popup window")
+            baseline = set(os.listdir(download_dir))
+            log.info("Bank: holdings — baseline download dir (%s file(s))", len(baseline))
+            wait_click(self.__driver, (By.ID, "ImgContinue"), 10, "Leumi holdings — ImgContinue (start download)")
+            ok, new_name = verify_download(download_dir, poll_interval=1.5, timeout=120, baseline_names=baseline)
+            if not ok:
+                log.error("Bank: holdings — verify_download failed")
+                raise FileNotFoundError("Failed to download holdings export.")
+            log.info("Bank: holdings — saved as %r", new_name)
+            return True
+        elif file.lower() == "osh":
+            log.info("Bank: osh — switch to main window and open account transactions")
             self.__driver.switch_to.window(self.__driver.window_handles[0])
-
-            self.__driver.get('https://hb2.bankleumi.co.il/ebanking/SO/SPA.aspx#/ts/BusinessAccountTrx?WidgetPar=1')
-            advanced_search_button = WebDriverWait(self.__driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[@title='חיפוש מתקדם']"))
+            self.__driver.get(
+                "https://hb2.bankleumi.co.il/ebanking/SO/SPA.aspx#/ts/BusinessAccountTrx?WidgetPar=1"
             )
-            advanced_search_button.click()
-
-            period_span = WebDriverWait(self.__driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//span[text()='תקופה']"))
+            wait_click(
+                self.__driver,
+                (By.XPATH, "//button[@title='חיפוש מתקדם']"),
+                10,
+                "Leumi osh — advanced search",
             )
-            period_span.click()
+            wait_click(
+                self.__driver,
+                (By.XPATH, "//span[text()='תקופה']"),
+                10,
+                "Leumi osh — period",
+            )
 
             date_start_input = WebDriverWait(self.__driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//input[@placeholder='מתאריך']"))
@@ -216,46 +232,52 @@ class Bank:
                 date_end_input.send_keys(Keys.DELETE)
                 date_end_input.send_keys(to_date)
 
-            filter_button = WebDriverWait(self.__driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='סנן']"))
+            wait_click(
+                self.__driver,
+                (By.XPATH, "//button[@aria-label='סנן']"),
+                10,
+                "Leumi osh — apply filter",
             )
-            filter_button.click()
-
-            log.debug("Osh export: waiting for grid after filter")
+            log.info("Bank: osh — waiting for transaction grid")
             time.sleep(5)
-            export_button = WebDriverWait(self.__driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[@title='יצוא לאקסל']"))
+            baseline = set(os.listdir(download_dir))
+            log.info("Bank: osh — baseline download dir (%s file(s)); starting Excel export", len(baseline))
+            wait_click(
+                self.__driver,
+                (By.XPATH, "//button[@title='יצוא לאקסל']"),
+                10,
+                "Leumi osh — export to Excel",
             )
-            export_button.click()
-
             modal_dialog = WebDriverWait(self.__driver, 10).until(
                 EC.visibility_of_element_located((By.CLASS_NAME, "modal-dialog"))
             )
-
             buttons = modal_dialog.find_elements(By.TAG_NAME, "button")
-
             continue_btn = None
-            for i, button in enumerate(buttons):
-                if 'המשך' in button.text:
+            for button in buttons:
+                if "המשך" in button.text:
                     continue_btn = button
                     break
-
-            if continue_btn:
-                actions = ActionChains(self.__driver)
-                actions.move_to_element(continue_btn).click().perform()
-
-            else:
-                log.error("Osh export modal: continue button (המשך) not found")
-        elif file.lower() == 'credit':
-            self.__driver.get('https://hb2.bankleumi.co.il/ebanking/SO/SPA.aspx#/ts/CardsWorld')
-
+            if not continue_btn:
+                log.error("Bank: osh — modal has no המשך button")
+                raise FileNotFoundError("Osh Excel export: continue button not found.")
+            log.info("Bank: osh — confirm export in modal")
+            ActionChains(self.__driver).move_to_element(continue_btn).click().perform()
+            ok, new_name = verify_download(download_dir, poll_interval=1.5, timeout=120, baseline_names=baseline)
+            if not ok:
+                log.error("Bank: osh — verify_download failed")
+                raise FileNotFoundError("Failed to download osh export.")
+            log.info("Bank: osh — saved as %r", new_name)
+            return True
+        elif file.lower() == "credit":
+            log.info("Bank: credit — Leumi cards world (Isracard/Max popups)")
+            self.__driver.get("https://hb2.bankleumi.co.il/ebanking/SO/SPA.aspx#/ts/CardsWorld")
             WebDriverWait(self.__driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.swiper-wrapper"))
             )
-
-            cards = self.__driver.find_elements(By.CSS_SELECTOR,
-                                                "div.swiper-slide:not(.blank) article.credit-card-item")
-
+            cards = self.__driver.find_elements(
+                By.CSS_SELECTOR,
+                "div.swiper-slide:not(.blank) article.credit-card-item",
+            )
             for index, card in enumerate(cards):
                 amount_text = card.find_element(By.CSS_SELECTOR, "span.ng-star-inserted").text
                 if amount_text == '':
@@ -282,33 +304,57 @@ class Bank:
 
                 new_window = self.__driver.window_handles[-1]
                 self.__driver.switch_to.window(new_window)
-                d = DirTracker(download_dir)
                 current_url = self.__driver.current_url
                 domain = urllib.parse.urlparse(current_url).netloc
+                log.info("Bank: credit — card %s popup domain=%s", index, domain)
                 if "isracard.co.il" in domain:
-                    while True:
-                        select_button = WebDriverWait(self.__driver, 10).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, "span[aria-label='בחר מועד חיוב מועד קרוב']"))
+                    for attempt in range(15):
+                        wait_click(
+                            self.__driver,
+                            (
+                                By.CSS_SELECTOR,
+                                "span[aria-label='בחר מועד חיוב מועד קרוב']",
+                            ),
+                            10,
+                            "Isracard (Leumi) — billing period",
                         )
-                        select_button.click()
-
-                        select_option = WebDriverWait(self.__driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH, "//div[@id='ui-select-choices-row-3-1']"))
+                        wait_click(
+                            self.__driver,
+                            (By.XPATH, "//div[@id='ui-select-choices-row-3-1']"),
+                            10,
+                            "Isracard (Leumi) — select billing option",
                         )
-                        select_option.click()
-
-                        download_button = WebDriverWait(self.__driver, 10).until(
-                            EC.element_to_be_clickable(
-                                (By.XPATH, "//button[@aria-label='Excel הורד פירוט חיובים בפורמט']"))
+                        bl = set(os.listdir(download_dir))
+                        wait_click(
+                            self.__driver,
+                            (
+                                By.XPATH,
+                                "//button[@aria-label='Excel הורד פירוט חיובים בפורמט']",
+                            ),
+                            10,
+                            "Isracard (Leumi) — Excel download",
                         )
-                        download_button.click()
-                        time.sleep(4)
-                        if d.new_file()[0]:
-                            self.__driver.close()  # Close the current window
+                        ok_is, _ = verify_download(
+                            download_dir, poll_interval=1.5, timeout=90, baseline_names=bl
+                        )
+                        if ok_is:
+                            self.__driver.close()
                             self.__driver.switch_to.window(self.__driver.window_handles[0])
                             break
+                        log.warning(
+                            "Bank: credit — Isracard download not ready (attempt %s/15)",
+                            attempt + 1,
+                        )
+                        time.sleep(2)
+                    else:
+                        log.error("Bank: credit — Isracard popup: giving up after 15 attempts")
+                        self.__driver.close()
+                        self.__driver.switch_to.window(self.__driver.window_handles[0])
+                        raise FileNotFoundError(
+                            "Isracard (Leumi popup): download did not complete after retries."
+                        )
                 if "max.co.il" in domain:
-                    while True:
+                    for attempt in range(15):
                         months_hebrew = [
                             "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
                             "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",
@@ -318,58 +364,62 @@ class Bank:
                         target_month_label = (
                             f"{months_hebrew[current_date.month - 1]} {current_date.year}"
                         )
-                        log.debug(
-                            "Max credit UI: target billing month label=%r (calendar month=%s year=%s)",
+                        log.info(
+                            "Max (Leumi popup): billing month target=%r",
                             target_month_label,
-                            current_date.month,
-                            current_date.year,
                         )
-                        # Open combo by structure — display may be מאי / default, not our target month.
-                        date_combo = WebDriverWait(self.__driver, 10).until(
-                            EC.element_to_be_clickable(
-                                (
-                                    By.CSS_SELECTOR,
-                                    "div.combo.dates div.open-menu[role='button']",
-                                )
-                            )
+                        wait_click(
+                            self.__driver,
+                            (
+                                By.CSS_SELECTOR,
+                                "div.combo.dates div.open-menu[role='button']",
+                            ),
+                            10,
+                            "Max (Leumi) — open date combo",
                         )
-                        date_combo.click()
-
-                        month_option = WebDriverWait(self.__driver, 10).until(
-                            EC.element_to_be_clickable(
-                                (
-                                    By.XPATH,
-                                    "//ul[contains(@class,'month-wrapper')]"
-                                    "//li[contains(@class,'month')]"
-                                    f"[normalize-space()='{target_month_label}']",
-                                )
-                            )
+                        wait_click(
+                            self.__driver,
+                            (
+                                By.XPATH,
+                                "//ul[contains(@class,'month-wrapper')]"
+                                "//li[contains(@class,'month')]"
+                                f"[normalize-space()='{target_month_label}']",
+                            ),
+                            10,
+                            "Max (Leumi) — pick month",
                         )
-                        month_option.click()
-                        excel_link = WebDriverWait(self.__driver, 10).until(
-                            EC.element_to_be_clickable(
-                                (By.XPATH, "//a[contains(text(),'להורדת פירוט החיובים כקובץ אקסל')]"))
+                        blm = set(os.listdir(download_dir))
+                        wait_click(
+                            self.__driver,
+                            (
+                                By.XPATH,
+                                "//a[contains(text(),'להורדת פירוט החיובים כקובץ אקסל')]",
+                            ),
+                            10,
+                            "Max (Leumi) — Excel link",
                         )
-                        excel_link.click()
-                        time.sleep(4)
-                        if d.new_file()[0]:
+                        ok_mx, _ = verify_download(
+                            download_dir, poll_interval=1.5, timeout=90, baseline_names=blm
+                        )
+                        if ok_mx:
                             self.__driver.close()
                             self.__driver.switch_to.window(self.__driver.window_handles[0])
                             break
-        else:
-            raise Exception("TransactionFile must be 'holdings' or 'osh'.")
-        downloaded, new_file = verify_download(download_dir, 15, 60)
-
-        if downloaded:
-            log.info(
-                "Bank.download finished: kind=%r path=%s",
-                file,
-                os.path.join(download_dir, os.path.basename(new_file)) if new_file else new_file,
-            )
-        else:
-            log.error("Bank.download verify_download failed for kind=%r", file)
-            raise FileNotFoundError(f"Failed to download {file.capitalize()} file.")
-        return True
+                        log.warning(
+                            "Bank: credit — Max download not ready (attempt %s/15)",
+                            attempt + 1,
+                        )
+                        time.sleep(2)
+                    else:
+                        log.error("Bank: credit — Max popup: giving up after 15 attempts")
+                        self.__driver.close()
+                        self.__driver.switch_to.window(self.__driver.window_handles[0])
+                        raise FileNotFoundError(
+                            "Max (Leumi popup): download did not complete after retries."
+                        )
+            log.info("Bank: credit — finished card iteration")
+            return True
+        raise ValueError(f"Unknown Bank.download kind {file!r} (use holdings, osh, or credit).")
 
     def __del__(self):
         log.debug("Bank portal session: closing WebDriver")
@@ -443,19 +493,21 @@ class IsracardCredit:
                 (By.XPATH, "//button[contains(@ng-click, \"dc.callExport('Excel', selectedDate2)\")]"))
         )
         time.sleep(3)
+        baseline = set(os.listdir(download_dir))
+        log.info("Isracard.download: baseline %s file(s); triggering Excel export", len(baseline))
         link.click()
-        time.sleep(5)
-
-        downloaded, new_file = verify_download(download_dir, 15, 60)
-        if downloaded:
+        ok, new_file = verify_download(
+            download_dir, poll_interval=1.5, timeout=120, baseline_names=baseline
+        )
+        if ok:
             log.info(
                 "Isracard.download: success file=%r path=%s",
                 new_file,
                 os.path.join(download_dir, new_file) if new_file else None,
             )
         else:
-            log.error("Isracard.download: verify_download failed")
-            raise FileNotFoundError(f"Failed to download {new_file}.")
+            log.error("Isracard.download: verify_download failed (no new stable spreadsheet)")
+            raise FileNotFoundError("Failed to download Isracard Excel export.")
         return True
 
     def __del__(self):
@@ -541,7 +593,9 @@ class MaxCredit:
             for card in card_digits_list:
                 time.sleep(1)
                 element = WebDriverWait(self.__driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, f"//li[contains(text(), {card})]"))
+                    EC.element_to_be_clickable(
+                        (By.XPATH, f"//li[contains(text(), '{card}')]")
+                    )
                 )
                 element.click()
                 time.sleep(1)
@@ -549,10 +603,13 @@ class MaxCredit:
                     EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'ייצא לאקסל')]"))
                 )
                 time.sleep(2)
+                bl = set(os.listdir(download_dir))
+                log.info("Max.download: card=%r baseline %s file(s); export", card, len(bl))
                 element.click()
-                time.sleep(10)
-                downloaded, new_file = verify_download(download_dir, 15, 60)
-                if downloaded:
+                ok, new_file = verify_download(
+                    download_dir, poll_interval=1.5, timeout=120, baseline_names=bl
+                )
+                if ok:
                     log.info(
                         "Max.download: card=%r saved as %r",
                         card,
@@ -560,7 +617,7 @@ class MaxCredit:
                     )
                 else:
                     log.error("Max.download: verify failed for card=%r", card)
-                    raise FileNotFoundError(f"Failed to download {new_file}.")
+                    raise FileNotFoundError(f"Failed to download Max export for card {card!r}.")
 
                 timestamp_latest_file_in_dir(download_dir, ".xlsx")
 
@@ -572,21 +629,26 @@ class MaxCredit:
             card = str(card_digits)
             time.sleep(1)
             element = WebDriverWait(self.__driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, f"//li[contains(text(), {card})]"))
+                EC.element_to_be_clickable(
+                    (By.XPATH, f"//li[contains(text(), '{card}')]")
+                )
             )
             element.click()
             time.sleep(1)
             element = WebDriverWait(self.__driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'ייצא לאקסל')]"))
             )
+            bl_one = set(os.listdir(download_dir))
+            log.info("Max.download: single card=%r baseline %s file(s); export", card, len(bl_one))
             element.click()
-            time.sleep(10)
-            downloaded, new_file = verify_download(download_dir, 15, 30)
-            if downloaded:
+            ok, new_file = verify_download(
+                download_dir, poll_interval=1.5, timeout=90, baseline_names=bl_one
+            )
+            if ok:
                 log.info("Max.download: single card=%r file=%r", card, new_file)
             else:
                 log.error("Max.download: verify failed for card=%r", card)
-                raise FileNotFoundError(f"Failed to download {new_file}.")
+                raise FileNotFoundError(f"Failed to download Max export for card {card!r}.")
 
             timestamp_latest_file_in_dir(download_dir, ".xlsx")
             time.sleep(5)
@@ -599,77 +661,117 @@ class MaxCredit:
         self.__driver.quit()
 
 
-def verify_download(download_dir, check_interval, timeout):
+def _is_stable_file(path: str, settle_seconds: float = 0.35) -> bool:
+    """True if path is a regular file with non-zero size stable over a short window."""
+    try:
+        if not os.path.isfile(path):
+            return False
+        s1 = os.path.getsize(path)
+        if s1 <= 0:
+            return False
+        time.sleep(settle_seconds)
+        s2 = os.path.getsize(path)
+        return s1 == s2
+    except OSError:
+        return False
+
+
+def verify_download(
+    download_dir: str,
+    poll_interval: float = 1.5,
+    timeout: float = 120.0,
+    *,
+    baseline_names: set[str] | None = None,
+    extensions: tuple[str, ...] = (".xlsx", ".xls", ".xlsm", ".csv"),
+) -> tuple[bool, str | None]:
     """
-    Verify if a new file has been downloaded within the last `timeout` seconds.
+    Wait for a **new** spreadsheet (vs ``baseline_names``) to appear and stabilize.
+
+    Ignores Chrome ``.crdownload`` placeholders. Replaces the old logic that compared
+    file age to ``check_interval``, which rejected normal downloads.
+
     Args:
-        download_dir (str): The directory where files are downloaded.
-        check_interval (int): Time in seconds to wait between download checks.
-        timeout (int): Time in seconds to wait for the download to complete.
+        download_dir: Browser download directory.
+        poll_interval: Seconds between scans.
+        timeout: Max seconds to wait.
+        baseline_names: Filenames present *before* the download was triggered; if None,
+            captured at call time.
+        extensions: Accept only these suffixes (case-insensitive).
 
     Returns:
-        bool: True if a new file has been downloaded, False otherwise.
+        (True, basename) on success, (False, None) on timeout.
     """
+    os.makedirs(download_dir, exist_ok=True)
+    if baseline_names is None:
+        baseline_names = set(os.listdir(download_dir))
+    else:
+        baseline_names = set(baseline_names)
 
-    def get_latest_file(directory):
-        """
-        Get the latest file from the specified directory.
-
-        Args:
-            directory (str): The directory to check for files.
-
-        Returns:
-            str: The path to the latest file or None if the directory is empty.
-        """
-        files = os.listdir(directory)
-        paths = [os.path.join(directory, basename) for basename in files]
-        return max(paths, key=os.path.getctime) if paths else None
-
-    log.debug(
-        "verify_download: polling dir=%s every %.1fs for up to %ss",
-        download_dir,
-        check_interval / 2,
-        timeout,
-    )
-    end_time = datetime.now() + timedelta(seconds=timeout)
+    t0 = time.time()
+    deadline = t0 + timeout
+    last_progress_log = t0
     poll_n = 0
-    while datetime.now() < end_time:
+    ext_l = tuple(e.lower() for e in extensions)
+
+    log.info(
+        "verify_download: watching %s (timeout=%ss, baseline=%s file(s))",
+        download_dir,
+        int(timeout),
+        len(baseline_names),
+    )
+
+    while time.time() < deadline:
         poll_n += 1
-        latest_file = get_latest_file(download_dir)
-        if latest_file:
-            file_creation_time = datetime.fromtimestamp(os.path.getctime(latest_file))
-            current_time = datetime.now()
-            time_difference = current_time - file_creation_time
-            log.debug(
-                "verify_download poll=%s latest=%s age=%s threshold=%ss",
-                poll_n,
-                latest_file,
-                time_difference,
-                check_interval,
+        now = time.time()
+        if now - last_progress_log >= 10.0:
+            log.info(
+                "verify_download: still waiting… %ds / %ds",
+                int(now - t0),
+                int(timeout),
             )
-            if time_difference < timedelta(seconds=check_interval):
-                log.info("verify_download: accepting new file %s", latest_file)
-                return True, os.path.basename(latest_file)
-        else:
-            log.debug("verify_download poll=%s: directory empty", poll_n)
-        time.sleep(check_interval / 2)
-    log.warning("verify_download: timeout after %ss (dir=%s)", timeout, download_dir)
+            last_progress_log = now
+
+        try:
+            names = os.listdir(download_dir)
+        except OSError as e:
+            log.warning("verify_download: listdir failed: %s", e)
+            time.sleep(poll_interval)
+            continue
+
+        candidates: list[str] = []
+        for n in names:
+            if n in baseline_names:
+                continue
+            if n.endswith(".crdownload"):
+                log.debug("verify_download: chrome still writing %r", n)
+                continue
+            nl = n.lower()
+            if ext_l and not nl.endswith(ext_l):
+                continue
+            path = os.path.join(download_dir, n)
+            if not os.path.isfile(path):
+                continue
+            candidates.append(path)
+
+        candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        for path in candidates:
+            if _is_stable_file(path):
+                log.info("verify_download: success %s (%s bytes)", path, os.path.getsize(path))
+                return True, os.path.basename(path)
+
+        time.sleep(poll_interval)
+
+    try:
+        listing = os.listdir(download_dir)
+    except OSError:
+        listing = []
+    log.warning(
+        "verify_download: TIMEOUT after %ss — dir has %s: %s",
+        int(timeout),
+        len(listing),
+        listing[:20],
+    )
     return False, None
-
-
-class DirTracker:
-    def __init__(self, dir: str):
-        self.directory = dir
-        self.__filelist__ = set(os.listdir(dir))
-        log.debug("DirTracker snapshot %s files=%s", dir, len(self.__filelist__))
-
-    def new_file(self):
-        current: set = set(os.listdir(self.directory))
-        diff = current.symmetric_difference(self.__filelist__)
-        changed = len(diff) != 0
-        if changed:
-            log.debug("DirTracker new_file diff=%s", diff)
-        return changed, diff
 
 
 if __name__ == "__main__":

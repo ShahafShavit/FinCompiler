@@ -102,6 +102,7 @@ class FolderTracker:
             start_time = time.time()
             self.running = True
             self.success = False  # Default to failure
+            last_hb = start_time
 
             while self.running:
                 self.check_changes()
@@ -113,6 +114,15 @@ class FolderTracker:
                     self.success = False  # Failure: timeout reached
                     log.warning("monitor_folder: timeout after %ss (added=%s)", timeout, self.total_files_added)
                     break
+                now = time.time()
+                if now - last_hb >= 10.0:
+                    log.info(
+                        "monitor_folder: still waiting… %ds / %ss (new files so far=%s)",
+                        int(now - start_time),
+                        int(timeout),
+                        self.total_files_added,
+                    )
+                    last_hb = now
                 time.sleep(1)  # Sleep for a second before checking again
 
             self.running = False

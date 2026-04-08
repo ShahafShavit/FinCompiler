@@ -2,7 +2,48 @@ import inspect
 import logging
 import sys
 import threading
-from typing import Optional
+from typing import Callable, Optional
+
+
+class CallbackLogHandler(logging.Handler):
+    """Forward log records to a callback (e.g. web dashboard SSE). Avoid attaching to loggers that already duplicate to the same sink."""
+
+    def __init__(self, callback: Callable[[str], None]) -> None:
+        super().__init__()
+        self._callback = callback
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            self._callback(msg)
+        except Exception:  # noqa: BLE001
+            self.handleError(record)
+
+
+def attach_sink_log_handlers(
+    callback: Callable[[str], None],
+    logger_names: list[str],
+    *,
+    level: int = logging.INFO,
+) -> list[tuple[logging.Logger, CallbackLogHandler]]:
+    """Attach one shared handler to each named logger; return pairs for :func:`detach_sink_log_handlers`."""
+    handler = CallbackLogHandler(callback)
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter("%(levelname)s | %(name)s | %(message)s"))
+    pairs: list[tuple[logging.Logger, CallbackLogHandler]] = []
+    for name in logger_names:
+        lg = logging.getLogger(name)
+        lg.addHandler(handler)
+        pairs.append((lg, handler))
+    return pairs
+
+
+def detach_sink_log_handlers(pairs: list[tuple[logging.Logger, CallbackLogHandler]]) -> None:
+    for lg, h in pairs:
+        try:
+            lg.removeHandler(h)
+        except ValueError:
+            pass
 
 
 def configure_pipeline_logging(level: int = logging.INFO) -> None:
