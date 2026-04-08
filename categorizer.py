@@ -3,7 +3,9 @@ import difflib
 import logging
 import os
 import re
+import threading
 import uuid
+from typing import Optional
 
 import pandas as pd
 from bidi.algorithm import get_display
@@ -50,10 +52,17 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         self.file_path = file_path
         self.file_name = os.path.basename(file_path)
         self.file_df = pd.read_csv(file_path)
-        if 'קטגוריה' not in self.file_df.columns:
-            self.file_df['קטגוריה'] = ""
+        if "קטגוריה" not in self.file_df.columns:
+            self.file_df["קטגוריה"] = pd.Series([""] * len(self.file_df), dtype=object, index=self.file_df.index)
+        else:
+            # read_csv often infers float64 for an empty / numeric-looking column; Hebrew labels need object.
+            self.file_df["קטגוריה"] = (
+                self.file_df["קטגוריה"].map(lambda x: "" if pd.isna(x) else str(x)).astype(object)
+            )
         self.awaiting_df = pd.DataFrame(columns=self.file_df.columns)
         self.interaction = interaction_handler or TerminalCategorizationHandler()
+        # HTTP UI may revise rows from a worker thread while the main thread waits on the next prompt.
+        self._io_lock = threading.Lock()
 
     def load_stores(self):
         path = config.stores_to_categories_file
@@ -76,8 +85,64 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     def save_progress(self):
         self.file_df.to_csv(self.file_path, index=False)
 
+    def apply_session_category_revision(
+        self,
+        transaction_id: str,
+        store_name: str,
+        new_category: str,
+        *,
+        previous_category: Optional[str] = None,
+    ) -> None:
+        """Update compiled row + fingerprint/backup; best-effort rename in stores_to_categories."""
+        new_category = (new_category or "").strip()
+        if not new_category:
+            raise ValueError("category required")
+        with self._io_lock:
+            self.load_stores()
+            mask = self.file_df["מזהה עסקה"].astype(str) == str(transaction_id)
+            if not mask.any():
+                raise ValueError("transaction not in compiled file")
+            self.file_df.loc[mask, "קטגוריה"] = new_category
+            self.save_progress()
+            if "fingerprint" in self.file_df.columns:
+                fingerprint = self.file_df.loc[mask, "fingerprint"].iloc[0]
+                if pd.notna(fingerprint):
+                    update_category_in_fingerprint_db(fingerprint, new_category)
+            self.category_store_link_backup(transaction_id, new_category)
+            prev = (previous_category or "").strip()
+            if prev and prev != new_category:
+                sm = self.stores_df["store_name"] == store_name
+                cm = self.stores_df["category"] == prev
+                if (sm & cm).any():
+                    self.stores_df.loc[sm & cm, "category"] = new_category
+                    self.save_stores()
+
+    def apply_session_resolve_static_revision(self, store_name: str, category: str, is_static: int) -> None:
+        if is_static not in (0, 1):
+            raise ValueError("is_static must be 0 or 1")
+        with self._io_lock:
+            self.load_stores()
+            m = (self.stores_df["store_name"] == store_name) & (self.stores_df["category"] == category)
+            if not m.any():
+                raise ValueError("store/category not in stores list")
+            self.stores_df.loc[m, "is_static"] = int(is_static)
+            self.save_stores()
+
+    def apply_session_new_store_static_revision(self, store_name: str, category: str, is_static: int) -> None:
+        """Set is_static for an existing (store_name, category) row after the user revises new_store."""
+        if is_static not in (0, 1):
+            raise ValueError("is_static must be 0 or 1")
+        with self._io_lock:
+            self.load_stores()
+            m = (self.stores_df["store_name"] == store_name) & (self.stores_df["category"] == category)
+            if not m.any():
+                raise ValueError("store mapping not found")
+            self.stores_df.loc[m, "is_static"] = int(is_static)
+            self.save_stores()
+
     def categorize_storename(self, row_data, method='auto', interaction_handler=None):
         store_name: str = row_data['מקור עסקה']
+        transaction_id = str(row_data["מזהה עסקה"])
         date = row_data['תאריך']
         expense = row_data['בחובה']
         income = row_data['בזכות']
@@ -89,14 +154,16 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             digits = row_data['4 ספרות']
 
         if method == 'auto':
-            for _, store_row in self.stores_df.iterrows():
-                recorded_store, category_, is_static = store_row['store_name'], store_row['category'], store_row[
-                    'is_static']
-
-                if recorded_store == store_name and is_static == 1:
-                    return category_
+            if self.stores_df is None or self.stores_df.empty:
                 return None
-            return None
+            # Match any static row for this store (must scan full table; a previous bug returned
+            # after the first row only).
+            match = self.stores_df[
+                (self.stores_df["store_name"] == store_name) & (self.stores_df["is_static"] == 1)
+            ]
+            if match.empty:
+                return None
+            return match["category"].iloc[0]
         elif method == 'input':
             h = interaction_handler or self.interaction
             all_categories = set(self.stores_df['category'].tolist())
@@ -117,6 +184,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                             digits=digits,
                             dynamic_categories=tuple(dynamic_categories),
                             all_categories=tuple(sorted(all_categories, key=str)),
+                            transaction_id=transaction_id,
                             prompt_id=uuid.uuid4().hex,
                         )
                         category_input = h.prompt_fluid_store(prompt).strip()
@@ -136,6 +204,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                         income=income,
                         details=details,
                         digits=digits,
+                        transaction_id=transaction_id,
                         prompt_id=uuid.uuid4().hex,
                     )
                     is_static_new = h.prompt_resolve_static(prompt)
@@ -150,6 +219,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 details=details,
                 digits=digits,
                 all_categories=tuple(sorted(all_categories, key=str)),
+                transaction_id=transaction_id,
                 prompt_id=uuid.uuid4().hex,
             )
             category_input, is_static_input = h.prompt_new_store(prompt)
@@ -196,7 +266,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
             if row['קטגוריה'] == "" or row['קטגוריה'] == "awaiting" or pd.isna(row['קטגוריה']):
                 category = self.categorize_storename(row, method='auto')
-                self.file_df.loc[index, 'קטגוריה'] = category
+                self.file_df.loc[index, 'קטגוריה'] = category if category is not None else ""
                 self.save_progress()
                 if category is None:
                     self.awaiting_df.loc[len(self.awaiting_df)] = row
@@ -226,12 +296,13 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                     category = self.categorize_storename(row, method='input', interaction_handler=h)
 
                     row_mask = self.file_df['מזהה עסקה'] == row['מזהה עסקה']
-                    self.file_df.loc[row_mask, 'קטגוריה'] = category
-                    self.save_progress()
-                    if 'fingerprint' in self.file_df.columns:
-                        fingerprint = self.file_df.loc[row_mask, 'fingerprint'].iloc[0]
-                        if pd.notna(fingerprint):
-                            update_category_in_fingerprint_db(fingerprint, category)
+                    with self._io_lock:
+                        self.file_df.loc[row_mask, 'קטגוריה'] = category
+                        self.save_progress()
+                        if 'fingerprint' in self.file_df.columns:
+                            fingerprint = self.file_df.loc[row_mask, 'fingerprint'].iloc[0]
+                            if pd.notna(fingerprint):
+                                update_category_in_fingerprint_db(fingerprint, category)
 
                 self.awaiting_df.drop(index=index, inplace=True)
         finally:

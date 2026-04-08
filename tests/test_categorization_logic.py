@@ -7,12 +7,13 @@ Run from repo root:
 To exercise the real pipeline against a throwaway tree, set FINANCE_WORKSPACE_ROOT to a
 temp directory, importlib.reload(config), then copy fixtures under that root (see config.py).
 
-Manual browser UI (separate): set FINANCE_CATEGORIZE_UI=http and run the app, or:
+Manual browser UI (separate): set FINANCE_CATEGORIZE_UI=http and run the app (GET /api/next), or:
   python -c "from tests.test_categorization_logic import manual_http_smoke; manual_http_smoke()"
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import tempfile
@@ -21,6 +22,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 
 import config
@@ -113,6 +115,22 @@ class CategorizeStorenameTests(unittest.TestCase):
         self.assertEqual(out, "Rent")
         self.assertFalse(h.fluid and h.resolve and h.new_store)
 
+    def test_auto_finds_static_store_not_only_first_row(self) -> None:
+        """Regression: auto mode must scan the full stores table, not stop after row 0."""
+        self._write_stores(
+            [
+                {"store_name": "ZZZ_Other", "category": "Misc", "is_static": 1},
+                {"store_name": "TargetStore", "category": "Fuel", "is_static": 1},
+            ]
+        )
+        row = _minimal_compiled_row(store="TargetStore")
+        with patch.object(config, "stores_to_categories_file", self.stores_path):
+            self._write_compiled(row)
+            cf = CategorizeFile(self.compiled_path, interaction_handler=ScriptedHandler())
+            cf.load_stores()
+            out = cf.categorize_storename(row, method="auto")
+        self.assertEqual(out, "Fuel")
+
     def test_fluid_store_picks_existing_dynamic_category(self) -> None:
         h = ScriptedHandler()
         h.fluid.append("Food")
@@ -196,14 +214,15 @@ class HttpHandlerIntegrationTest(unittest.TestCase):
             base = h.base_url
             for _ in range(50):
                 try:
-                    r = urllib.request.urlopen(base + "api/current", timeout=0.5)
+                    r = urllib.request.urlopen(base + "api/next", timeout=0.5)
                     data = json.loads(r.read().decode("utf-8"))
                 except (urllib.error.URLError, json.JSONDecodeError):
                     time.sleep(0.05)
                     continue
-                if data.get("kind") == "fluid":
+                pending = data.get("pending", data)
+                if pending.get("kind") == "fluid":
                     body = json.dumps(
-                        {"kind": "fluid", "prompt_id": data["prompt_id"], "category": "B"}
+                        {"kind": "fluid", "prompt_id": pending["prompt_id"], "category": "B"}
                     ).encode("utf-8")
                     req = urllib.request.Request(
                         base + "api/respond",
@@ -214,7 +233,7 @@ class HttpHandlerIntegrationTest(unittest.TestCase):
                     urllib.request.urlopen(req, timeout=2)
                     return
                 time.sleep(0.05)
-            raise AssertionError("timed out waiting for fluid prompt in /api/current")
+            raise AssertionError("timed out waiting for fluid prompt in /api/next")
 
         t = threading.Thread(target=client, daemon=True)
         t.start()
@@ -223,6 +242,78 @@ class HttpHandlerIntegrationTest(unittest.TestCase):
         finally:
             t.join(timeout=5)
         self.assertEqual(result_holder[0], "B")
+
+    def test_display_dict_json_matches_real_csv_cell_types(self) -> None:
+        """Pandas/numpy scalars from read_csv must serialize for /api/next (browser JSON.parse)."""
+        p = FluidStorePrompt(
+            store_name=np.str_("Shop"),
+            date=pd.Timestamp("2024-06-01"),
+            expense=np.int64(0),
+            income=np.float64(3.5),
+            details=np.float64(np.nan),
+            digits=None,
+            dynamic_categories=("Food",),
+            all_categories=("Food", "Other"),
+            prompt_id="pid",
+        )
+        json.loads(json.dumps(p.to_display_dict(), ensure_ascii=False))
+
+    def test_http_concurrent_get_index_and_api(self) -> None:
+        """Browsers open multiple TCP connections; index + /api/next must not deadlock."""
+        import urllib.request
+
+        h = HttpCategorizationHandler(host="127.0.0.1", port=0, open_browser=False)
+        self.addCleanup(h.close)
+
+        prompt = FluidStorePrompt(
+            store_name="Concurrent",
+            date="2024-01-01",
+            expense=0,
+            income=1,
+            details=None,
+            digits=None,
+            dynamic_categories=(),
+            all_categories=("a",),
+            prompt_id="conc-get",
+        )
+
+        def blocker() -> None:
+            h.prompt_fluid_store(prompt)
+
+        th = threading.Thread(target=blocker, daemon=True)
+        th.start()
+        for _ in range(100):
+            time.sleep(0.02)
+            if h.base_url:
+                break
+        else:
+            self.fail("server did not start")
+        base = h.base_url
+
+        def get_index() -> bytes:
+            return urllib.request.urlopen(base, timeout=3).read(300)
+
+        def get_api() -> bytes:
+            return urllib.request.urlopen(base + "api/next", timeout=3).read()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            f_idx = pool.submit(get_index)
+            f_api = pool.submit(get_api)
+            idx_body = f_idx.result()
+            api_body = f_api.result()
+        self.assertIn(b"<!DOCTYPE html>", idx_body)
+        self.assertIn(b"fluid", api_body)
+
+        req = urllib.request.Request(
+            base + "api/respond",
+            data=json.dumps(
+                {"kind": "fluid", "prompt_id": "conc-get", "category": "a"}
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=2)
+        th.join(timeout=3)
 
 
 def manual_http_smoke() -> None:

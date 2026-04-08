@@ -9,6 +9,7 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import signal
 from typing import Callable, Iterable, Optional
 
 import compile_handler
@@ -245,15 +246,29 @@ def run_categorization_interactive(
         _notify("CATEGORIZE: skip (compiled.csv missing)", sink)
         return
     _notify(
-        "CATEGORIZE: interactive (auto, then prompts) — FINANCE_CATEGORIZE_UI=http uses the browser",
+        "CATEGORIZE: interactive (auto, then prompts); FINANCE_CATEGORIZE_UI=http uses the browser",
         sink,
     )
     h = create_interaction_handler()
+    old_sigint = signal.getsignal(signal.SIGINT)
+
+    def _sigint(_signum, _frame) -> None:  # noqa: ARG001
+        # Ensure HTTP server + blocked prompt wait are torn down before KeyboardInterrupt.
+        closer = getattr(h, "close", None)
+        if callable(closer):
+            closer()
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _sigint)
     try:
         f = CategorizeFile(config.compiled_file, interaction_handler=h)
+        attach = getattr(h, "attach_categorizer", None)
+        if callable(attach):
+            attach(f)
         f.auto_categorize()
         f.manual_categorizer()
     finally:
+        signal.signal(signal.SIGINT, old_sigint)
         closer = getattr(h, "close", None)
         if callable(closer):
             closer()
