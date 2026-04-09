@@ -10,6 +10,7 @@ import tabulate
 from oauth2client.service_account import ServiceAccountCredentials
 import re
 import categorizer
+import compile_handler
 import config
 import gspread.utils
 from googleapiclient.discovery import build
@@ -248,7 +249,7 @@ def push_monthly_look(gsh):
 
     # Read the CSV file
     df = pd.read_csv(config.compiled_file)
-    df['תאריך'] = pd.to_datetime(df['תאריך'], dayfirst=True, errors='coerce', format='mixed')
+    df['תאריך'] = compile_handler.parse_post_ingest_date_column(df['תאריך'])
     df['Month-Year'] = df['תאריך'].dt.to_period('M')
 
     # Creating a new column to distinguish between expenses and income

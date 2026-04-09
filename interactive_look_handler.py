@@ -12,6 +12,7 @@ import matplotlib.cm as mcm
 import matplotlib as mpl
 # Assuming 'config', 'gs_handler' are in the same directory or accessible
 import config
+from compile_handler import parse_post_ingest_date_column
 from gs_handler import GoogleSheetsHandler, GSLink
 
 
@@ -129,7 +130,7 @@ class InteractiveReportGenerator:
         """Loads the CSV and performs initial data transformations."""
         print("1. Loading and preparing data...")
         self.df = pd.read_csv(self.data_file)
-        self.df['תאריך'] = pd.to_datetime(self.df['תאריך'], dayfirst=True, format="mixed")
+        self.df['תאריך'] = parse_post_ingest_date_column(self.df['תאריך'])
         self.df['YearMonth'] = self.df['תאריך'].dt.strftime('%Y-%m')
 
     def _prepare_directories(self):

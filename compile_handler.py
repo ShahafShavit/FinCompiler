@@ -11,6 +11,49 @@ import config
 
 log = logging.getLogger(__name__)
 
+_ISO_YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _standardize_date_separators(val: object) -> str | None:
+    """Normalize ``-``/``.``/``/`` for parsing; return None if missing."""
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except TypeError:
+        pass
+    s = str(val).strip()
+    if s.lower() in ("nan", "nat", "none", "<na>"):
+        return None
+    return re.sub(r"[-/.]", "-", s)
+
+
+def parse_post_ingest_date_scalar(val: object) -> pd.Timestamp:
+    """
+    Parse a single ``תאריך`` cell after CSV / ledger round-trip (see :func:`parse_post_ingest_date_column`).
+    """
+    s = _standardize_date_separators(val)
+    if s is None:
+        return pd.NaT
+    if _ISO_YMD.fullmatch(s):
+        return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce")
+    return pd.to_datetime(s, dayfirst=True, errors="coerce", format="mixed")
+
+
+def parse_post_ingest_date_column(series: pd.Series) -> pd.Series:
+    """
+    Parse ``תאריך`` after CSV / ledger round-trip.
+
+    Rows produced by this app are written as ISO dates (``datetime.date`` / ``%Y-%m-%d``).
+    For those, parse with a fixed format — **never** pass ``dayfirst=True``, which on
+    some pandas versions misreads ISO strings when combined with ``format=\"mixed\"``.
+
+    Non-ISO strings (first ingest from bank Excel, legacy files) fall back to
+    ``dayfirst=True`` + ``format=\"mixed\"`` like the old single-path behaviour.
+    """
+    return series.map(parse_post_ingest_date_scalar)
+
 
 def update_category_in_fingerprint_db(fingerprint, category):
     """
@@ -84,7 +127,7 @@ class Compiler:
         self.new_df = pd.concat(new_df_list, ignore_index=True)
         log.info("Concatenated new_df rows=%s", len(self.new_df))
         self.new_df['תאריך'] = self.new_df['תאריך'].apply(standardize_date_format)
-        self.new_df['תאריך'] = pd.to_datetime(self.new_df['תאריך'], dayfirst=True, errors='coerce', format='mixed')
+        self.new_df['תאריך'] = parse_post_ingest_date_column(self.new_df['תאריך'])
         self.new_df['תאריך'] = self.new_df['תאריך'].dt.date
         self.new_df.sort_values(by='תאריך', inplace=True)
         self.new_df.reset_index(drop=True, inplace=True)
@@ -134,20 +177,18 @@ class Compiler:
                 len(self.added_transactions),
             )
 
-            self.main_df['תאריך'] = pd.to_datetime(self.main_df['תאריך'], dayfirst=True, errors='coerce',
-                                                   format='mixed')
+            self.main_df['תאריך'] = parse_post_ingest_date_column(self.main_df['תאריך'])
             self.main_df.sort_values(by='תאריך', inplace=True)
             self.main_df.reset_index(drop=True, inplace=True)
             self.main_df['תאריך'] = self.main_df['תאריך'].dt.date
         else:  # In Holdings Mode
             log.debug("compile_to_main: holdings branch (dedupe by date)")
             concat_df = pd.concat([self.main_df, self.new_df], ignore_index=True)
-            concat_df['תאריך'] = pd.to_datetime(concat_df['תאריך'], dayfirst=True, format='mixed')
+            concat_df['תאריך'] = parse_post_ingest_date_column(concat_df['תאריך'])
             concat_df.drop_duplicates(subset=['תאריך'], ignore_index=True, inplace=True, keep='first')
             concat_df.fillna(value=0.0, inplace=True)
             self.main_df = concat_df
-            self.main_df['תאריך'] = pd.to_datetime(self.main_df['תאריך'], dayfirst=True, errors='coerce',
-                                                   format='mixed')
+            self.main_df['תאריך'] = parse_post_ingest_date_column(self.main_df['תאריך'])
             self.main_df.sort_values(by='תאריך', inplace=True)
             self.main_df.reset_index(drop=True, inplace=True)
             self.main_df['תאריך'] = self.main_df['תאריך'].dt.date
