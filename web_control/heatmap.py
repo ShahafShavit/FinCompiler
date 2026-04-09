@@ -495,7 +495,32 @@ def _view_payload(
         clickable.append(row_b)
     labels = [[_format_cell_money(display[i, j]) for j in range(len(categories))] for i in range(len(months))]
     column_totals = [_format_cell_money(float(pivot[c].sum())) for c in pivot.columns]
+    column_averages = [_format_cell_money(float(pivot[c].mean())) for c in pivot.columns]
     row_totals = [_format_cell_money(float(pivot.loc[mi].sum())) for mi in pivot.index]
+    row_averages = [_format_cell_money(float(pivot.loc[mi].mean())) for mi in pivot.index]
+
+    # Monthly aggregate series for YTD and rolling-12 metrics.
+    row_totals_numeric = pivot.sum(axis=1).astype(float)
+    month_idx = pd.to_datetime(row_totals_numeric.index, format="%Y-%m", errors="coerce")
+    monthly_df = pd.DataFrame(
+        {"value": row_totals_numeric.values},
+        index=pd.Index(month_idx, name="month"),
+    ).dropna()
+    monthly_df = monthly_df.sort_index(ascending=True)
+    ytd_sum_numeric = monthly_df["value"].groupby(monthly_df.index.year).cumsum()
+    ytd_avg_numeric = ytd_sum_numeric / monthly_df.index.month
+    l12_sum_numeric = monthly_df["value"].rolling(window=12, min_periods=1).sum()
+    l12_avg_numeric = l12_sum_numeric / monthly_df["value"].rolling(window=12, min_periods=1).count()
+    ym_lookup = monthly_df.index.strftime("%Y-%m")
+    ytd_sum_map = pd.Series(ytd_sum_numeric.values, index=ym_lookup)
+    ytd_avg_map = pd.Series(ytd_avg_numeric.values, index=ym_lookup)
+    l12_sum_map = pd.Series(l12_sum_numeric.values, index=ym_lookup)
+    l12_avg_map = pd.Series(l12_avg_numeric.values, index=ym_lookup)
+
+    ytd_sums = [_format_cell_money(float(ytd_sum_map.get(mi, 0.0))) for mi in pivot.index]
+    ytd_averages = [_format_cell_money(float(ytd_avg_map.get(mi, 0.0))) for mi in pivot.index]
+    rolling12_sums = [_format_cell_money(float(l12_sum_map.get(mi, 0.0))) for mi in pivot.index]
+    rolling12_averages = [_format_cell_money(float(l12_avg_map.get(mi, 0.0))) for mi in pivot.index]
     return {
         "title": title,
         "reportType": report_type,
@@ -506,7 +531,13 @@ def _view_payload(
         "cellFg": fg_colors,
         "clickable": clickable,
         "columnTotals": column_totals,
+        "columnAverages": column_averages,
         "rowTotals": row_totals,
+        "rowAverages": row_averages,
+        "rowYtdSums": ytd_sums,
+        "rowYtdAverages": ytd_averages,
+        "rowRolling12Sums": rolling12_sums,
+        "rowRolling12Averages": rolling12_averages,
     }
 
 
@@ -714,31 +745,97 @@ def _heatmap_shared_css() -> str:
       .tabs button.active { border-color: #4c6ef5; background: #2a2f4a; color: #e8e8ec; }
       .heatmap-title { font-size: 1.1rem; font-weight: 600; margin: 0.25rem 0 0.75rem; }
       .heatmap-wrap { overflow: auto; max-width: 100%; margin-bottom: 1.5rem;
-        border: 1px solid #2b2c33; border-radius: 8px; background: #0b0c0f; }
+        max-height: 78vh; border: 1px solid #2b2c33; border-radius: 8px; background: #0b0c0f; }
       table.hm-grid { border-collapse: separate; border-spacing: 1px;
-        font-size: 0.72rem; margin: 0; }
+        font-size: 0.74rem; margin: 0; table-layout: auto; width: max-content; }
+      table.hm-grid {
+        --hm-month-col-w: 7.3rem;
+        --hm-metric-col-w: 4.6rem;
+      }
       table.hm-grid th, table.hm-grid td {
-        min-width: 3.2rem; max-width: 8rem; padding: 4px 5px; text-align: center;
-        vertical-align: middle; word-break: break-word;
+        min-width: 4.15rem; padding: 5px 7px; text-align: center;
+        vertical-align: middle; white-space: nowrap;
       }
       table.hm-grid th { background: #1c1d22; color: #aeb4c0; font-weight: 600;
         position: sticky; top: 0; z-index: 2; }
-      table.hm-grid th.row-h { position: sticky; left: 0; z-index: 3; background: #16171c; }
-      table.hm-grid th.corner { z-index: 4; left: 0; top: 0; background: #14151a; }
+      table.hm-grid th.row-h {
+        position: sticky; right: 0; z-index: 3; background: #16171c;
+        min-width: var(--hm-month-col-w); text-align: right; padding-inline: 0.55rem;
+      }
+      table.hm-grid th.corner { z-index: 4; right: 0; top: 0; background: #14151a; }
       table.hm-grid thead th.hm-colsum {
         top: 0; z-index: 3; background: #25262e; color: #dce0ea; font-size: 0.68rem;
         font-weight: 600; border-bottom: 1px solid #3a3b44;
       }
+      table.hm-grid thead th.hm-colsum .colsum-wrap {
+        display: grid; grid-template-rows: auto auto; gap: 0.15rem;
+      }
+      table.hm-grid thead th.hm-colsum .colsum-wrap > div {
+        display: flex; align-items: baseline; justify-content: space-between; gap: 0.4rem;
+      }
+      table.hm-grid thead th.hm-colsum .metric-label {
+        color: #aeb4c0; font-size: 0.64rem; letter-spacing: 0.02em;
+      }
+      table.hm-grid thead th.hm-colsum .metric-val {
+        color: #e6e9f0; font-size: 0.7rem; direction: ltr; unicode-bidi: isolate;
+      }
       table.hm-grid thead tr:nth-child(2) th {
         top: 2.35rem; z-index: 2; background: #1c1d22;
       }
-      table.hm-grid thead th.hm-rowsum-h {
-        top: 0; left: 4.5rem; z-index: 5; background: #1a1b20; color: #c4c8d4;
-        min-width: 3.6rem; vertical-align: middle; line-height: 1.2;
+      table.hm-grid thead th.hm-metric-h {
+        top: 0; z-index: 5; background: #1a1b20; color: #c4c8d4;
+        min-width: var(--hm-metric-col-w); vertical-align: middle; line-height: 1.2;
+      }
+      table.hm-grid th.hm-rowsum-h, table.hm-grid td.hm-rowtot {
+        right: var(--hm-month-col-w);
+      }
+      table.hm-grid th.hm-rowavg-h, table.hm-grid td.hm-rowavg {
+        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 1));
+      }
+      table.hm-grid th.hm-ytdsum-h, table.hm-grid td.hm-ytdsum {
+        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 2));
+      }
+      table.hm-grid th.hm-ytdavg-h, table.hm-grid td.hm-ytdavg {
+        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 3));
+      }
+      table.hm-grid th.hm-l12sum-h, table.hm-grid td.hm-l12sum {
+        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 4));
+      }
+      table.hm-grid th.hm-l12avg-h, table.hm-grid td.hm-l12avg {
+        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 5));
       }
       table.hm-grid tbody td.hm-rowtot {
-        position: sticky; left: 4.5rem; z-index: 3; background: #1a1b20; color: #dce0ea;
+        position: sticky; z-index: 3; background: #1a1b20; color: #dce0ea;
         font-weight: 600; font-size: 0.7rem; border: 1px solid #2b2c33;
+      }
+      table.hm-grid tbody td.hm-rowmetric {
+        position: sticky; z-index: 3; background: #191a1f; color: #dce0ea;
+        font-weight: 600; font-size: 0.69rem; border: 1px solid #2b2c33;
+      }
+      table.hm-grid tbody tr:nth-child(even) th.row-h {
+        background: #1a1b22;
+      }
+      table.hm-grid tbody tr:nth-child(even) td.hm-rowmetric {
+        background: #1c1d24;
+      }
+      table.hm-grid tbody tr:nth-child(even) td.cell {
+        box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.025);
+      }
+      table.hm-grid tbody tr.year-start th.row-h {
+        border-top: 2px solid #5d7cff;
+      }
+      table.hm-grid tbody tr.group-boundary th.row-h {
+        border-top: 2px dashed #4a4d57;
+      }
+      table.hm-grid th.row-h .l12-chip {
+        font-size: 0.61rem; color: #9da3b7; background: #262a33;
+        border: 1px dashed #4a4d57; border-radius: 999px; padding: 0.06rem 0.3rem;
+      }
+      table.hm-grid th.row-h .month-markers {
+        display: inline-flex; flex-wrap: wrap; gap: 0.22rem; margin-left: 0.35rem;
+      }
+      table.hm-grid th.row-h .month-label {
+        color: #d9deea;
       }
       table.hm-grid tbody th.row-h { z-index: 4; }
       table.hm-grid td.cell {

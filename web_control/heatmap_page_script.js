@@ -73,13 +73,28 @@
       const fg = v.cellFg || [];
       const click = v.clickable;
       const colTotals = v.columnTotals || [];
+      const colAverages = v.columnAverages || [];
       const rowTotals = v.rowTotals || [];
+      const rowAverages = v.rowAverages || [];
+      const rowYtdSums = v.rowYtdSums || [];
+      const rowYtdAverages = v.rowYtdAverages || [];
+      const rowRolling12Sums = v.rowRolling12Sums || [];
+      const rowRolling12Averages = v.rowRolling12Averages || [];
       let html = '<table class="hm-grid"><thead>';
       html += '<tr><th rowspan="2" class="corner">חודש \\ קטגוריה</th>';
-      html += '<th rowspan="2" class="hm-rowsum-h">סה״כ<br/>חודש</th>';
+      html += '<th rowspan="2" class="hm-metric-h hm-rowsum-h">סה״כ<br/>חודש</th>';
+      html += '<th rowspan="2" class="hm-metric-h hm-rowavg-h">ממוצע<br/>חודש</th>';
+      html += '<th rowspan="2" class="hm-metric-h hm-ytdsum-h">YTD<br/>סה״כ</th>';
+      html += '<th rowspan="2" class="hm-metric-h hm-ytdavg-h">YTD<br/>ממוצע</th>';
+      html += '<th rowspan="2" class="hm-metric-h hm-l12sum-h">12M<br/>סה״כ</th>';
+      html += '<th rowspan="2" class="hm-metric-h hm-l12avg-h">12M<br/>ממוצע</th>';
       for (let c = 0; c < cats.length; c++) {
         const t = (colTotals[c] !== undefined && colTotals[c] !== null) ? colTotals[c] : '';
-        html += '<th class="hm-colsum">' + esc(t) + '</th>';
+        const a = (colAverages[c] !== undefined && colAverages[c] !== null) ? colAverages[c] : '';
+        html += '<th class="hm-colsum"><div class="colsum-wrap">' +
+          '<div><span class="metric-label">Σ</span><span class="metric-val">' + esc(t) + '</span></div>' +
+          '<div><span class="metric-label">Avg</span><span class="metric-val">' + esc(a) + '</span></div>' +
+          '</div></th>';
       }
       html += '</tr><tr>';
       for (let c = 0; c < cats.length; c++) {
@@ -87,10 +102,29 @@
       }
       html += '</tr></thead><tbody>';
       for (let i = 0; i < months.length; i++) {
-        const mh = esc(months[i]);
+        const monthRaw = String(months[i] || '');
+        const mh = esc(monthRaw);
+        const prevMonthRaw = i > 0 ? String(months[i - 1] || '') : '';
+        const year = monthRaw.slice(0, 4);
+        const prevYear = prevMonthRaw.slice(0, 4);
+        const monthNum = monthRaw.slice(5, 7);
+        const isYearBoundary = i > 0 && year && prevYear && year !== prevYear;
+        const isL12Boundary = (i > 0 && (i % 12) === 0);
+        const rowClass = (isYearBoundary ? ' year-start' : '') + (isL12Boundary ? ' group-boundary' : '');
+        const l12Chip = isL12Boundary ? ('<span class="l12-chip">12m</span>') : '';
         const rt = (rowTotals[i] !== undefined && rowTotals[i] !== null) ? esc(rowTotals[i]) : '';
-        html += '<tr><th class="row-h">' + mh + '</th>';
-        html += '<td class="hm-rowtot">' + rt + '</td>';
+        const ra = (rowAverages[i] !== undefined && rowAverages[i] !== null) ? esc(rowAverages[i]) : '';
+        const ytds = (rowYtdSums[i] !== undefined && rowYtdSums[i] !== null) ? esc(rowYtdSums[i]) : '';
+        const ytda = (rowYtdAverages[i] !== undefined && rowYtdAverages[i] !== null) ? esc(rowYtdAverages[i]) : '';
+        const l12s = (rowRolling12Sums[i] !== undefined && rowRolling12Sums[i] !== null) ? esc(rowRolling12Sums[i]) : '';
+        const l12a = (rowRolling12Averages[i] !== undefined && rowRolling12Averages[i] !== null) ? esc(rowRolling12Averages[i]) : '';
+        html += '<tr class="' + rowClass.trim() + '"><th class="row-h"><span class="month-markers">' + l12Chip + '</span><span class="month-label">' + mh + '</span></th>';
+        html += '<td class="hm-rowtot hm-rowmetric">' + rt + '</td>';
+        html += '<td class="hm-rowavg hm-rowmetric">' + ra + '</td>';
+        html += '<td class="hm-ytdsum hm-rowmetric">' + ytds + '</td>';
+        html += '<td class="hm-ytdavg hm-rowmetric">' + ytda + '</td>';
+        html += '<td class="hm-l12sum hm-rowmetric">' + l12s + '</td>';
+        html += '<td class="hm-l12avg hm-rowmetric">' + l12a + '</td>';
         for (let j = 0; j < cats.length; j++) {
           const lab = (labels[i] && labels[i][j] !== undefined) ? labels[i][j] : '';
           const b = (bg[i] && bg[i][j]) ? bg[i][j] : '#333';
