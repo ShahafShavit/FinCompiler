@@ -101,11 +101,13 @@ def route_inbox(*, dry_run: bool = False, sink: Optional[Callable[[str], None]] 
 
 def fetch_holdings(*, sink: Optional[Callable[[str], None]] = None) -> None:
     _notify("FETCH: bank holdings export", sink)
-    b = portal_fetch.Bank(config.bank_username, config.bank_password)
+    b: portal_fetch.Bank | None = None
     try:
+        b = portal_fetch.Bank(config.bank_username, config.bank_password)
         b.download("holdings")
     finally:
-        del b
+        if b is not None:
+            b.close()
 
 
 def fetch_transactions_bank_credit_and_osh(
@@ -118,8 +120,9 @@ def fetch_transactions_bank_credit_and_osh(
 ) -> None:
     """Single Leumi session: optional credit card exports + optional osh (bank transactions)."""
     _notify("FETCH: bank session (credit / osh as requested)", sink)
-    downloader = portal_fetch.Bank(config.bank_username, config.bank_password)
+    downloader: portal_fetch.Bank | None = None
     try:
+        downloader = portal_fetch.Bank(config.bank_username, config.bank_password)
         if credit:
             _notify("FETCH: credit (via bank portal)", sink)
             downloader.download("credit")
@@ -127,7 +130,8 @@ def fetch_transactions_bank_credit_and_osh(
             _notify("FETCH: bank account transactions (osh)", sink)
             downloader.download("osh", from_date=from_date, to_date=to_date)
     finally:
-        del downloader
+        if downloader is not None:
+            downloader.close()
 
 
 def run_portal_fetches(

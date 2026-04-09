@@ -8,7 +8,6 @@ import pandas
 import pandas as pd
 import tabulate
 from oauth2client.service_account import ServiceAccountCredentials
-import re
 import config
 import categorization.categorizer as categorizer
 from pipeline import compiler as compile_handler
@@ -21,6 +20,30 @@ pd.options.display.max_columns = None
 pd.options.display.width = None
 pd.options.styler.latex.multicol_align = 'c'
 current_year = str(int(datetime.now().year))
+
+
+def _safe_to_numeric(num):
+    try:
+        return pd.to_numeric(num)
+    except Exception:
+        return num
+
+
+def _read_local_csv_for_sync(path: str) -> tuple[pd.DataFrame, str]:
+    try:
+        df = pd.read_csv(path)
+    except FileNotFoundError:
+        return pd.DataFrame(), "missing"
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(), "empty"
+    return df, "ok"
+
+
+def _normalize_for_sync_compare(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.apply(_safe_to_numeric)
+    out.replace(np.nan, "", inplace=True)
+    return out
+
 
 class GoogleSheetsHandler:
     def __init__(self, credentials_file, sheet_id):
@@ -113,8 +136,271 @@ class GSLink:
         df.to_csv(dest_path, index=False)
         return True, f"Pulled {len(df)} rows from sheet {sheet_name!r} → {dest_path}"
 
+    def _sheet_pair_report(
+        self,
+        sheet_name: str,
+        local_path: str,
+        *,
+        cell_range: str,
+    ) -> tuple[dict, pd.DataFrame | None]:
+        """
+        Compare one local CSV to one worksheet. Returns a JSON-friendly report dict and an optional
+        diff frame (non-empty only when there are value-level differences with aligned shape).
+        """
+        out: dict = {"sheet": sheet_name, "local_path": local_path}
+        try:
+            cloud_df = self.handler.fetch_worksheet_as_dataframe(sheet_name, cell_range)
+        except FileNotFoundError as e:
+            out["ok"] = False
+            out["cloud_error"] = str(e)
+            out["structural_issues"] = [str(e)]
+            return out, None
+
+        local_df, local_status = _read_local_csv_for_sync(local_path)
+        out["local_status"] = local_status
+        out["local_row_count"] = int(len(local_df))
+        out["cloud_row_count"] = int(len(cloud_df))
+
+        structural: list[str] = []
+
+        if bool(local_df.columns.duplicated().any()):
+            dups = [str(x) for x in local_df.columns[local_df.columns.duplicated()].tolist()]
+            out["duplicate_local_columns"] = dups
+            structural.append("duplicate column names in local CSV")
+
+        if local_status == "missing":
+            structural.append("local CSV is missing")
+            out["ok"] = False
+            out["structural_issues"] = structural
+            return out, None
+
+        if local_status == "empty" and cloud_df.empty:
+            out["ok"] = True
+            out["diff_row_count"] = 0
+            return out, None
+
+        if local_status == "empty" and not cloud_df.empty:
+            structural.append("local CSV is empty but the cloud sheet has rows")
+            out["ok"] = False
+            out["structural_issues"] = structural
+            return out, None
+
+        if local_status == "ok" and local_df.empty and cloud_df.empty:
+            out["ok"] = True
+            out["diff_row_count"] = 0
+            return out, None
+
+        if not cloud_df.empty and not local_df.empty:
+            lc = list(local_df.columns)
+            cc = list(cloud_df.columns)
+            if set(lc) != set(cc):
+                only_l = sorted(set(lc) - set(cc), key=str)
+                only_c = sorted(set(cc) - set(lc), key=str)
+                out["columns_only_local"] = only_l
+                out["columns_only_cloud"] = only_c
+                structural.append("column headers do not match between local CSV and cloud sheet")
+        elif cloud_df.empty and not local_df.empty:
+            structural.append("cloud sheet has no data while local CSV is non-empty")
+
+        if structural:
+            out["ok"] = False
+            out["structural_issues"] = structural
+            return out, None
+
+        column_order = list(local_df.columns)
+        local_n = _normalize_for_sync_compare(local_df.copy())
+        cloud_n = _normalize_for_sync_compare(cloud_df[column_order].copy())
+
+        if local_n.shape != cloud_n.shape:
+            out["ok"] = False
+            out["structural_issues"] = [
+                f"row/column shape mismatch after header align: local {local_n.shape} vs cloud {cloud_n.shape}"
+            ]
+            return out, None
+
+        try:
+            diff = local_n.compare(cloud_n).dropna(axis=0, how="all")
+        except (ValueError, TypeError) as e:
+            out["ok"] = False
+            out["structural_issues"] = [f"could not diff values: {e}"]
+            return out, None
+
+        n_diff = int(len(diff))
+        out["diff_row_count"] = n_diff
+        if n_diff == 0:
+            out["ok"] = True
+            return out, None
+
+        out["ok"] = False
+        sample_rows = sorted({int(i) + 2 for i in diff.index.tolist()})[:40]
+        out["sample_sheet_rows_with_differences"] = sample_rows
+        return out, diff
+
+    def analyze_sync(
+        self,
+        sheets: list,
+        compiled_files: list,
+        *,
+        cell_range: str = "A1:ZZ",
+        for_cli: bool = False,
+    ) -> dict:
+        """
+        Structured comparison of local CSVs to cloud worksheets (same semantics as :meth:`sync_check`).
+
+        ``for_cli`` reproduces console tables for the first worksheet that has value differences
+        (matches the historical desktop behaviour).
+        """
+        sheets_out: list[dict] = []
+        internal_diffs: list[pd.DataFrame | None] = []
+        issues: list[str] = []
+        all_ok = True
+
+        for sheet_name, path in zip(sheets, compiled_files):
+            rep, diff_df = self._sheet_pair_report(sheet_name, path, cell_range=cell_range)
+            internal_diffs.append(diff_df)
+            clean = {k: v for k, v in rep.items() if not str(k).startswith("_")}
+            sheets_out.append(clean)
+            if not rep.get("ok", False):
+                all_ok = False
+                for s in rep.get("structural_issues") or []:
+                    issues.append(f"{sheet_name}: {s}")
+                if rep.get("diff_row_count"):
+                    issues.append(
+                        f"{sheet_name}: {rep['diff_row_count']} row(s) differ in cell values "
+                        f"(see sample_sheet_rows_with_differences)"
+                    )
+
+        if for_cli:
+            if all_ok:
+                print("All sheets are up to date with local data.")
+            else:
+                printed = False
+                for rep, diff_df in zip(sheets_out, internal_diffs):
+                    if diff_df is None or diff_df.empty:
+                        continue
+                    sheet = rep.get("sheet", "?")
+                    indices_df = pd.DataFrame(
+                        data={"Cloud Row": diff_df.index + 2, "Local Row": diff_df.index}
+                    )
+                    print(f"Total of {len(diff_df)} mismatched row(s) found in: {sheet}")
+                    diff_tbl = diff_df.rename(columns={"self": "local", "other": "cloud"})
+                    print(
+                        tabulate.tabulate(
+                            indices_df, headers="keys", showindex=False, tablefmt="simple", numalign="center"
+                        )
+                    )
+                    diff_tbl = diff_tbl.copy()
+                    diff_tbl.index = diff_tbl.index + 2
+                    print(
+                        tabulate.tabulate(
+                            diff_tbl, headers="keys", showindex=False, tablefmt="simple", stralign="center"
+                        )
+                    )
+                    printed = True
+                    break
+                if not printed and issues:
+                    for line in issues:
+                        print(line)
+
+        return {"ok": all_ok, "issues": issues, "sheets": sheets_out}
+
+    def pull_desktop_sync_from_cloud(
+        self,
+        sheets: list,
+        compiled_files: list,
+        *,
+        cell_range: str = "A1:ZZ",
+        regular_data: bool = True,
+        force: bool = False,
+    ) -> tuple[bool, str, dict | None]:
+        """
+        Pull Holding/Totals-style tabs to local CSVs (same side effects as :meth:`update_local` when
+        ``regular_data`` is true). When ``force`` is false, requires :meth:`analyze_sync` to pass first.
+
+        Returns ``(success, message, preview_report)`` — ``preview_report`` is the structured
+        :meth:`analyze_sync` output when the operation is blocked by a failed sync check.
+        """
+        if not force:
+            rep = self.analyze_sync(sheets, compiled_files, cell_range=cell_range, for_cli=False)
+            if not rep["ok"]:
+                return (
+                    False,
+                    "Sync check failed: local data and Google Sheets do not match or the structure is wrong. "
+                    "Use Preview in the web UI, fix mismatches, or retry with force if you accept overwriting local.",
+                    rep,
+                )
+
+        for sheet_name, compiled_file in zip(sheets, compiled_files):
+            df = self.handler.fetch_worksheet_as_dataframe(sheet_name, cell_range)
+
+            for column in df.columns:
+                try:
+                    df[column] = df[column].apply(pd.to_numeric)
+                except ValueError:
+                    pass
+
+            if "מזהה עסקה" in df.columns and regular_data:
+                for index, row in df.iterrows():
+                    categorizer.CategorizeFile.category_store_link_backup(
+                        transaction_id=row["מזהה עסקה"], category=row["קטגוריה"]
+                    )
+                    categorizer.CategorizeFile.update_store_category(
+                        store_name=row["מקור עסקה"], category=row["קטגוריה"]
+                    )
+                df.to_csv(compiled_file, index=False)
+                categorizer.CategorizeFile.fix_similar_categories_in_file()
+                categorizer.CategorizeFile.fix_null_category_status()
+
+            print(f"Pulled data for {sheet_name}")
+            Path(compiled_file).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(compiled_file, index=False)
+
+        return True, "Pulled all configured sheets from Google Sheets to local CSVs.", None
+
+    def push_local_csvs_to_cloud(
+        self,
+        sheets: list,
+        compiled_files: list,
+        special_columns=None,
+        *,
+        cell_range: str = "A1:ZZ",
+        force: bool = False,
+    ) -> tuple[bool, str, dict | None]:
+        """
+        Push local CSVs to the corresponding worksheets. When ``force`` is false, requires a clean
+        :meth:`analyze_sync` first (same gate as :meth:`update_cloud`).
+
+        When blocked, returns the structured :meth:`analyze_sync` report as the third element.
+        """
+        if special_columns is None:
+            special_columns = []
+        if not force:
+            rep = self.analyze_sync(sheets, compiled_files, cell_range=cell_range, for_cli=False)
+            if not rep["ok"]:
+                return (
+                    False,
+                    "Sync check failed: push blocked until local and cloud match (or use force). "
+                    "Preview in the web UI shows details.",
+                    rep,
+                )
+
+        skipped: list[str] = []
+        for sheet_name, compiled_file in zip(sheets, compiled_files):
+            try:
+                df = pd.read_csv(compiled_file)
+            except FileNotFoundError:
+                skipped.append(compiled_file)
+                print(f"Missing file: {compiled_file}, skipping push to cloud.")
+                continue
+            self.handler.update_sheet(df, sheet_name, special_columns)
+
+        if skipped:
+            return True, f"Pushed sheets; skipped missing file(s): {', '.join(skipped)}", None
+        return True, "Pushed all local CSVs to Google Sheets.", None
+
     def update_local(self, sheets: list, compiled_files:list, rows = 1000, regular_data = True):
-        if regular_data: self.sync_check(sheets, compiled_files)
+        if regular_data:
+            self.sync_check(sheets, compiled_files)
         input("Are you sure you want to PULL data from the cloud?")
         for sheet_name, compiled_file in zip(sheets, compiled_files):
             df = self.handler.get_sheet(sheet_name, "A1:Z", rows=rows)
@@ -151,69 +437,8 @@ class GSLink:
                 print(f"Missing file: {compiled_file}, skipping push to cloud.")
 
     def sync_check(self, sheets, compiled_files):
-        def safe_to_numeric(num):
-            try:
-                return pd.to_numeric(num)
-            except Exception:
-                return num
-
-        def wrap_hebrew_words(text):
-            # Define the RLE and PDF characters
-            RLE = '\u202B'
-            PDF = '\u202C'
-
-            # Define a regex pattern to match Hebrew words
-
-            hebrew_pattern = re.compile(r'[\u0590-\u05FF]+')
-
-            # Replace Hebrew words with wrapped versions
-            try:
-                wrapped_text = hebrew_pattern.sub(lambda m: f"{RLE}{str(m.group(0))}{PDF}", text)
-            except Exception as e:
-                print(f"Failed adding BiDi text formatter for Hebrew Word {text}: {e}")
-                return text
-
-            return wrapped_text
-
-        # Apply the function to each cell in the dataframe
-        local_dfs = []
-        cloud_dfs = []
-        diff_dfs = []
-        for file, sheet in zip(compiled_files, sheets):
-            try:
-                local_dfs.append(pd.read_csv(file))
-                cloud_dfs.append(self.handler.get_sheet(sheet, "A1:Z", rows=5000))
-            except (FileNotFoundError, pandas.errors.EmptyDataError):
-                local_dfs.append(pd.DataFrame())
-                cloud_dfs.append(self.handler.get_sheet(sheet, "A1:Z", rows=5000))
-        for local_df, cloud_df in zip(local_dfs, cloud_dfs):
-            local_df = local_df.apply(safe_to_numeric)
-            cloud_df = cloud_df.apply(safe_to_numeric)
-            local_df.replace(np.nan, "", inplace=True)
-            cloud_df.replace(np.nan, "", inplace=True)
-            try:
-                diff = local_df.compare(cloud_df).dropna(axis=0, how='all')
-                diff_dfs.append(diff)
-            except ValueError as e:
-                print("Some mismatch occured while comparing cloud and local data (probably new record somewhere.)")
-                print(f"Local df shape: (R,C) {local_df.shape} | Cloud df shape: (R,C) {cloud_df.shape}")
-
-        success = 0
-        for sheet, df in zip(sheets, diff_dfs):
-            if not df.empty:
-                indices_df = pd.DataFrame(data={'Cloud Row': df.index + 2, 'Local Row': df.index})
-                print(f"Total of {len(df)} mismatched row(s) found in: {sheet}")
-                df.rename(columns={"self": 'local', 'other': 'cloud'}, inplace=True)
-                print(tabulate.tabulate(indices_df, headers='keys', showindex=False, tablefmt='simple',
-                                        numalign='center'))
-                df.index = df.index + 2
-                print(tabulate.tabulate(df, headers='keys', showindex=False, tablefmt='simple', stralign='center'))
-                return False
-            else:
-                success += 1
-        if success == len(sheets):
-            print(f"All sheets are up to date with local data.")
-            return True
+        rep = self.analyze_sync(sheets, compiled_files, cell_range="A1:ZZ", for_cli=True)
+        return bool(rep["ok"])
 
 
 # DEPRECATED

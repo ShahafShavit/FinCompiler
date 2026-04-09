@@ -101,7 +101,7 @@ _DASHBOARD_HTML = (
       border-color: #495057;
     }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
-    #log {
+    #log, #sheets_out {
       font-family: ui-monospace, Consolas, monospace;
       font-size: 0.8rem;
       white-space: pre-wrap;
@@ -113,6 +113,7 @@ _DASHBOARD_HTML = (
       padding: 0.65rem 0.75rem;
       border: 1px solid #2b2c33;
     }
+    #sheets_out { max-height: 18rem; margin-top: 0.65rem; }
     #status { font-size: 0.9rem; margin: 0.5rem 0 0 0; opacity: 0.9; }
     .hint { font-size: 0.82rem; opacity: 0.7; margin-top: 0.5rem; }
     .pill {
@@ -192,6 +193,19 @@ _DASHBOARD_HTML = (
   </div>
 
   <div class="card">
+    <h2>Google Sheets (desktop sync)</h2>
+    <p class="hint">Year-style tabs match the PyQt app (e.g. <code>Holdings2026</code>, <code>Totals2026</code>). <strong>Preview</strong> compares each tab to local CSVs and lists mismatches before merge. Pull/push run the same checks unless <strong>Force</strong> is checked (overwrites local on pull or cloud on push despite differences). The heatmap&apos;s all-time totals tab is separate — refresh it from <a href="/heatmap/">Heatmap → Refresh</a>.</p>
+    <p id="sheets_status" class="hint"></p>
+    <label class="row"><input type="checkbox" id="sheets_force"/> <strong>Force</strong> — apply pull/push even when preview reports problems</label>
+    <div style="margin-top:0.65rem">
+      <button type="button" id="btn_sheets_preview" class="secondary">Preview sync</button>
+      <button type="button" id="btn_sheets_pull">Pull from Sheets</button>
+      <button type="button" id="btn_sheets_push">Push to Sheets</button>
+    </div>
+    <pre id="sheets_out" aria-live="polite"></pre>
+  </div>
+
+  <div class="card">
     <h2>Live log</h2>
     <div id="log"></div>
     <p id="status"></p>
@@ -254,6 +268,72 @@ _DASHBOARD_HTML = (
       if (btn.id === 'btn_pipeline' || btn.id === 'btn_cat') btn.disabled = b;
     });
   }
+
+  function setSheetsBusy(b) {
+    ['btn_sheets_preview', 'btn_sheets_pull', 'btn_sheets_push'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = b;
+    });
+  }
+
+  const sheetsOut = document.getElementById('sheets_out');
+  const sheetsStatus = document.getElementById('sheets_status');
+
+  async function refreshSheetsStatus() {
+    try {
+      const r = await fetch('/api/sheets/status', { cache: 'no-store' });
+      const j = await r.json();
+      if (!j.configured) {
+        sheetsStatus.textContent = 'Google Sheets: not configured (set GOOGLE_API_USER and GOOGLE_WORKSHEET_ID).';
+        return;
+      }
+      sheetsStatus.textContent = 'Targets: ' + j.pairs.map((p) => p.sheet + ' → ' + p.local_path).join(' · ');
+    } catch (_) {
+      sheetsStatus.textContent = '';
+    }
+  }
+  refreshSheetsStatus();
+
+  function sheetsForce() {
+    const el = document.getElementById('sheets_force');
+    return !!(el && el.checked);
+  }
+
+  document.getElementById('btn_sheets_preview').onclick = async () => {
+    sheetsOut.textContent = 'Loading…';
+    try {
+      const r = await fetch('/api/sheets/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const j = await r.json().catch(() => ({}));
+      sheetsOut.textContent = JSON.stringify(j, null, 2);
+    } catch (e) {
+      sheetsOut.textContent = 'Error: ' + e;
+    }
+  };
+
+  async function postSheets(action) {
+    sheetsOut.textContent = 'Running…';
+    setSheetsBusy(true);
+    try {
+      const r = await fetch('/api/sheets/' + action, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: sheetsForce() }),
+      });
+      const j = await r.json().catch(() => ({}));
+      sheetsOut.textContent = JSON.stringify(j, null, 2);
+      if (r.ok && j.ok) refreshSheetsStatus();
+    } catch (e) {
+      sheetsOut.textContent = 'Error: ' + e;
+    } finally {
+      setSheetsBusy(false);
+    }
+  }
+  document.getElementById('btn_sheets_pull').onclick = () => postSheets('pull');
+  document.getElementById('btn_sheets_push').onclick = () => postSheets('push');
 
   async function postJob(action, options) {
     statusEl.textContent = '';
@@ -578,6 +658,13 @@ def make_handler_class(state: ControlState):
                 self._send(200, body, "application/json; charset=utf-8")
                 return
 
+            if path == "/api/sheets/status":
+                from web_control import desktop_sheets_api
+
+                body = _json_bytes_strict(desktop_sheets_api.api_status())
+                self._send(200, body, "application/json; charset=utf-8")
+                return
+
             if path == "/api/events":
                 q = state.hub.subscribe()
                 self.send_response(200)
@@ -647,6 +734,53 @@ def make_handler_class(state: ControlState):
                     self._send(code, body, ct)
                     return
                 self._send(404, b"Not Found", "text/plain")
+                return
+
+            if path == "/api/sheets/preview":
+                from web_control import desktop_sheets_api
+
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                if clen > 0:
+                    self.rfile.read(clen)
+                snap = desktop_sheets_api.api_preview()
+                if snap.get("error") == "not_configured":
+                    self._send(503, _json_bytes_strict(snap), "application/json; charset=utf-8")
+                    return
+                self._send(200, _json_bytes_strict(snap), "application/json; charset=utf-8")
+                return
+
+            if path in ("/api/sheets/pull", "/api/sheets/push"):
+                from web_control import desktop_sheets_api
+
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError:
+                    self._send(
+                        400,
+                        _json_bytes_strict({"ok": False, "message": "invalid JSON body"}),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+                opts = data if isinstance(data, dict) else {}
+                force = bool(opts.get("force"))
+                if path == "/api/sheets/pull":
+                    ok, msg, preview = desktop_sheets_api.api_pull(force=force)
+                else:
+                    ok, msg, preview = desktop_sheets_api.api_push(force=force)
+                payload: dict = {"ok": ok, "message": msg}
+                if preview is not None:
+                    payload["preview"] = preview
+                if ok:
+                    code = 200
+                elif preview is not None:
+                    code = 409
+                elif "not configured" in (msg or "").lower():
+                    code = 503
+                else:
+                    code = 502
+                self._send(code, _json_bytes_strict(payload), "application/json; charset=utf-8")
                 return
 
             if path != "/api/jobs/run":

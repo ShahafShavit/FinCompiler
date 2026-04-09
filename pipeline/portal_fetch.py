@@ -23,6 +23,26 @@ import time
 log = logging.getLogger(__name__)
 
 
+class LeumiLoginRejectedError(RuntimeError):
+    """Leumi stayed on the login page and showed an error (credentials, block, maintenance, etc.)."""
+
+
+class LeumiLoginTransientError(LeumiLoginRejectedError):
+    """Same page error that often clears on a later submit (load balancer, cold session, etc.)."""
+
+
+def _leumi_login_error_is_transient(message: str) -> bool:
+    """True for Leumi's generic «try again later» style banners (not wrong-password text)."""
+    m = (message or "").strip()
+    if not m:
+        return False
+    if "אפשר לנסות שוב מאוחר יותר" in m:
+        return True
+    if "לא הצלחנו להתחבר" in m and "מאוחר יותר" in m:
+        return True
+    return False
+
+
 def _abs_download_inbox() -> str:
     p = config.download_inbox_dir
     if os.path.isabs(p):
@@ -71,6 +91,151 @@ def optional_click(driver, locator, timeout: float = 5.0, description: str = "")
         log.info("SELENIUM optional skip: %s (not clickable within %ss)", label, timeout)
         _flow_debug_log(f"optional click skipped (not found in {timeout}s): {label}")
         return False
+
+
+def _leumi_login_form_visible(driver) -> bool:
+    """True if the username/password gate is still shown (SPA can live on /ebanking/ with overlay)."""
+    try:
+        for el in driver.find_elements(By.NAME, "user"):
+            try:
+                if el.is_displayed():
+                    return True
+            except Exception:
+                continue
+        for el in driver.find_elements(By.NAME, "password"):
+            try:
+                if el.is_displayed():
+                    return True
+            except Exception:
+                continue
+        u = (driver.current_url or "").lower()
+        if "login.html" in u:
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _leumi_post_login_ready(driver) -> bool:
+    """
+    True when Leumi appears past the login page (welcome UI or e-banking shell).
+    Requires that the login form is not visible — URL alone is not enough.
+    """
+    if _leumi_login_form_visible(driver):
+        return False
+    try:
+        if driver.find_elements(By.XPATH, "//*[contains(@class, 'welcome-text')]"):
+            return True
+        u = (driver.current_url or "").lower()
+        if "/ebanking/" in u and "login.html" not in u:
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _leumi_visible_login_errors(driver) -> list[str]:
+    """Collect short, visible error strings from the login page (best-effort; DOM varies)."""
+    texts: list[str] = []
+    selectors = (
+        '[role="alert"]',
+        ".alert-danger",
+        ".error-message",
+        '[class*="error-message"]',
+        '[class*="form-error"]',
+        "mat-error",
+        ".invalid-feedback",
+    )
+    for sel in selectors:
+        try:
+            for el in driver.find_elements(By.CSS_SELECTOR, sel):
+                try:
+                    if not el.is_displayed():
+                        continue
+                    t = (el.text or "").strip()
+                    if t and len(t) <= 800:
+                        texts.append(t)
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in texts:
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
+
+
+def _leumi_submit_outcome_ok(driver) -> bool:
+    # Do not use «URL changed» or «user node missing» alone — SPA/auth overlay can fool those checks.
+    return _leumi_post_login_ready(driver)
+
+
+def _wait_leumi_login_result(driver, *, timeout: float = 75.0) -> None:
+    """
+    After a single submit, wait for e-banking / welcome (success) or visible errors (rejected).
+
+    The Leumi button often shows «מתחבר…» then returns to idle on failure — that is not a
+    Selenium click problem; poll for server-side feedback instead of firing more clicks.
+    """
+    deadline = time.time() + timeout
+    poll = 0.35
+    while time.time() < deadline:
+        if _leumi_submit_outcome_ok(driver):
+            return
+        errs = _leumi_visible_login_errors(driver)
+        if errs:
+            msg = "; ".join(errs[:4])
+            if _leumi_login_error_is_transient(msg):
+                log.warning("SELENIUM: Leumi — transient login error on page: %s", msg)
+                raise LeumiLoginTransientError(msg)
+            log.error("SELENIUM: Leumi — login rejected or error on page: %s", msg)
+            raise LeumiLoginRejectedError(msg)
+        time.sleep(poll)
+    errs = _leumi_visible_login_errors(driver)
+    u = driver.current_url
+    log.error(
+        "SELENIUM TIMEOUT: Leumi — still on login after %ss (url=%r collected_errors=%r)",
+        timeout,
+        u,
+        errs,
+    )
+    hint = (
+        " No visible error text was captured — often wrong/expired password, OTP required, "
+        "temporary block, or bank maintenance. Try logging in manually in the same browser profile."
+    )
+    if errs:
+        raise TimeoutException(
+            f"Leumi — login: no success within {timeout}s; messages: {'; '.join(errs[:4])}"
+        ) from None
+    raise TimeoutException(
+        f"Leumi — login: no success within {timeout}s (url={u!r}).{hint}"
+    ) from None
+
+
+def _wait_leumi_post_login(driver, timeout: float = 30.0) -> None:
+    """Wait for post-login state; log URL/title on failure for debugging site changes."""
+    try:
+        WebDriverWait(driver, timeout).until(lambda d: _leumi_post_login_ready(d))
+    except TimeoutException as e:
+        try:
+            url = driver.current_url
+            title = driver.title
+        except Exception:
+            url, title = "(unavailable)", "(unavailable)"
+        log.error(
+            "SELENIUM TIMEOUT: Leumi — post-login (welcome / e-banking not detected within %ss) url=%r title=%r",
+            timeout,
+            url,
+            title,
+        )
+        raise TimeoutException(
+            f"Leumi — post-login: expected welcome or e-banking URL within {timeout}s "
+            f"(url={url!r})"
+        ) from e
 
 
 def wait_click(driver, locator, timeout: float, description: str):
@@ -135,8 +300,24 @@ class Bank:
         self.__username = username
         self.__password = password
         self.__driver = load_driver()
-        self.__driver = self.__login__()
+        try:
+            self.__driver = self.__login__()
+        except BaseException:
+            self.close()
+            raise
         log.info("Bank portal session: login flow completed")
+
+    def close(self) -> None:
+        """Idempotent: quit Chrome and drop the session (safe after failed login or when done)."""
+        d = getattr(self, "_Bank__driver", None)
+        if d is None:
+            return
+        try:
+            log.debug("Bank portal session: closing WebDriver")
+            d.quit()
+        except Exception:
+            pass
+        self.__driver = None
 
     def __login__(self):
         url = 'https://hb2.bankleumi.co.il/H/Login.html'
@@ -150,23 +331,50 @@ class Bank:
         )
         flow_debug_pause(self.__driver, "Leumi login page loaded (after cookie dismiss attempt)")
         time.sleep(2)
-        log.info("SELENIUM: Leumi — enter credentials")
-        username = self.__driver.find_element(By.NAME, "user")
-        password = self.__driver.find_element(By.NAME, "password")
-        time.sleep(1)
-        username.send_keys(self.__username)
-        time.sleep(1)
-        password.send_keys(self.__password)
-        wait_click(
-            self.__driver,
-            (By.XPATH, "//button[@type='submit' and contains(@class, 'cursor-pointer')]"),
-            10,
-            "Leumi — submit login",
-        )
-        WebDriverWait(self.__driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, "//span[contains(@class, 'welcome-text')]"))
-        )
-        log.info("SELENIUM: Leumi — welcome screen (login OK)")
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            log.info(
+                "SELENIUM: Leumi — enter credentials (submit attempt %s/%s)",
+                attempt + 1,
+                max_attempts,
+            )
+            username = self.__driver.find_element(By.NAME, "user")
+            password = self.__driver.find_element(By.NAME, "password")
+            time.sleep(0.5)
+            username.clear()
+            username.send_keys(self.__username)
+            time.sleep(0.5)
+            password.clear()
+            password.send_keys(self.__password)
+            time.sleep(0.5)
+            wait_click(
+                self.__driver,
+                (By.XPATH, "//button[@type='submit' and contains(@class, 'cursor-pointer')]"),
+                10,
+                "Leumi — submit login",
+            )
+            try:
+                _wait_leumi_login_result(self.__driver, timeout=75.0)
+                break
+            except LeumiLoginTransientError as e:
+                if attempt >= max_attempts - 1:
+                    log.error(
+                        "SELENIUM: Leumi — still failing after %s submit attempts: %s",
+                        max_attempts,
+                        e,
+                    )
+                    raise LeumiLoginRejectedError(str(e)) from e
+                delay_s = 10.0 + attempt * 8.0
+                log.warning(
+                    "SELENIUM: Leumi — transient error; waiting %ss then re-submit (%s/%s): %s",
+                    delay_s,
+                    attempt + 2,
+                    max_attempts,
+                    e,
+                )
+                time.sleep(delay_s)
+        _wait_leumi_post_login(self.__driver, timeout=30.0)
+        log.info("SELENIUM: Leumi — post-login screen (login OK)")
         return self.__driver
 
     def download(self, file: str, from_date=None, to_date=None):
@@ -301,13 +509,44 @@ class Bank:
                 )
                 details_list.click()
 
-                details_button = WebDriverWait(self.__driver, 10).until(
-                    EC.element_to_be_clickable(
-                        (By.XPATH, "//ul[@class='dropdown-menu']/li[1]/div/a/span[text()='דפי פירוט']"))
+                details_xpath = (
+                    "//ul[@class='dropdown-menu']/li[1]/div/a/span[text()='דפי פירוט']"
                 )
-                details_button.click()
+                handles_before = list(self.__driver.window_handles)
 
-                WebDriverWait(self.__driver, 10).until(EC.new_window_is_opened(self.__driver.window_handles))
+                def _click_dafey_pirut(*, js: bool) -> None:
+                    btn = WebDriverWait(self.__driver, 15).until(
+                        EC.element_to_be_clickable((By.XPATH, details_xpath))
+                    )
+                    self.__driver.execute_script(
+                        "arguments[0].scrollIntoView({block: 'center'});", btn
+                    )
+                    time.sleep(0.15)
+                    if js:
+                        self.__driver.execute_script("arguments[0].click();", btn)
+                    else:
+                        try:
+                            btn.click()
+                        except Exception as ex:
+                            log.warning("SELENIUM: credit — native «דפי פירוט» click: %s", ex)
+                            self.__driver.execute_script("arguments[0].click();", btn)
+
+                def _wait_extra_window() -> None:
+                    WebDriverWait(self.__driver, 28).until(
+                        lambda d: len(d.window_handles) > len(handles_before)
+                    )
+
+                _click_dafey_pirut(js=False)
+                try:
+                    _wait_extra_window()
+                except TimeoutException:
+                    log.warning(
+                        "SELENIUM: credit — no new window after details click; retry (handles=%s)",
+                        handles_before,
+                    )
+                    handles_before = list(self.__driver.window_handles)
+                    _click_dafey_pirut(js=True)
+                    _wait_extra_window()
 
                 new_window = self.__driver.window_handles[-1]
                 self.__driver.switch_to.window(new_window)
@@ -429,8 +668,10 @@ class Bank:
         raise ValueError(f"Unknown Bank.download kind {file!r} (use holdings, osh, or credit).")
 
     def __del__(self):
-        log.debug("Bank portal session: closing WebDriver")
-        self.__driver.quit()
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class IsracardCredit:

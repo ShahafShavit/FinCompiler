@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -84,6 +85,38 @@ web_totals_file = os.path.join(_web_root, "data", "web_totals.csv")
 # Google Sheet tab for heatmap / web_totals.csv: the all-time ledger (single tab, not split by year).
 # Distinct from the desktop UI sync in ``apps/qt_main.py``, which uses ``Totals`` + calendar year for compiled.csv.
 totals_sheet_name = os.environ.get("FINANCE_TOTALS_SHEET_NAME", "Totals").strip() or "Totals"
+
+
+def _calendar_year_str() -> str:
+    return str(int(datetime.now().year))
+
+
+def desktop_holdings_sheet_name() -> str:
+    """
+    Holdings tab name used by the desktop app sync (calendar year suffix by default).
+
+    Override with ``FINANCE_DESKTOP_HOLDINGS_SHEET`` when the sheet title is non-standard.
+    """
+    v = os.environ.get("FINANCE_DESKTOP_HOLDINGS_SHEET", "").strip()
+    return v or f"Holdings{_calendar_year_str()}"
+
+
+def desktop_totals_sheet_name() -> str:
+    """
+    Totals / compiled tab name for desktop sync (calendar year suffix by default).
+
+    Override with ``FINANCE_DESKTOP_TOTALS_SHEET`` when needed.
+    """
+    v = os.environ.get("FINANCE_DESKTOP_TOTALS_SHEET", "").strip()
+    return v or f"Totals{_calendar_year_str()}"
+
+
+def desktop_sync_sheet_pairs() -> list[tuple[str, str]]:
+    """``(worksheet_title, local_csv_path)`` in the same order as ``qt_main`` pull/push."""
+    return [
+        (desktop_holdings_sheet_name(), holdings_file),
+        (desktop_totals_sheet_name(), compiled_file),
+    ]
 expenses_web_file = os.path.join(_web_root, "expenses_web.html")
 incomes_web_file = os.path.join(_web_root, "incomes_web.html")
 
