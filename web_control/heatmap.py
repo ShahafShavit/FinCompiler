@@ -248,6 +248,15 @@ def _style_stats_table(stats_df: pd.DataFrame, report_type: ReportType) -> str:
     else:
         transform = np.log1p
 
+    def _text_color_for_bg(bg_hex: str) -> str:
+        """Return readable foreground color for a hex background."""
+        try:
+            r, g, b = mcolors.to_rgb(bg_hex)
+        except ValueError:
+            return "#f4f6fb"
+        luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return "#111318" if luminance > 0.58 else "#f4f6fb"
+
     def _apply_color_to_series(series: pd.Series, cmap_name: str, transform_func: Any) -> list[str]:
         series_transformed = series.astype(float).map(transform_func)
         min_val, max_val = series_transformed.min(), series_transformed.max()
@@ -258,7 +267,10 @@ def _style_stats_table(stats_df: pd.DataFrame, report_type: ReportType) -> str:
         colors = series_transformed.map(
             lambda x: mcolors.to_hex(cmap(norm(x))) if pd.notna(x) else ""
         )
-        return [f"background-color: {c}" for c in colors]
+        return [
+            (f"background-color: {c}; color: {_text_color_for_bg(c)}; text-shadow: none;" if c else "")
+            for c in colors
+        ]
 
     seq_cols = [
         "סך הכל (Total)",
@@ -328,9 +340,11 @@ def _heatmap_cell_colors(z_paint: np.ndarray, cmap_name: str, center: float | No
 
 
 def _format_cell_money(v: float) -> str:
-    if abs(v - round(v)) < 0.01:
-        return f"{v:,.0f}₪"
-    return f"{v:,.2f}₪"
+    sign = "-" if v < 0 else ""
+    a = abs(v)
+    if abs(a - round(a)) < 0.01:
+        return f"{sign}{a:,.0f}₪"
+    return f"{sign}{a:,.2f}₪"
 
 
 @dataclass
@@ -457,6 +471,18 @@ def _view_payload(
     z = z_paint.values
     display = pivot.values.astype(float)
     colors = _heatmap_cell_colors(z, cmap, zcenter)
+    fg_colors: list[list[str]] = []
+    for i in range(len(months)):
+        row_fg: list[str] = []
+        for j in range(len(categories)):
+            bg = colors[i][j] if i < len(colors) and j < len(colors[i]) else "#333337"
+            try:
+                r, g, b = mcolors.to_rgb(bg)
+                lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                row_fg.append("#111318" if lum > 0.58 else "#f4f6fb")
+            except ValueError:
+                row_fg.append("#f4f6fb")
+        fg_colors.append(row_fg)
     clickable: list[list[bool]] = []
     for i, ym in enumerate(months):
         row_b: list[bool] = []
@@ -477,6 +503,7 @@ def _view_payload(
         "categories": categories,
         "labels": labels,
         "cellBg": colors,
+        "cellFg": fg_colors,
         "clickable": clickable,
         "columnTotals": column_totals,
         "rowTotals": row_totals,
@@ -667,7 +694,17 @@ def _heatmap_shared_css() -> str:
         font-size: 0.88rem; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
       .styled-table th, .styled-table td { padding: 8px 10px; text-align: right;
         border: 1px solid #2b2c33; }
+      .stats-table-container .styled-table td {
+        direction: ltr;
+        unicode-bidi: isolate;
+        text-align: right;
+      }
       .styled-table thead th { background: #2d4a2f; color: #e8f5e9; }
+      .stats-table-container .styled-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+      }
       .styled-table tbody tr:hover { background: #1e1f24 !important; }
       .tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.5rem 0 1rem; }
       .tabs button {
@@ -705,7 +742,11 @@ def _heatmap_shared_css() -> str:
       }
       table.hm-grid tbody th.row-h { z-index: 4; }
       table.hm-grid td.cell {
-        cursor: default; color: #0d0d0f; font-weight: 600; text-shadow: 0 0 2px rgba(255,255,255,0.35);
+        cursor: default; color: #f4f6fb; font-weight: 600; text-shadow: none;
+        direction: ltr; unicode-bidi: isolate;
+      }
+      table.hm-grid td.hm-rowtot, table.hm-grid th.hm-colsum {
+        direction: ltr; unicode-bidi: isolate;
       }
       table.hm-grid td.cell.clickable { cursor: pointer; }
       table.hm-grid td.cell.clickable:hover { filter: brightness(1.12); outline: 1px solid #fff8; }

@@ -70,6 +70,7 @@
       const cats = v.categories;
       const labels = v.labels;
       const bg = v.cellBg;
+      const fg = v.cellFg || [];
       const click = v.clickable;
       const colTotals = v.columnTotals || [];
       const rowTotals = v.rowTotals || [];
@@ -93,10 +94,11 @@
         for (let j = 0; j < cats.length; j++) {
           const lab = (labels[i] && labels[i][j] !== undefined) ? labels[i][j] : '';
           const b = (bg[i] && bg[i][j]) ? bg[i][j] : '#333';
+          const f = (fg[i] && fg[i][j]) ? fg[i][j] : '#f4f6fb';
           const cl = (click[i] && click[i][j]) ? 'cell clickable' : 'cell';
           const ym = months[i];
           const cat = cats[j];
-          html += '<td class="' + cl + '" style="background-color:' + b + '" data-ym="' +
+          html += '<td class="' + cl + '" style="background-color:' + b + ';color:' + f + ';text-shadow:none" data-ym="' +
             encodeURIComponent(ym) + '" data-cat="' + encodeURIComponent(cat) + '">' +
             esc(lab) + '</td>';
         }

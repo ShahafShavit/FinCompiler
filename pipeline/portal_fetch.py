@@ -12,7 +12,7 @@ from datetime import datetime
 
 import config
 from selenium import webdriver, common
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver import Keys, ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -91,6 +91,28 @@ def optional_click(driver, locator, timeout: float = 5.0, description: str = "")
         log.info("SELENIUM optional skip: %s (not clickable within %ss)", label, timeout)
         _flow_debug_log(f"optional click skipped (not found in {timeout}s): {label}")
         return False
+
+
+def _wait_leumi_login_page_ready(driver, *, timeout: float = 45.0) -> None:
+    """
+    Wait until the Leumi login DOM is loaded and credential inputs are interactable.
+    Slow bank responses can leave the page partially rendered for several seconds.
+    """
+    WebDriverWait(driver, timeout).until(
+        lambda d: d.execute_script("return document.readyState") == "complete"
+    )
+    WebDriverWait(driver, timeout).until(
+        EC.presence_of_element_located((By.NAME, "user"))
+    )
+    WebDriverWait(driver, timeout).until(
+        EC.presence_of_element_located((By.NAME, "password"))
+    )
+    WebDriverWait(driver, timeout).until(
+        EC.element_to_be_clickable((By.NAME, "user"))
+    )
+    WebDriverWait(driver, timeout).until(
+        EC.element_to_be_clickable((By.NAME, "password"))
+    )
 
 
 def _leumi_login_form_visible(driver) -> bool:
@@ -253,6 +275,80 @@ def wait_click(driver, locator, timeout: float, description: str):
         raise TimeoutException(f"{description}: element not clickable within {timeout}s") from e
 
 
+def _leumi_fill_login_credentials(driver, username: str, password: str) -> None:
+    """
+    Re-find fields each try — after a transient error Leumi re-renders the form and
+    cached WebElements go stale. Prefer Ctrl+A clear over .clear() on Angular inputs.
+    """
+    last: BaseException | None = None
+    for try_i in range(8):
+        try:
+            user_el = WebDriverWait(driver, 14).until(
+                EC.element_to_be_clickable((By.NAME, "user"))
+            )
+            pass_el = WebDriverWait(driver, 14).until(
+                EC.element_to_be_clickable((By.NAME, "password"))
+            )
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'}); arguments[1].scrollIntoView({block: 'center'});",
+                user_el,
+                pass_el,
+            )
+            time.sleep(0.12)
+            user_el.click()
+            user_el.send_keys(Keys.CONTROL + "a")
+            user_el.send_keys(Keys.DELETE)
+            user_el.send_keys(username)
+            time.sleep(0.08)
+            pass_el.click()
+            pass_el.send_keys(Keys.CONTROL + "a")
+            pass_el.send_keys(Keys.DELETE)
+            pass_el.send_keys(password)
+            return
+        except StaleElementReferenceException as e:
+            last = e
+            time.sleep(0.2 + 0.15 * try_i)
+            continue
+    raise TimeoutException(
+        "Leumi login: credential fields stayed stale — page still updating?"
+    ) from last
+
+
+def _leumi_click_login_submit(driver, strategy: str) -> None:
+    """
+    One submit action per call. Leumi often ignores a plain WebElement.click(); rotate
+    strategies across retries (real pointer path vs synthetic DOM events).
+    """
+    submit_xpath = "//button[@type='submit' and contains(@class, 'cursor-pointer')]"
+    btn = WebDriverWait(driver, 15).until(
+        EC.element_to_be_clickable((By.XPATH, submit_xpath))
+    )
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+    time.sleep(0.18)
+
+    if strategy == "actions":
+        log.info("SELENIUM → Leumi — submit login (ActionChains)")
+        ActionChains(driver).move_to_element(btn).pause(0.08).click().perform()
+    elif strategy == "js_mouse":
+        log.info("SELENIUM → Leumi — submit login (JS mouse chain)")
+        driver.execute_script(
+            """
+            const el = arguments[0];
+            el.focus();
+            const opts = { bubbles: true, cancelable: true, view: window };
+            const ev = (t) => new MouseEvent(t, opts);
+            el.dispatchEvent(ev('mousedown'));
+            el.dispatchEvent(ev('mouseup'));
+            el.dispatchEvent(ev('click'));
+            """,
+            btn,
+        )
+    else:
+        log.info("SELENIUM → Leumi — submit login (native)")
+        btn.click()
+    log.info("SELENIUM ok: Leumi — submit login (%s)", strategy)
+
+
 def timestamp_latest_file_in_dir(directory, file_extension=".xlsx"):
     """
     Renames the latest file in the specified directory with a timestamp.
@@ -323,35 +419,33 @@ class Bank:
         url = 'https://hb2.bankleumi.co.il/H/Login.html'
         log.info("SELENIUM: Leumi — open login URL")
         self.__driver.get(url)
+        _wait_leumi_login_page_ready(self.__driver, timeout=45.0)
         optional_click(
             self.__driver,
             (By.CSS_SELECTOR, "button.app-close-cookies-btn"),
-            timeout=5,
+            timeout=15,
             description="Leumi login — cookie banner close",
         )
         flow_debug_pause(self.__driver, "Leumi login page loaded (after cookie dismiss attempt)")
-        time.sleep(2)
+        _wait_leumi_login_page_ready(self.__driver, timeout=30.0)
+        time.sleep(1.5)
         max_attempts = 3
+        submit_strategies = ("actions", "js_mouse", "native")
         for attempt in range(max_attempts):
             log.info(
                 "SELENIUM: Leumi — enter credentials (submit attempt %s/%s)",
                 attempt + 1,
                 max_attempts,
             )
-            username = self.__driver.find_element(By.NAME, "user")
-            password = self.__driver.find_element(By.NAME, "password")
-            time.sleep(0.5)
-            username.clear()
-            username.send_keys(self.__username)
-            time.sleep(0.5)
-            password.clear()
-            password.send_keys(self.__password)
-            time.sleep(0.5)
-            wait_click(
+            _wait_leumi_login_page_ready(self.__driver, timeout=30.0)
+            _leumi_fill_login_credentials(self.__driver, self.__username, self.__password)
+            time.sleep(0.35)
+            if attempt == 0:
+                log.info("SELENIUM: Leumi — initial settle wait before first submit (10s)")
+                time.sleep(10.0)
+            _leumi_click_login_submit(
                 self.__driver,
-                (By.XPATH, "//button[@type='submit' and contains(@class, 'cursor-pointer')]"),
-                10,
-                "Leumi — submit login",
+                submit_strategies[attempt % len(submit_strategies)],
             )
             try:
                 _wait_leumi_login_result(self.__driver, timeout=75.0)
