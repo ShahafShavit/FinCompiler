@@ -74,7 +74,7 @@ def ui():
 
     def delete_old_files():
         check_sync()
-        pipeline.ensure_workspace_dirs()
+        pipeline.ensure_pipeline_dirs()
         os.makedirs(config.unclassified_download_dir, exist_ok=True)
         for folder in (
             config.download_inbox_dir,
@@ -96,7 +96,7 @@ def ui():
 
     @log_process
     def process_holdings():
-        pipeline.ensure_workspace_dirs()
+        pipeline.ensure_pipeline_dirs()
         pipeline.route_inbox(sink=_pipeline_sink)
         pipeline.ingest_holdings_inbox(sink=_pipeline_sink)
         pipeline.csv_from_raw_holdings(sink=_pipeline_sink)
@@ -142,7 +142,7 @@ def ui():
 
     @log_process
     def process_transactions():
-        pipeline.ensure_workspace_dirs()
+        pipeline.ensure_pipeline_dirs()
         pipeline.route_inbox(sink=_pipeline_sink)
         pipeline.ingest_transactions_inbox(sink=_pipeline_sink)
         pipeline.csv_from_raw_transactions(drop_profile="full", sink=_pipeline_sink)

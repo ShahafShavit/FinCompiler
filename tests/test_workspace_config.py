@@ -1,5 +1,5 @@
 """
-Tests for FINANCE_WORKSPACE_ROOT: isolated data/export/web without touching repo trees.
+Tests for FINANCE_WORKSPACE_ROOT: isolated data/ (including export/) and web/ without touching repo trees.
 
 After tests, ``config`` is reloaded with FINANCE_WORKSPACE_ROOT unset (default layout).
 """
@@ -32,7 +32,8 @@ class WorkspaceRootTests(unittest.TestCase):
         self.assertEqual(root, "")
         # No FINANCE_WORKSPACE_ROOT: paths are normalized but not anchored to another drive
         self.assertIn("data", config_mod.download_inbox_dir.replace("\\", "/"))
-        self.assertIn("export", config_mod.compiled_file.replace("\\", "/"))
+        norm = config_mod.compiled_file.replace("\\", "/")
+        self.assertIn("data/export", norm)
 
     def test_custom_root_prefixes_all_major_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

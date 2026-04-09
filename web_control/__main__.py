@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 def main() -> int:
     configure_pipeline_logging(logging.INFO)
-    log.info("Workspace root: %s", config.workspace_root() or "(default cwd layout)")
+    log.info("FINANCE_WORKSPACE_ROOT: %s", config.workspace_root() or "(unset; cwd layout)")
     serve_forever()
     return 0
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run the real categorization stack with HTTP UI using your workspace data.
+Run the real categorization stack with HTTP UI using your data tree (see FINANCE_WORKSPACE_ROOT).
 
 Calls ``pipeline.run_categorization_interactive()`` (same as ``run_pipeline.py ... --categorize``).
 
@@ -10,7 +10,7 @@ repo — the same tree as in ``.env`` with ``FINANCE_WORKSPACE_ROOT=testing/`` w
 the repo root.
 
 Does **not** overwrite ``compiled.csv`` or ``stores_to_categories.csv``; it uses whatever is
-already under that workspace (e.g. ``testing/export/compiled/compiled.csv``).
+already under that root (e.g. ``testing/data/export/compiled/compiled.csv``).
 
 Environment (optional):
   FINANCE_CATEGORIZE_HTTP_PORT   default 9777

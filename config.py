@@ -6,14 +6,15 @@ load_dotenv()
 
 def workspace_root() -> str:
     """
-    Optional root for all workspace paths (data/, export/, web/).
+    Optional root for all runtime data paths (``data/``, ``web/``).
 
-    Set ``FINANCE_WORKSPACE_ROOT`` in the environment or ``.env`` to use a separate
-    tree for experiments or automated tests so live ``data/`` and ``export/`` are
+    ``data/export/`` (compiled CSVs) and ``data/pipeline/`` (per-pipeline workdirs)
+    live under ``data/``. Set ``FINANCE_WORKSPACE_ROOT`` in the environment or ``.env``
+    to use a separate tree for experiments or tests so the default repo ``data/`` is
     untouched. Absolute or relative paths are allowed; relative paths are resolved
     from the process current working directory.
 
-    When unset or empty, behavior matches the original layout (paths relative to CWD).
+    When unset or empty, paths are relative to the process CWD.
     """
     r = os.environ.get("FINANCE_WORKSPACE_ROOT", "").strip()
     if not r:
@@ -41,20 +42,20 @@ download_inbox_dir = _data("input")
 raw_dir = _data("raw") + os.sep
 cleaned_dir = _data("clean") + os.sep
 
-# Holdings pipeline workspace (balances / יתרות)
-holdings_inbox_dir = _data("workspace", "holdings", "inbox")
-holdings_raw_dir = _data("workspace", "holdings", "raw")
-holdings_clean_dir = _data("workspace", "holdings", "clean")
+# Holdings pipeline workdirs (balances / יתרות)
+holdings_inbox_dir = _data("pipeline", "holdings", "inbox")
+holdings_raw_dir = _data("pipeline", "holdings", "raw")
+holdings_clean_dir = _data("pipeline", "holdings", "clean")
 
-# Transactions pipeline workspace (everything that is not classified as holdings)
-transactions_inbox_dir = _data("workspace", "transactions", "inbox")
-transactions_raw_dir = _data("workspace", "transactions", "raw")
-transactions_clean_dir = _data("workspace", "transactions", "clean")
+# Transactions pipeline (everything that is not classified as holdings)
+transactions_inbox_dir = _data("pipeline", "transactions", "inbox")
+transactions_raw_dir = _data("pipeline", "transactions", "raw")
+transactions_clean_dir = _data("pipeline", "transactions", "clean")
 
 # Workbooks that are not *.xls* or need manual naming
 unclassified_download_dir = _data("input", "unclassified")
 
-_compiled_root = _w("export", "compiled")
+_compiled_root = _data("export", "compiled")
 compiled_dir = _compiled_root + os.sep
 compiled_file = os.path.join(_compiled_root, "compiled.csv")
 holdings_file = os.path.join(_compiled_root, "holdings.csv")

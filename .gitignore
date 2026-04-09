@@ -1,10 +1,10 @@
 /data/
-/export/
 .env
 /web/
 *.html
 *.json
 /venv/
+.venv/
 __pycache__/
 testing/
 .pytest_cache/

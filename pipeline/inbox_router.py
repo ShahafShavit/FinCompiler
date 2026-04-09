@@ -1,8 +1,8 @@
 """
-Classify browser downloads and move them into per-pipeline workspace inboxes.
+Classify browser downloads and move them into per-pipeline inbox folders.
 
 Shared download folder (Chrome): ``config.download_inbox_dir``.
-Workspaces: ``config.holdings_*`` and ``config.transactions_*``.
+Pipeline dirs: ``config.holdings_*`` and ``config.transactions_*``.
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def route_shared_download_inbox(
 ) -> dict[str, int]:
     """
     Move every ``*.xls*`` from the shared Chrome download folder into the
-    holdings or transactions workspace inbox. Unknown extensions go to
+    holdings or transactions pipeline inbox. Unknown extensions go to
     ``config.unclassified_download_dir``.
 
     Returns counts: moved_holdings, moved_transactions, moved_unknown, skipped.

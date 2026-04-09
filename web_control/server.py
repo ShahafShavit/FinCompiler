@@ -164,11 +164,11 @@ _DASHBOARD_HTML = (
       </div>
     </div>
 
-    <label class="row" style="margin-top:0.75rem"><input type="checkbox" id="p_route" checked/> <strong>Route inbox</strong> — move <code>data/input/*.xls*</code> into workspace holdings / transactions folders</label>
+    <label class="row" style="margin-top:0.75rem"><input type="checkbox" id="p_route" checked/> <strong>Route inbox</strong> — move <code>data/input/*.xls*</code> into pipeline holdings / transactions folders</label>
     <p class="hint">Automatically stays on when you compile (so new downloads reach the right pipeline folders).</p>
 
-    <label class="row"><input type="checkbox" id="p_hold"/> <strong>Compile holdings</strong> → <code>export/compiled/holdings.csv</code></label>
-    <label class="row"><input type="checkbox" id="p_tx"/> <strong>Compile transactions</strong> → <code>export/compiled/compiled.csv</code></label>
+    <label class="row"><input type="checkbox" id="p_hold"/> <strong>Compile holdings</strong> → <code>data/export/compiled/holdings.csv</code></label>
+    <label class="row"><input type="checkbox" id="p_tx"/> <strong>Compile transactions</strong> → <code>data/export/compiled/compiled.csv</code></label>
     <label class="row"><input type="checkbox" id="p_auto" disabled/> <strong>Auto-categorize</strong> after transactions compile (rows still missing a category → <a href="/categorize/">/categorize/</a>)</label>
 
     <label class="row combo-row" style="margin-top:0.65rem">Transaction column-drop profile (type or pick)
@@ -225,7 +225,7 @@ _DASHBOARD_HTML = (
     if (procH || procT) {
       route.checked = true;
       route.disabled = true;
-      route.title = 'Required when compiling so files are sorted into workspace inboxes first.';
+      route.title = 'Required when compiling so files are sorted into pipeline inboxes first.';
     } else {
       route.disabled = false;
       route.title = '';

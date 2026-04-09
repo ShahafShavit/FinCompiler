@@ -71,7 +71,7 @@ def _notify(msg: str, sink: Optional[Callable[[str], None]]) -> None:
         sink(msg)
 
 
-def ensure_workspace_dirs() -> None:
+def ensure_pipeline_dirs() -> None:
     for d in (
         config.holdings_inbox_dir,
         config.holdings_raw_dir,
@@ -87,8 +87,8 @@ def ensure_workspace_dirs() -> None:
 
 
 def route_inbox(*, dry_run: bool = False, sink: Optional[Callable[[str], None]] = None) -> dict[str, int]:
-    """Move ``*.xls*`` from the shared download folder into workspace inboxes."""
-    _notify("INBOX ROUTE: classifying shared downloads into workspace inboxes", sink)
+    """Move ``*.xls*`` from the shared download folder into pipeline inboxes."""
+    _notify("INBOX ROUTE: classifying shared downloads into pipeline inboxes", sink)
     stats = inbox_router.route_shared_download_inbox(dry_run=dry_run)
     _notify(
         f"INBOX ROUTE done: holdings={stats['moved_holdings']} "
@@ -200,7 +200,7 @@ def fetch_transactions_max_isracard(*, sink: Optional[Callable[[str], None]] = N
 
 
 def ingest_holdings_inbox(*, sink: Optional[Callable[[str], None]] = None) -> list[str]:
-    """Spreadsheet ingest: holdings workspace inbox -> holdings raw."""
+    """Spreadsheet ingest: holdings pipeline inbox -> holdings raw."""
     paths = sorted(glob.glob(os.path.join(config.holdings_inbox_dir, "*.xls*")))
     _notify(f"INGEST HOLDINGS: {len(paths)} file(s) -> {config.holdings_raw_dir}", sink)
     for p in paths:
@@ -210,7 +210,7 @@ def ingest_holdings_inbox(*, sink: Optional[Callable[[str], None]] = None) -> li
 
 
 def ingest_transactions_inbox(*, sink: Optional[Callable[[str], None]] = None) -> list[str]:
-    """Spreadsheet ingest: transactions workspace inbox -> transactions raw."""
+    """Spreadsheet ingest: transactions pipeline inbox -> transactions raw."""
     paths = sorted(glob.glob(os.path.join(config.transactions_inbox_dir, "*.xls*")))
     _notify(f"INGEST TRANSACTIONS: {len(paths)} file(s) -> {config.transactions_raw_dir}", sink)
     for p in paths:
@@ -340,7 +340,7 @@ def run_holdings_pipeline(
     compile_: bool = True,
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
-    ensure_workspace_dirs()
+    ensure_pipeline_dirs()
     if fetch:
         fetch_holdings(sink=sink)
     if route:
@@ -363,7 +363,7 @@ def run_all_pipelines_after_shared_downloads(
     After everything landed in the shared Chrome folder, route once then run
     holdings and transactions pipelines without re-fetching or re-routing.
     """
-    ensure_workspace_dirs()
+    ensure_pipeline_dirs()
     route_inbox(sink=sink)
     run_holdings_pipeline(fetch=False, route=False, sink=sink)
     run_transactions_pipeline(
@@ -389,7 +389,7 @@ def run_transactions_pipeline(
     drop_profile: str = "full",
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
-    ensure_workspace_dirs()
+    ensure_pipeline_dirs()
     if fetch_max_isracard:
         fetch_transactions_max_isracard(sink=sink)
     if fetch_bank_credit or fetch_bank_osh:

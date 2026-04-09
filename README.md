@@ -1,6 +1,6 @@
 # Finance compiler
 
-Python tooling to fetch bank/card exports, route them into a workspace, compile CSVs, and categorize transactions.
+Python tooling to fetch bank/card exports, route them into per-pipeline folders under `data/pipeline/`, compile CSVs under `data/export/`, and categorize transactions.
 
 Code lives in **directories at the repository root** next to `main.py` (`pipeline/`, `categorization/`, `web_control/`, …) plus `config.py` and `logger.py`. **Run commands from the repo root** (or set `PYTHONPATH` to the repo root) so `import pipeline` and friends resolve. IDEs should use the project directory as the working directory for run configurations.
 
@@ -36,7 +36,7 @@ pip install -r requirements.txt
 ### 3. Configuration
 
 - Copy or create a **`.env`** file in the project root with your portal credentials (bank, cards, etc.), as required by `config` / `pipeline.portal_fetch`.
-- Optional: set **`FINANCE_WORKSPACE_ROOT`** to use a separate `data/` and `export/` tree (see `config.py`).
+- Optional: set **`FINANCE_WORKSPACE_ROOT`** to use a separate `data/` tree and `web/` folder (see `config.py`); compiled outputs stay under that root’s `data/export/`.
 
 ### 4. Start the server
 

@@ -30,11 +30,11 @@ Run the holdings (balances) and/or transactions pipelines without opening the GU
 
 Data flow (short version):
   - Chrome / Selenium still download into the shared folder: data/input/
-  - route sorts each spreadsheet into an isolated workspace under data/workspace/
-  - holdings pipeline only touches .../workspace/holdings/{inbox,raw,clean}
-  - transactions pipeline only touches .../workspace/transactions/{inbox,raw,clean}
-  - Final CSVs are always: export/compiled/holdings.csv and export/compiled/compiled.csv
-  - Optional: set FINANCE_WORKSPACE_ROOT to a directory to use a separate data/export/web
+  - route sorts each spreadsheet into an isolated pipeline tree under data/pipeline/
+  - holdings pipeline only touches .../pipeline/holdings/{inbox,raw,clean}
+  - transactions pipeline only touches .../pipeline/transactions/{inbox,raw,clean}
+  - Final CSVs are always: data/export/compiled/holdings.csv and data/export/compiled/compiled.csv
+  - Optional: set FINANCE_WORKSPACE_ROOT to a directory to use a separate data/ and web/
     tree (safe for tests or experiments; see config).
 
 Pick a COMMAND below. Every command has its own options - use:
@@ -43,7 +43,7 @@ Pick a COMMAND below. Every command has its own options - use:
 
 MAIN_EPILOG = """\
 commands:
-  route          Classify files in data/input/*.xls* and MOVE them into workspace inboxes.
+  route          Classify files in data/input/*.xls* and MOVE them into pipeline inboxes.
   holdings       Balances: ingest -> clean CSV -> merge into holdings.csv
   transactions   Spending/income lines: ingest -> clean CSV -> merge into compiled.csv
   all            Optional browser downloads, then route, then BOTH pipelines in one go.
@@ -72,7 +72,7 @@ classification rule for route:
 ROUTE_DESCRIPTION = """\
 Scan the shared download folder (data/input/) for spreadsheet exports.
 
-Each matching file is moved (not copied) into exactly one workspace inbox so the two
+Each matching file is moved (not copied) into exactly one pipeline inbox so the two
 pipelines never read each other's downloads. Safe to run after every browser session.
 """
 
@@ -84,13 +84,13 @@ examples:
 
 
 HOLDINGS_DESCRIPTION = """\
-Balances pipeline: workbooks that end up in data/workspace/holdings/.
+Balances pipeline: workbooks that end up in data/pipeline/holdings/.
 
 Steps (each can be skipped with --no-*):
   1. route   - move *.xls* from data/input into holdings vs transactions inboxes
   2. ingest  - normalize to .xlsx under holdings/raw
   3. csv     - build cleaned CSV under holdings/clean
-  4. compile - merge into export/compiled/holdings.csv
+  4. compile - merge into data/export/compiled/holdings.csv
 """
 
 HOLDINGS_EPILOG = """\
@@ -106,13 +106,13 @@ note:
 
 
 TRANSACTIONS_DESCRIPTION = """\
-Transactions pipeline: card and account lines in data/workspace/transactions/.
+Transactions pipeline: card and account lines in data/pipeline/transactions/.
 
 Steps (each can be skipped with --no-*):
-  1. route   - move *.xls* from data/input into the right workspace inbox
+  1. route   - move *.xls* from data/input into the right pipeline inbox
   2. ingest  - normalize to .xlsx under transactions/raw
   3. csv     - cleaned CSV under transactions/clean (column filtering depends on --drop-profile)
-  4. compile - merge into export/compiled/compiled.csv (+ fingerprint DB)
+  4. compile - merge into data/export/compiled/compiled.csv (+ fingerprint DB)
   5. optional: --auto-categorize runs the automatic category pass (same as part of the old batch flow)
 """
 
@@ -161,7 +161,7 @@ auto + manual prompts (HTTP or terminal); do not combine with --auto-categorize.
 BOTH_PROCESS_DESCRIPTION = """\
 Assume files are already in data/input/ (you downloaded manually). No browser.
 
-  1. route - move spreadsheets into workspace inboxes.
+  1. route - move spreadsheets into pipeline inboxes.
   2. Full holdings pipeline (ingest -> csv -> compile).
   3. Full transactions pipeline (ingest -> csv -> compile).
 
@@ -212,7 +212,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=textwrap.dedent(ROUTE_DESCRIPTION),
         epilog=textwrap.dedent(ROUTE_EPILOG),
         formatter_class=fmt,
-        help="Sort downloads in data/input into holdings/transactions workspace inboxes.",
+        help="Sort downloads in data/input into holdings/transactions pipeline inboxes.",
     )
     r.add_argument(
         "--dry-run",
@@ -226,7 +226,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=textwrap.dedent(HOLDINGS_DESCRIPTION),
         epilog=textwrap.dedent(HOLDINGS_EPILOG),
         formatter_class=fmt,
-        help="Balances pipeline -> export/compiled/holdings.csv",
+        help="Balances pipeline -> data/export/compiled/holdings.csv",
     )
     hg_fetch = h.add_argument_group("portal (optional)")
     hg_fetch.add_argument(
@@ -253,7 +253,7 @@ def _build_parser() -> argparse.ArgumentParser:
     hg_steps.add_argument(
         "--no-compile",
         action="store_true",
-        help="Skip merging cleaned CSVs into export/compiled/holdings.csv.",
+        help="Skip merging cleaned CSVs into data/export/compiled/holdings.csv.",
     )
 
     # --- transactions ---
@@ -262,7 +262,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=textwrap.dedent(TRANSACTIONS_DESCRIPTION),
         epilog=textwrap.dedent(TRANSACTIONS_EPILOG),
         formatter_class=fmt,
-        help="Transactions pipeline -> export/compiled/compiled.csv",
+        help="Transactions pipeline -> data/export/compiled/compiled.csv",
     )
     tg_fetch = t.add_argument_group("portal fetch (optional; any combination)")
     tg_fetch.add_argument(
@@ -418,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     configure_pipeline_logging(log_level)
 
     os.makedirs(config.compiled_dir, exist_ok=True)
-    pipeline.ensure_workspace_dirs()
+    pipeline.ensure_pipeline_dirs()
 
     if args.command == "route":
         pipeline.route_inbox(dry_run=getattr(args, "dry_run", False))
