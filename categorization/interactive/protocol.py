@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from interactive_categorization.prompts import FluidStorePrompt, NewStorePrompt, ResolveStaticPrompt
+from categorization.interactive.prompts import (
+    FluidStorePrompt,
+    NewStorePrompt,
+    ResolveStaticPrompt,
+)
 
 
 class CategorizationInteractionHandler(Protocol):

@@ -13,7 +13,7 @@ import os
 import threading
 
 import config
-from gs_handler import GSLink, GoogleSheetsHandler
+from integrations.google_sheets import GSLink, GoogleSheetsHandler
 
 log = logging.getLogger(__name__)
 

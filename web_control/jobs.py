@@ -8,8 +8,8 @@ from typing import Any, Callable, Optional
 
 import config
 import pipeline
-from categorizer import CategorizeFile
-from interactive_categorization.terminal import TerminalCategorizationHandler
+from categorization.categorizer import CategorizeFile
+from categorization.interactive.terminal import TerminalCategorizationHandler
 
 log = logging.getLogger(__name__)
 

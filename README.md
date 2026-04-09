@@ -2,6 +2,8 @@
 
 Python tooling to fetch bank/card exports, route them into a workspace, compile CSVs, and categorize transactions.
 
+Code lives in **directories at the repository root** next to `main.py` (`pipeline/`, `categorization/`, `web_control/`, …) plus `config.py` and `logger.py`. **Run commands from the repo root** (or set `PYTHONPATH` to the repo root) so `import pipeline` and friends resolve. IDEs should use the project directory as the working directory for run configurations.
+
 ## Web control dashboard
 
 The local web UI runs fetches, pipeline steps, and shows live logs. Categorization is a **queue** you can open anytime at `/categorize/` (same port as the dashboard).
@@ -33,12 +35,12 @@ pip install -r requirements.txt
 
 ### 3. Configuration
 
-- Copy or create a **`.env`** file in the project root with your portal credentials (bank, cards, etc.), as required by `config.py` / `portal_fetch.py`.
+- Copy or create a **`.env`** file in the project root with your portal credentials (bank, cards, etc.), as required by `config` / `pipeline.portal_fetch`.
 - Optional: set **`FINANCE_WORKSPACE_ROOT`** to use a separate `data/` and `export/` tree (see `config.py`).
 
 ### 4. Start the server
 
-From the **project root** (the directory that contains `web_control/` and `config.py`), use the **venv’s Python** so dependencies match `requirements.txt`:
+From the **project root**, use the **venv’s Python**:
 
 - **After activating the venv** (see §2):
 
@@ -86,7 +88,7 @@ Stop the server with **Ctrl+C**.
 
 ### Headless CLI (without the web UI)
 
-For scripts and automation, use the same venv interpreter:
+From the repo root, with the venv activated:
 
 ```bash
 python run_pipeline.py --help
@@ -96,3 +98,20 @@ python run_pipeline.py all
 (With venv not activated: `venv\Scripts\python.exe run_pipeline.py …` on Windows, or `venv/bin/python run_pipeline.py …` on macOS/Linux.)
 
 Interactive terminal/browser categorization via `run_pipeline.py --categorize` uses `FINANCE_CATEGORIZE_UI` and is separate from the dashboard queue at `/categorize/`.
+
+### Maintenance scripts (`scripts/`)
+
+From the repo root:
+
+- `python scripts/backfill_fingerprint.py` — rebuild fingerprints / fingerprint DB from `compiled.csv`
+- `python scripts/fix_compiled_dates_from_fingerprint.py --help` — realign `תאריך` from fingerprint prefixes
+
+Scripts under `scripts/` add the repo root to `sys.path` when needed.
+
+### Qt desktop UI
+
+From the repo root:
+
+```bash
+python main.py
+```

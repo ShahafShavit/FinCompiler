@@ -2,27 +2,33 @@
 Rewrite תאריך in compiled.csv from the leading YYYY-MM-DD segment of each fingerprint.
 
 Use when תאריך drifted (e.g. month/day confusion) but fingerprint still encodes the correct day
-(fingerprint format: ``YYYY-MM-DD:amount:store:extra`` — see csv_handler.generate_transaction_fingerprint).
+(fingerprint format: ``YYYY-MM-DD:amount:store:extra`` — see
+``pipeline.csv_handler.generate_transaction_fingerprint``).
 
 Examples:
-  python fix_compiled_dates_from_fingerprint.py --dry-run
-  python fix_compiled_dates_from_fingerprint.py
-  python fix_compiled_dates_from_fingerprint.py --csv path/to/compiled.csv
+  python scripts/fix_compiled_dates_from_fingerprint.py --dry-run
+  python scripts/fix_compiled_dates_from_fingerprint.py
+  python scripts/fix_compiled_dates_from_fingerprint.py --csv path/to/compiled.csv
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
+_repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _repo not in sys.path:
+    sys.path.insert(0, _repo)
+
 import pandas as pd
 
 import config
-from compile_handler import parse_post_ingest_date_scalar
+from pipeline.compiler import parse_post_ingest_date_scalar
 
 _FP_DATE_PREFIX = re.compile(r"^(\d{4}-\d{2}-\d{2}):")
 
@@ -78,7 +84,6 @@ def main() -> int:
         return 1
 
     df = pd.read_csv(path)
-    # Strip BOM / stray spaces on column names (common with Excel / Sheets export).
     df.columns = df.columns.astype(str).str.replace("\ufeff", "", regex=False).str.strip()
 
     if "fingerprint" not in df.columns:
@@ -98,7 +103,7 @@ def main() -> int:
 
     df = df.reset_index(drop=True)
 
-    fixes: list[tuple[int, str, str, str]] = []  # pos, fp_snip, old_repr, new_iso
+    fixes: list[tuple[int, str, str, str]] = []
     skipped_fp = 0
     skipped_no_change = 0
 

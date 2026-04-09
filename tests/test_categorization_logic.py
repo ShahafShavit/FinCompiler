@@ -5,7 +5,7 @@ Run from repo root:
   python -m unittest tests.test_categorization_logic -v
 
 To exercise the real pipeline against a throwaway tree, set FINANCE_WORKSPACE_ROOT to a
-temp directory, importlib.reload(config), then copy fixtures under that root (see config.py).
+temp directory, ``importlib.reload`` on ``config``, then copy fixtures under that root.
 
 Manual browser UI (separate): set FINANCE_CATEGORIZE_UI=http and run the app (GET /api/next), or:
   python -c "from tests.test_categorization_logic import manual_http_smoke; manual_http_smoke()"
@@ -26,9 +26,13 @@ import numpy as np
 import pandas as pd
 
 import config
-from categorizer import CategorizeFile
-from interactive_categorization.http_server import HttpCategorizationHandler
-from interactive_categorization.prompts import FluidStorePrompt, NewStorePrompt, ResolveStaticPrompt
+from categorization.categorizer import CategorizeFile
+from categorization.interactive.http_server import HttpCategorizationHandler
+from categorization.interactive.prompts import (
+    FluidStorePrompt,
+    NewStorePrompt,
+    ResolveStaticPrompt,
+)
 
 # Minimal columns required for CategorizeFile.__init__ and categorize_storename
 _COMPILED_COLS = [

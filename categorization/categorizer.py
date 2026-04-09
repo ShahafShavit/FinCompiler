@@ -12,10 +12,14 @@ from bidi.algorithm import get_display
 from numpy import nan
 
 import config
-from compile_handler import update_category_in_fingerprint_db
+from categorization.interactive.prompts import (
+    FluidStorePrompt,
+    NewStorePrompt,
+    ResolveStaticPrompt,
+)
+from categorization.interactive.terminal import TerminalCategorizationHandler
 from config import similar_categories_file
-from interactive_categorization.prompts import FluidStorePrompt, NewStorePrompt, ResolveStaticPrompt
-from interactive_categorization.terminal import TerminalCategorizationHandler
+from pipeline.compiler import update_category_in_fingerprint_db
 
 log = logging.getLogger(__name__)
 

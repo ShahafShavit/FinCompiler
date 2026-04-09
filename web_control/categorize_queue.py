@@ -14,8 +14,8 @@ import threading
 from typing import Any, Optional
 
 import config
-from categorizer import CategorizeFile, category_cell_needs_manual
-from interactive_categorization.terminal import TerminalCategorizationHandler
+from categorization.categorizer import CategorizeFile, category_cell_needs_manual
+from categorization.interactive.terminal import TerminalCategorizationHandler
 from .json_safe import json_bytes_strict
 
 log = logging.getLogger(__name__)

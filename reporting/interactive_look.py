@@ -12,8 +12,9 @@ import matplotlib.cm as mcm
 import matplotlib as mpl
 # Assuming 'config', 'gs_handler' are in the same directory or accessible
 import config
-from compile_handler import parse_post_ingest_date_column
-from gs_handler import GoogleSheetsHandler, GSLink
+
+from integrations.google_sheets import GSLink, GoogleSheetsHandler
+from pipeline.compiler import parse_post_ingest_date_column
 
 
 def slugify(value):

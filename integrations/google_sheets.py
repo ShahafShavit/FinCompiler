@@ -9,9 +9,9 @@ import pandas as pd
 import tabulate
 from oauth2client.service_account import ServiceAccountCredentials
 import re
-import categorizer
-import compile_handler
 import config
+import categorization.categorizer as categorizer
+from pipeline import compiler as compile_handler
 import gspread.utils
 from googleapiclient.discovery import build
 pd.set_option('display.precision', 2)  # Sets display precision to two decimal places

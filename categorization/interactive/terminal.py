@@ -8,7 +8,11 @@ import re
 import pandas as pd
 from bidi.algorithm import get_display
 
-from interactive_categorization.prompts import FluidStorePrompt, NewStorePrompt, ResolveStaticPrompt
+from categorization.interactive.prompts import (
+    FluidStorePrompt,
+    NewStorePrompt,
+    ResolveStaticPrompt,
+)
 
 log = logging.getLogger(__name__)
 _HEBREW_RE = re.compile(r"[\u0590-\u05FF]")

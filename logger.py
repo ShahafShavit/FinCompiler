@@ -73,7 +73,7 @@ def configure_pipeline_logging(level: int = logging.INFO) -> None:
 
 
 def get_pipeline_logger(name: Optional[str] = None) -> logging.Logger:
-    return logging.getLogger(name if name else "finance_compiler")
+    return logging.getLogger(name if name else "finance_ledger")
 
 
 class Logger:

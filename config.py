@@ -81,7 +81,7 @@ _web_root = _w("web")
 web_dir = _web_root + os.sep
 web_totals_file = os.path.join(_web_root, "data", "web_totals.csv")
 # Google Sheet tab for heatmap / web_totals.csv: the all-time ledger (single tab, not split by year).
-# Distinct from the desktop UI sync in main.py, which uses ``Totals`` + calendar year for compiled.csv.
+# Distinct from the desktop UI sync in ``apps/qt_main.py``, which uses ``Totals`` + calendar year for compiled.csv.
 totals_sheet_name = os.environ.get("FINANCE_TOTALS_SHEET_NAME", "Totals").strip() or "Totals"
 expenses_web_file = os.path.join(_web_root, "expenses_web.html")
 incomes_web_file = os.path.join(_web_root, "incomes_web.html")

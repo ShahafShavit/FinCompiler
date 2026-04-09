@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import config
-from interactive_categorization.http_server import HttpCategorizationHandler
-from interactive_categorization.protocol import CategorizationInteractionHandler
-from interactive_categorization.terminal import TerminalCategorizationHandler
+
+from categorization.interactive.http_server import HttpCategorizationHandler
+from categorization.interactive.protocol import CategorizationInteractionHandler
+from categorization.interactive.terminal import TerminalCategorizationHandler
 
 
 def create_interaction_handler(

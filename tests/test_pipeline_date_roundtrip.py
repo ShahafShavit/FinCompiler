@@ -1,7 +1,7 @@
 """
 Regression tests for ledger date parsing (ISO vs regional) after CSV round-trip.
 
-See :func:`compile_handler.parse_post_ingest_date_scalar`: ISO ``YYYY-MM-DD`` uses a fixed
+See :func:`pipeline.compiler.parse_post_ingest_date_scalar`: ISO ``YYYY-MM-DD`` uses a fixed
 format; other shapes use ``dayfirst=True`` + ``format=\"mixed\"``.
 
 Historical note: pandas 3.0.x + ``dayfirst=True`` + ``format=\"mixed\"`` on ISO strings could
@@ -16,8 +16,11 @@ import unittest
 
 import pandas as pd
 
-from compile_handler import parse_post_ingest_date_scalar, parse_post_ingest_date_column
-from csv_handler import generate_transaction_fingerprint
+from pipeline.compiler import (
+    parse_post_ingest_date_column,
+    parse_post_ingest_date_scalar,
+)
+from pipeline.csv_handler import generate_transaction_fingerprint
 
 
 def _compile_stage_parse(date_str: object) -> pd.Timestamp:

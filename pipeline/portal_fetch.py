@@ -22,8 +22,15 @@ import time
 
 log = logging.getLogger(__name__)
 
-project_dir = os.path.abspath(os.path.dirname(__file__))
-download_dir = os.path.join(project_dir, config.download_inbox_dir)
+
+def _abs_download_inbox() -> str:
+    p = config.download_inbox_dir
+    if os.path.isabs(p):
+        return os.path.normpath(p)
+    return os.path.normpath(os.path.join(os.getcwd(), p))
+
+
+download_dir = _abs_download_inbox()
 log.debug("Portal download directory resolved to %s", download_dir)
 
 # Set FINANCE_SELENIUM_DEBUG=1 to print optional-click outcomes and pause hints.

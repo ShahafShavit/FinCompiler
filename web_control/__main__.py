@@ -1,4 +1,4 @@
-"""Run from the project root with the project venv, e.g. ``venv\\Scripts\\python.exe -m web_control`` (Windows) or ``venv/bin/python -m web_control`` (Unix), after ``pip install -r requirements.txt``."""
+"""Run the web control dashboard from the repo root: ``python -m web_control``."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 
-# Ensure project root is importable when run as ``python -m web_control``
+# Repo root on sys.path when running from source without an editable install
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)

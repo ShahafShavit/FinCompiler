@@ -1,7 +1,7 @@
 """
 Interactive heatmap data and HTML for /heatmap (native HTML/CSS/JS, no Plotly).
 
-Logic mirrors ``interactive_look_handler.InteractiveReportGenerator``: same CSV columns,
+Logic mirrors ``reporting.interactive_look.InteractiveReportGenerator``: same CSV columns,
 pivots, log/symlog normalization, summary stats styling, and per-cell drill-down.
 """
 
@@ -40,7 +40,7 @@ def invalidate_bundle_cache() -> None:
 
 
 def heatmap_page_script_path() -> Path:
-    """On-disk path to the heatmap UI script (also served as a static asset by ``web_control.server``)."""
+    """On-disk path to the heatmap UI script (also served as a static asset by the control server)."""
     return Path(__file__).resolve().parent / "heatmap_page_script.js"
 
 

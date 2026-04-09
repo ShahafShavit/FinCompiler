@@ -16,7 +16,7 @@ from typing import Any, Optional
 from urllib.parse import unquote, urlparse
 
 import config
-from interactive_categorization.http_server import categorization_html
+from categorization.interactive.http_server import categorization_html
 from logger import attach_sink_log_handlers, detach_sink_log_handlers
 
 from web_control import categorize_queue, control_nav, heatmap, jobs
@@ -24,13 +24,13 @@ from web_control.json_safe import json_bytes_strict as _json_bytes_strict
 
 # Forward structured pipeline / Selenium logs to the dashboard SSE (exclude ``pipeline`` — it already uses sink via _notify).
 _JOB_SSE_LOGGERS = [
-    "portal_fetch",
-    "inbox_router",
-    "spreadsheet_ingest",
-    "csv_handler",
-    "compile_handler",
-    "categorizer",
-    "folder_tracking",
+    "pipeline.portal_fetch",
+    "pipeline.inbox_router",
+    "pipeline.spreadsheet_ingest",
+    "pipeline.csv_handler",
+    "pipeline.compiler",
+    "categorization.categorizer",
+    "pipeline.folder_tracking",
 ]
 
 log = logging.getLogger(__name__)

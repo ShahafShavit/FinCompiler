@@ -14,7 +14,11 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
-from interactive_categorization.prompts import FluidStorePrompt, NewStorePrompt, ResolveStaticPrompt
+from categorization.interactive.prompts import (
+    FluidStorePrompt,
+    NewStorePrompt,
+    ResolveStaticPrompt,
+)
 from web_control.json_safe import json_bytes_strict
 
 log = logging.getLogger(__name__)

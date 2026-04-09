@@ -1,8 +1,8 @@
 """
 Headless finance pipelines: holdings (balances) vs transactions.
 
-Use ``run_pipeline.py`` or import these functions from automation.
-UI code should call into this module instead of duplicating steps.
+Use ``python run_pipeline.py`` or import these functions from automation.
+UI code should call into this package instead of duplicating steps.
 """
 from __future__ import annotations
 
@@ -12,14 +12,13 @@ import os
 import signal
 from typing import Any, Callable, Iterable, Optional
 
-import compile_handler
 import config
-import csv_handler
-import inbox_router
-import portal_fetch
-import spreadsheet_ingest
-from categorizer import CategorizeFile
-from interactive_categorization import create_interaction_handler
+
+from . import compiler
+from . import csv_handler
+from . import inbox_router
+from . import portal_fetch
+from . import spreadsheet_ingest
 
 log = logging.getLogger(__name__)
 
@@ -258,7 +257,7 @@ def compile_holdings_main(*, sink: Optional[Callable[[str], None]] = None) -> No
         _notify("COMPILE HOLDINGS: no CSV in clean dir; skipping", sink)
         return
     _notify(f"COMPILE HOLDINGS: merging {len(cleaned)} CSV -> {config.holdings_file}", sink)
-    d = compile_handler.Compiler(config.holdings_file)
+    d = compiler.Compiler(config.holdings_file)
     d.__compile_new__(config.holdings_clean_dir, suffix="holdings")
     d.compile_to_main()
     d.save_all()
@@ -274,6 +273,9 @@ def run_categorization_interactive(
     ``create_interaction_handler()`` (terminal or HTTP per ``FINANCE_CATEGORIZE_UI``), or a
     caller-supplied handler (e.g. web control server with a fixed HTTP port).
     """
+    from categorization import create_interaction_handler
+    from categorization.categorizer import CategorizeFile
+
     if not os.path.isfile(config.compiled_file):
         _notify("CATEGORIZE: skip (compiled.csv missing)", sink)
         return
@@ -316,12 +318,14 @@ def compile_transactions_main(
         _notify("COMPILE TRANSACTIONS: no CSV in clean dir; skipping", sink)
         return
     _notify(f"COMPILE TRANSACTIONS: merging {len(cleaned)} CSV -> {config.compiled_file}", sink)
-    c = compile_handler.Compiler(config.compiled_file)
+    c = compiler.Compiler(config.compiled_file)
     c.__compile_new__(config.transactions_clean_dir, suffix="credit")
     c.compile_to_main()
     main_file, _ = c.save_all()
     c.update_fingerprint_db()
     if run_auto_categorize:
+        from categorization.categorizer import CategorizeFile
+
         _notify("CATEGORIZE: auto pass on compiled file", sink)
         categorizer = CategorizeFile(main_file)
         categorizer.auto_categorize()
