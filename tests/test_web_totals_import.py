@@ -27,7 +27,7 @@ class WebTotalsImportTests(unittest.TestCase):
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from pipeline.web_totals_import import import_web_totals_to_ledger
+            from pipeline.ledger import import_web_totals_to_ledger
 
             report = import_web_totals_to_ledger(
                 str(_FIXTURE),

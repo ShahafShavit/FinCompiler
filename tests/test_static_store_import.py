@@ -29,7 +29,7 @@ class StaticStoreImportTests(unittest.TestCase):
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from pipeline.static_store_import import import_stores_to_ledger
+            from pipeline.ledger import import_stores_to_ledger
 
             db = config_mod.ledger_db_file
             report = import_stores_to_ledger(

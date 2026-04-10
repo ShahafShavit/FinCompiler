@@ -9,11 +9,11 @@ import unittest
 from unittest.mock import patch
 
 from pipeline.csv_handler import generate_transaction_fingerprint
-from pipeline.ledger_fingerprint_backfill import (
+from pipeline.ledger import (
     backfill_null_fingerprints,
     list_would_duplicate_null_rows,
+    migrate_ledger_db,
 )
-from pipeline.ledger_migrate import migrate_ledger_db
 
 
 def _insert_minimal_row(
@@ -94,7 +94,8 @@ class LedgerFingerprintBackfillTests(unittest.TestCase):
                 conn.close()
             self.assertEqual(got, want)
 
-    def test_duplicate_computed_fingerprint_skips_second_row(self) -> None:
+    def test_two_null_rows_distinct_stores_get_distinct_fingerprints(self) -> None:
+        """Each row gets a unique canonical ``fingerprint`` (different merchants)."""
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
             with patch("dotenv.load_dotenv"):
@@ -106,26 +107,29 @@ class LedgerFingerprintBackfillTests(unittest.TestCase):
             migrate_ledger_db(db)
             conn = sqlite3.connect(db)
             try:
-                _insert_minimal_row(conn, fp=None)
-                _insert_minimal_row(conn, fp=None)
+                _insert_minimal_row(conn, fp=None, מקור_עסקה="StoreA")
+                _insert_minimal_row(conn, fp=None, מקור_עסקה="StoreB")
                 conn.commit()
             finally:
                 conn.close()
 
             st0, dups0 = list_would_duplicate_null_rows(db)
-            self.assertEqual(st0.skipped_would_duplicate, 1)
-            self.assertEqual(len(dups0), 1)
-            self.assertEqual(dups0[0].conflict_kind, "batch_earlier_null")
+            self.assertEqual(st0.skipped_would_duplicate, 0)
+            self.assertEqual(len(dups0), 0)
 
             stats = backfill_null_fingerprints(db, dry_run=False)
             self.assertEqual(stats.examined, 2)
-            self.assertEqual(stats.updated, 1)
-            self.assertEqual(stats.skipped_would_duplicate, 1)
+            self.assertEqual(stats.updated, 2)
+            self.assertEqual(stats.skipped_would_duplicate, 0)
 
-            st2, dups = list_would_duplicate_null_rows(db)
-            self.assertEqual(st2.skipped_would_duplicate, 1)
-            self.assertEqual(len(dups), 1)
-            self.assertEqual(dups[0].conflict_kind, "ledger_row")
+            conn = sqlite3.connect(db)
+            try:
+                n = conn.execute(
+                    "SELECT COUNT(DISTINCT fingerprint) FROM ledger_transaction WHERE fingerprint IS NOT NULL"
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(n, 2)
 
 
 if __name__ == "__main__":

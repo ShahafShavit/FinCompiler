@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove ledger DB satisfies structural PRAGMAs + every CHECK/NOT NULL rule from ``full_schema.sql``.
 
-Uses ``pipeline/ledger_constraint_audit`` — keep SQL in sync when DDL changes.
+Uses ``pipeline/ledger`` (constraint audit) — keep SQL in sync when DDL changes.
 
   PYTHONPATH=. python scripts/verify_ledger_integrity.py
   PYTHONPATH=. python scripts/verify_ledger_integrity.py --json
@@ -20,7 +20,7 @@ if _repo not in sys.path:
     sys.path.insert(0, _repo)
 
 import config
-from pipeline.ledger_constraint_audit import audit_ledger_constraints, format_report
+from pipeline.ledger import audit_ledger_constraints, format_report
 
 
 def main() -> int:

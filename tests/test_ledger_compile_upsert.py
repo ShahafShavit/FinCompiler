@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from pipeline.csv_handler import generate_transaction_fingerprint
+
 
 def _reload_config() -> None:
     import config as config_mod
@@ -25,9 +27,8 @@ class LedgerCompileUpsertTests(unittest.TestCase):
         _reload_config()
 
     def test_upsert_inserts_and_updates_pipeline_columns(self) -> None:
-        from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
+        from pipeline.ledger import upsert_compiled_dataframe_to_ledger
 
-        fp = "2025-01-15:100.0:TestStore:extra"
         base = {
             "תאריך": "2025-01-15",
             "בחובה": 100.0,
@@ -36,10 +37,11 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             "פירוט נוסף": None,
             "תאור מורחב": None,
             "4 ספרות": None,
-            "fingerprint": fp,
             "קטגוריה": "",
         }
-        df1 = pd.DataFrame([base])
+        fp2 = generate_transaction_fingerprint(pd.Series(base))
+        self.assertIsNotNone(fp2)
+        df1 = pd.DataFrame([{**base, "notes": None}])
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
             with patch("dotenv.load_dotenv"):
@@ -51,7 +53,7 @@ class LedgerCompileUpsertTests(unittest.TestCase):
                 d = float(
                     conn.execute(
                         'SELECT "בחובה" FROM ledger_transaction WHERE "fingerprint" = ?',
-                        (fp,),
+                        (fp2,),
                     ).fetchone()[0]
                 )
             finally:
@@ -59,24 +61,24 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             self.assertEqual(n, 1)
             self.assertAlmostEqual(d, 100.0)
 
-            df2 = pd.DataFrame([{**base, "בחובה": 200.0}])
+            # Same amounts → same fingerprint; empty notes then filled on conflict.
+            df2 = pd.DataFrame([{**base, "notes": "second"}])
             upsert_compiled_dataframe_to_ledger(df2, cfg.ledger_db_file)
             conn = sqlite3.connect(cfg.ledger_db_file)
             try:
-                d2 = float(
-                    conn.execute(
-                        'SELECT "בחובה" FROM ledger_transaction WHERE "fingerprint" = ?',
-                        (fp,),
-                    ).fetchone()[0]
-                )
+                n2 = conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0]
+                notes = conn.execute(
+                    'SELECT notes FROM ledger_transaction WHERE "fingerprint" = ?',
+                    (fp2,),
+                ).fetchone()[0]
             finally:
                 conn.close()
-            self.assertAlmostEqual(d2, 200.0)
+            self.assertEqual(n2, 1)
+            self.assertEqual(notes, "second")
 
     def test_upsert_preserves_nonempty_category(self) -> None:
-        from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
+        from pipeline.ledger import upsert_compiled_dataframe_to_ledger
 
-        fp = "2025-02-01:50.0:Other:more"
         row = {
             "תאריך": "2025-02-01",
             "בחובה": 50.0,
@@ -85,9 +87,10 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             "פירוט נוסף": None,
             "תאור מורחב": None,
             "4 ספרות": None,
-            "fingerprint": fp,
             "קטגוריה": "UserCategory",
         }
+        fp2 = generate_transaction_fingerprint(pd.Series(row))
+        self.assertIsNotNone(fp2)
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
             with patch("dotenv.load_dotenv"):
@@ -101,7 +104,7 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             try:
                 cat = conn.execute(
                     'SELECT "קטגוריה" FROM ledger_transaction WHERE "fingerprint" = ?',
-                    (fp,),
+                    (fp2,),
                 ).fetchone()[0]
             finally:
                 conn.close()

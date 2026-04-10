@@ -99,14 +99,13 @@ python run_pipeline.py all
 
 Interactive terminal/browser categorization via `run_pipeline.py --categorize` uses `FINANCE_CATEGORIZE_UI` and is separate from the dashboard queue at `/categorize/`.
 
-### Maintenance scripts (`scripts/`)
+### Utilities (`scripts/`)
 
-From the repo root:
+From the repo root (each adds the repo root to `sys.path` when needed):
 
-- `python scripts/backfill_fingerprint.py` — rebuild fingerprints / fingerprint DB from `compiled.csv`
-- `python scripts/fix_compiled_dates_from_fingerprint.py --help` — realign `תאריך` from fingerprint prefixes
-
-Scripts under `scripts/` add the repo root to `sys.path` when needed.
+- `python scripts/verify_ledger_integrity.py` — structural audit of the ledger DB (`pipeline/ledger.py`)
+- `python scripts/run_categorize_http_workspace.py` — categorization with HTTP UI against your workspace (`FINANCE_WORKSPACE_ROOT`)
+- `python scripts/web_control_restart.py` — stop the control port listener and start `python -m web_control`
 
 ### Qt desktop UI
 

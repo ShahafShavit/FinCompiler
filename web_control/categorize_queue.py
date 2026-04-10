@@ -36,8 +36,8 @@ def _session_categories(cf: CategorizeFile) -> list[str]:
 
 
 def summary() -> dict[str, Any]:
-    from pipeline.ledger_dataframe import load_transactions_dataframe_from_ledger
-    from pipeline.ledger_migrate import migrate_ledger_db
+    from pipeline.ledger import load_transactions_dataframe_from_ledger
+    from pipeline.ledger import migrate_ledger_db
 
     migrate_ledger_db()
     path = config.ledger_db_file
@@ -55,7 +55,7 @@ def summary() -> dict[str, Any]:
 def next_payload() -> dict[str, Any]:
     cats: list[str] = []
     with _lock:
-        from pipeline.ledger_migrate import migrate_ledger_db
+        from pipeline.ledger import migrate_ledger_db
 
         migrate_ledger_db()
         if not os.path.isfile(config.ledger_db_file):
@@ -115,7 +115,7 @@ def respond(data: dict[str, Any]) -> Optional[str]:
     if not tid or not kind:
         return "prompt_id and kind required"
     with _lock:
-        from pipeline.ledger_migrate import migrate_ledger_db
+        from pipeline.ledger import migrate_ledger_db
 
         migrate_ledger_db()
         cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=_terminal_handler())
@@ -140,7 +140,7 @@ def respond(data: dict[str, Any]) -> Optional[str]:
 
 def revise(data: dict[str, Any]) -> Optional[str]:
     with _lock:
-        from pipeline.ledger_migrate import migrate_ledger_db
+        from pipeline.ledger import migrate_ledger_db
 
         migrate_ledger_db()
         cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=_terminal_handler())

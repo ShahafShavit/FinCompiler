@@ -1,5 +1,5 @@
 """
-Tests for ``pipeline/ledger_migrate`` — baseline schema and idempotent migrate.
+Tests for ``pipeline/ledger.migrate_ledger_db`` — baseline schema and idempotent migrate.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class LedgerMigrateTests(unittest.TestCase):
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from pipeline.ledger_migrate import migrate_ledger_db
+            from pipeline.ledger import migrate_ledger_db
 
             db_path = config_mod.ledger_db_file
             migrate_ledger_db()
@@ -42,17 +42,17 @@ class LedgerMigrateTests(unittest.TestCase):
                 max_v = conn.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0]
-                self.assertEqual(max_v, 8)
+                self.assertEqual(max_v, 10)
 
                 conn.execute(
                     'INSERT INTO ledger_transaction ("fingerprint", ingested_at, "תאריך") '
-                    'VALUES ("fp-dup-test", "2024-01-15", "2024-01-10")'
+                    'VALUES ("fp-a", "2024-01-15", "2024-01-10")'
                 )
                 conn.commit()
                 with self.assertRaises(sqlite3.IntegrityError):
                     conn.execute(
                         'INSERT INTO ledger_transaction ("fingerprint", ingested_at, "תאריך") '
-                        'VALUES ("fp-dup-test", "2024-01-15", "2024-01-11")'
+                        'VALUES ("fp-a", "2024-01-15", "2024-01-11")'
                     )
             finally:
                 conn.close()

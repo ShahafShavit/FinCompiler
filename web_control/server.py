@@ -30,7 +30,6 @@ _JOB_SSE_LOGGERS = [
     "pipeline.csv_handler",
     "pipeline.compiler",
     "categorization.categorizer",
-    "pipeline.folder_tracking",
 ]
 
 log = logging.getLogger(__name__)

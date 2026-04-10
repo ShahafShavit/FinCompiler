@@ -28,14 +28,14 @@ Set by application code on **first insert** (not a trigger). Rules live in `pipe
 
 **`statement_month`** is filled by a separate pipeline later (nullable).
 
-**Upgrading from v6/v7:** There is no in-place migration for very old files — **delete** `ledger.sqlite` (or your `FINANCE_WORKSPACE_ROOT` copy) and run `migrate_ledger_db` + imports again when docs say so; see `pipeline/ledger_migrate.py`.
+**Upgrading from v6/v7:** There is no in-place migration for very old files — **delete** `ledger.sqlite` (or your `FINANCE_WORKSPACE_ROOT` copy) and run `migrate_ledger_db` + imports again when docs say so; see `pipeline/ledger.py`.
 
 **Clock:** Category/data `*_updated_at` triggers use **`datetime('now', 'localtime')`**.
 
 ## Identity
 
-- **`fingerprint`** is the **only** stable transaction key on the ledger (merge/dedup, `UNIQUE` when non-NULL). It may be **NULL** until the pipeline supplies it. To fill NULLs from existing row data using the same rule as compile (`pipeline/csv_handler.generate_transaction_fingerprint`), run `scripts/backfill_ledger_null_fingerprints.py` (dry-run by default; use `--apply` to write). Use `--show-would-duplicate` to print TSV of rows skipped because the computed fingerprint already exists.
-- **Legacy CSV / Excel** sometimes include **מזהה עסקה** (a per-row content hash). That value is **not** stored on `ledger_transaction` and must **not** be treated as the dedupe key. Old scripts may still generate it for `fingerprint_db.csv` or Sheets round-trips; SQLite paths use **`fingerprint`** only.
+- **`fingerprint`** is the **canonical** dedupe key (`UNIQUE` when non-NULL). It is produced by `pipeline/csv_handler.generate_transaction_fingerprint` and encodes **both** `בחובה` and `בזכות`, so paired same-day opposite flows do not collide. It may be **NULL** until filled by the compile path or by calling helpers in `pipeline.ledger` (e.g. `backfill_null_fingerprints`) / ad-hoc SQL against your DB.
+- **Legacy CSV / Excel** sometimes include **מזהה עסקה** (a per-row content hash). That value is **not** stored on `ledger_transaction`. Application code prefers **`fingerprint`**, then legacy hash where present.
 - There is **no** separate fingerprint-metadata table.
 
 ## `store` / `store_category` (may be deprecated later)

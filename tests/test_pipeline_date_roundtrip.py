@@ -20,7 +20,10 @@ from pipeline.compiler import (
     parse_post_ingest_date_column,
     parse_post_ingest_date_scalar,
 )
-from pipeline.csv_handler import generate_transaction_fingerprint
+from pipeline.csv_handler import (
+    generate_transaction_fingerprint,
+    generate_transaction_fingerprint_legacy,
+)
 
 
 def _compile_stage_parse(date_str: object) -> pd.Timestamp:
@@ -44,6 +47,22 @@ class PipelineDateRoundtripTests(unittest.TestCase):
         self.assertIsNotNone(fp)
         assert fp is not None
         self.assertTrue(fp.startswith("2026-01-12:"), fp)
+
+    def test_fingerprint_v2_distinguishes_debit_vs_credit_same_magnitude(self) -> None:
+        common = {
+            "תאריך": "2024-02-02",
+            "מקור עסקה": "דמי כרטיס דביט",
+            "פירוט נוסף": None,
+            "תאור מורחב": None,
+        }
+        debit = {**common, "בחובה": 8.0, "בזכות": 0.0}
+        credit = {**common, "בחובה": 0.0, "בזכות": 8.0}
+        a = generate_transaction_fingerprint_legacy(pd.Series(debit))
+        b = generate_transaction_fingerprint_legacy(pd.Series(credit))
+        self.assertEqual(a, b)
+        a2 = generate_transaction_fingerprint(pd.Series(debit))
+        b2 = generate_transaction_fingerprint(pd.Series(credit))
+        self.assertNotEqual(a2, b2)
 
     def test_iso_yyyy_mm_dd_round_trips_to_jan_12(self) -> None:
         self.assertEqual(

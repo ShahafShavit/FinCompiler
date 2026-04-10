@@ -14,7 +14,7 @@ from typing import Any
 import pandas as pd
 
 import config
-from pipeline.ledger_migrate import migrate_ledger_db
+from pipeline.ledger import migrate_ledger_db
 
 log = logging.getLogger(__name__)
 

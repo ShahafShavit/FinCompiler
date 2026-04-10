@@ -35,13 +35,15 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (5, 'fk_fingerpri
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (6, 'drop_fingerprint_metadata_and_row_hash');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (7, 'ledger_v7_ingested_at_only_drop_taarich_hidon_first_seen');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (8, 'ledger_fingerprint_nullable_no_row_hash_fallback');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (9, 'ledger_fingerprint_v2_unique_drop_fingerprint_unique');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (10, 'ledger_single_fingerprint_column_v2_semantics');
 
 -- -----------------------------------------------------------------------------
--- Transaction ledger (stable dedupe key = fingerprint when present)
+-- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
 -- -----------------------------------------------------------------------------
 -- **ingested_at** — only persisted “ingestion / statement timing” field. A source column sometimes
 --   labeled **תאריך עדכון** on CSV/Sheets is mapped into **ingested_at** on INSERT only; it is not a column here.
--- **מזהה עסקה** — legacy CSV row hash; **not** stored — identity is **fingerprint** only (see schema/ledger/README.md).
+-- **מזהה עסקה** — legacy CSV row hash; **not** stored — identity is **fingerprint** — see schema/ledger/README.md.
 -- No INSERT trigger for ingested_at — application supplies values.
 
 CREATE TABLE IF NOT EXISTS ledger_transaction (
@@ -55,6 +57,7 @@ CREATE TABLE IF NOT EXISTS ledger_transaction (
     "פירוט נוסף"     TEXT,
     "תאור מורחב"     TEXT,
     "4 ספרות"        TEXT,
+    -- Dedupe key: encodes both debit/credit columns (see pipeline.csv_handler.generate_transaction_fingerprint)
     "fingerprint"    TEXT,
     "קטגוריה"        TEXT,
     notes              TEXT,
@@ -187,6 +190,7 @@ WHEN (
     OR NEW."פירוט נוסף"  IS DISTINCT FROM OLD."פירוט נוסף"
     OR NEW."תאור מורחב"  IS DISTINCT FROM OLD."תאור מורחב"
     OR NEW."4 ספרות"     IS DISTINCT FROM OLD."4 ספרות"
+    OR NEW."fingerprint" IS DISTINCT FROM OLD."fingerprint"
     OR NEW.statement_month IS DISTINCT FROM OLD.statement_month
     OR NEW.ingested_at IS DISTINCT FROM OLD.ingested_at
     OR NEW.notes IS DISTINCT FROM OLD.notes

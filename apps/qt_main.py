@@ -30,7 +30,7 @@ def _materialize_totals_csv_for_sheets() -> str:
     """Export the SQLite ledger to a temp CSV for ``GSLink`` (API still expects file paths)."""
     import tempfile
 
-    from pipeline.ledger_dataframe import export_transactions_dataframe_to_csv
+    from pipeline.ledger import export_transactions_dataframe_to_csv
 
     fd, path = tempfile.mkstemp(prefix="ledger_totals_", suffix=".csv")
     os.close(fd)
@@ -202,7 +202,7 @@ def ui():
     def pull_data():
         import pandas as pd
 
-        from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
+        from pipeline.ledger import upsert_compiled_dataframe_to_ledger
 
         gsh = google_sheets.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = google_sheets.GSLink(gsh)

@@ -280,7 +280,7 @@ def run_categorization_interactive(
     from categorization import create_interaction_handler
     from categorization.categorizer import CategorizeFile
 
-    from pipeline.ledger_migrate import migrate_ledger_db
+    from pipeline.ledger import migrate_ledger_db
 
     migrate_ledger_db()
     _notify(

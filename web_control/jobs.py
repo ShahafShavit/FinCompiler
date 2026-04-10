@@ -199,7 +199,7 @@ def run_action(
 
 def _run_categorize_from_control(sink: Sink, control_state: Any = None) -> None:
     """Auto-assign what we can; anything left is visible at ``/categorize/`` (no blocking session)."""
-    from pipeline.ledger_migrate import migrate_ledger_db
+    from pipeline.ledger import migrate_ledger_db
 
     migrate_ledger_db()
     sink("CATEGORIZE: running auto pass (remaining questions live at /categorize/)")

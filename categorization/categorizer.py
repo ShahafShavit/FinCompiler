@@ -29,10 +29,9 @@ ManualPrompt = Union[FluidStorePrompt, ResolveStaticPrompt, NewStorePrompt]
 
 
 def stable_transaction_key(row: Union[pd.Series, Mapping]) -> str:
-    """Stable id for prompts and HTTP queue when the dataframe row has no ``fingerprint``.
+    """Stable id for prompts and HTTP queue. Prefer **fingerprint** (ledger dedupe key).
 
-    Prefer **fingerprint** (ledger + compiled pipeline). Fall back to **מזהה עסקה** only when that
-    legacy CSV hash column exists (e.g. raw ingest / old Sheets exports) — it is **not** a SQLite column.
+    Fall back to **מזהה עסקה** only when that legacy CSV hash column exists — it is **not** a SQLite column.
     """
     if isinstance(row, pd.Series):
         fp_ok = "fingerprint" in row.index
@@ -50,7 +49,7 @@ def stable_transaction_key(row: Union[pd.Series, Mapping]) -> str:
 
 
 def mask_rows_by_stable_id(df: pd.DataFrame, key: str) -> pd.Series:
-    """Match ``key`` to ``fingerprint`` first; else to legacy CSV column ``מזהה עסקה`` if present."""
+    """Match ``key`` to ``fingerprint``, then ``מזהה עסקה``."""
     k = str(key)
     if "fingerprint" in df.columns:
         m = df["fingerprint"].astype(str) == k
@@ -114,8 +113,8 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         self._io_lock = threading.Lock()
 
         if ledger_db_path:
-            from pipeline.ledger_dataframe import load_transactions_dataframe_from_ledger
-            from pipeline.ledger_migrate import migrate_ledger_db
+            from pipeline.ledger import load_transactions_dataframe_from_ledger
+            from pipeline.ledger import migrate_ledger_db
 
             log.info("CategorizeFile: loading ledger %s", ledger_db_path)
             migrate_ledger_db(ledger_db_path)
@@ -138,7 +137,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
     def load_stores(self):
         if self._ledger_db_path:
-            from pipeline.ledger_dataframe import load_stores_dataframe_from_ledger
+            from pipeline.ledger import load_stores_dataframe_from_ledger
 
             self.stores_df = load_stores_dataframe_from_ledger(self._ledger_db_path)
             return
@@ -159,7 +158,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
     def save_stores(self):
         if self._ledger_db_path:
-            from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+            from pipeline.ledger import sync_stores_to_ledger_from_dataframe
 
             sync_stores_to_ledger_from_dataframe(self._ledger_db_path, self.stores_df)
             return
@@ -167,7 +166,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
     def save_progress(self):
         if self._ledger_db_path:
-            from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
+            from pipeline.ledger import upsert_compiled_dataframe_to_ledger
 
             upsert_compiled_dataframe_to_ledger(self.file_df, self._ledger_db_path)
             return
@@ -537,7 +536,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     def load_known_transactions(self):
         """Backup category hints keyed by stable id (fingerprint from ledger; CSV legacy uses ``transaction_id``)."""
         if self._ledger_db_path:
-            from pipeline.ledger_dataframe import load_known_transactions_backup_from_ledger
+            from pipeline.ledger import load_known_transactions_backup_from_ledger
 
             return load_known_transactions_backup_from_ledger(self._ledger_db_path)
         if os.path.isfile(config.transaction_category_file):
@@ -636,7 +635,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         fix_amount = 10
         while fix_amount > 0:
             if os.path.isfile(config.ledger_db_file):
-                from pipeline.ledger_dataframe import load_stores_dataframe_from_ledger
+                from pipeline.ledger import load_stores_dataframe_from_ledger
 
                 stores_df = load_stores_dataframe_from_ledger(config.ledger_db_file)
             else:
@@ -657,7 +656,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                     is_static = int(is_static_input) if int(is_static_input) in [1, 0] else -1
                     stores_df.loc[stores_df["store_name"] == store_name, "is_static"] = is_static
                     if os.path.isfile(config.ledger_db_file):
-                        from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+                        from pipeline.ledger import sync_stores_to_ledger_from_dataframe
 
                         sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
                     else:
@@ -668,7 +667,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     @staticmethod
     def fix_nan_category():
         if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger_dataframe import load_stores_dataframe_from_ledger
+            from pipeline.ledger import load_stores_dataframe_from_ledger
 
             stores_df = load_stores_dataframe_from_ledger(config.ledger_db_file)
         else:
@@ -676,7 +675,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         categories_to_check = set(stores_df["category"].tolist())
         stores_df["category"].fillna("NULL")
         if os.path.isfile(config.ledger_db_file):
-            from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+            from pipeline.ledger import sync_stores_to_ledger_from_dataframe
 
             sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
         else:
@@ -686,7 +685,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     def fix_similar_categories_in_file():
         log.info("fix_similar_categories_in_file: starting")
         if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger_dataframe import (
+            from pipeline.ledger import (
                 load_known_transactions_backup_from_ledger,
                 load_stores_dataframe_from_ledger,
                 load_transactions_dataframe_from_ledger,
@@ -744,8 +743,8 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         if os.path.isfile(config.ledger_db_file):
             import sqlite3
 
-            from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
-            from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+            from pipeline.ledger import upsert_compiled_dataframe_to_ledger
+            from pipeline.ledger import sync_stores_to_ledger_from_dataframe
 
             sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
             upsert_compiled_dataframe_to_ledger(compiled_df, config.ledger_db_file)
@@ -793,7 +792,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     @staticmethod
     def update_store_category(store_name, category):
         if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger_dataframe import load_stores_dataframe_from_ledger
+            from pipeline.ledger import load_stores_dataframe_from_ledger
 
             df = load_stores_dataframe_from_ledger(config.ledger_db_file)
         else:
@@ -831,7 +830,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             log.error("update_store_category: store not in stores file (no match)")
             return
         if os.path.isfile(config.ledger_db_file):
-            from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+            from pipeline.ledger import sync_stores_to_ledger_from_dataframe
 
             sync_stores_to_ledger_from_dataframe(config.ledger_db_file, df)
             return
@@ -840,7 +839,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     @staticmethod
     def dupe_seeker():
         if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger_dataframe import load_transactions_dataframe_from_ledger
+            from pipeline.ledger import load_transactions_dataframe_from_ledger
 
             log.info("dupe_seeker: scanning ledger %s", config.ledger_db_file)
             df = load_transactions_dataframe_from_ledger(config.ledger_db_file)

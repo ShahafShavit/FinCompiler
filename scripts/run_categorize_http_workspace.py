@@ -47,7 +47,7 @@ def main() -> int:
     print(f"FINANCE_WORKSPACE_ROOT={config.workspace_root() or '(cwd-relative default)'}", flush=True)
     print(f"ledger_db_file={config.ledger_db_file}", flush=True)
 
-    from pipeline.ledger_migrate import migrate_ledger_db
+    from pipeline.ledger import migrate_ledger_db
 
     migrate_ledger_db()
 

@@ -12,32 +12,63 @@ import config
 log = logging.getLogger(__name__)
 
 
-def generate_transaction_fingerprint(row):
-    """Creates a robust fingerprint for de-duplication purposes based on the transaction's essence."""
+def generate_transaction_fingerprint_legacy(row):
+    """Pre–schema-v10 fingerprint: single signed amount (debit OR credit), so opposite flows could collide."""
     try:
-        normalized_date = pd.to_datetime(row['תאריך'], dayfirst=True, format='mixed').strftime('%Y-%m-%d')
-        amount = row['בחובה'] if row['בחובה'] != 0 else row['בזכות']
+        normalized_date = pd.to_datetime(row["תאריך"], dayfirst=True, format="mixed").strftime("%Y-%m-%d")
+        amount = row["בחובה"] if row["בחובה"] != 0 else row["בזכות"]
         normalized_amount = f"{float(amount):.2f}"
-        business_name = str(row['מקור עסקה']).lower().strip()
-        business_name = re.sub(r'[^a-z0-9\u0590-\u05ff]', '', business_name)
-        extract_data = ''
+        business_name = str(row["מקור עסקה"]).lower().strip()
+        business_name = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", business_name)
+        extract_data = ""
         try:
-            extract_data += (str(row['פירוט נוסף'])).strip().lower()
+            extract_data += str(row["פירוט נוסף"]).strip().lower()
         except KeyError:
             extract_data += "nan"
         try:
-            extract_data += str(row['תאור מורחב']).strip().lower()
+            extract_data += str(row["תאור מורחב"]).strip().lower()
         except KeyError:
-            extract_data += 'nan'
+            extract_data += "nan"
 
-        extra_data = re.sub(r'[^a-z0-9\u0590-\u05ff]', '', extract_data)
+        extra_data = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", extract_data)
         fingerprint_key = f"{normalized_date}:{normalized_amount}:{business_name}:{extra_data}"
-        log.debug("Fingerprint key: %s", fingerprint_key)
+        log.debug("Fingerprint legacy key: %s", fingerprint_key)
         return fingerprint_key
-        # return hashlib.sha256(fingerprint_key.encode()).hexdigest()
 
     except (ValueError, TypeError):
         return None
+
+
+def generate_transaction_fingerprint(row):
+    """Canonical ledger dedupe key: encodes **both** ``בחובה`` and ``בזכות`` (``bh{X.XX}_bz{Y.YY}``)."""
+    try:
+        normalized_date = pd.to_datetime(row["תאריך"], dayfirst=True, format="mixed").strftime("%Y-%m-%d")
+        bh = float(row.get("בחובה") or 0)
+        bz = float(row.get("בזכות") or 0)
+        normalized_amount = f"bh{bh:.2f}_bz{bz:.2f}"
+        business_name = str(row["מקור עסקה"]).lower().strip()
+        business_name = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", business_name)
+        extract_data = ""
+        try:
+            extract_data += str(row["פירוט נוסף"]).strip().lower()
+        except KeyError:
+            extract_data += "nan"
+        try:
+            extract_data += str(row["תאור מורחב"]).strip().lower()
+        except KeyError:
+            extract_data += "nan"
+
+        extra_data = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", extract_data)
+        fingerprint_key = f"{normalized_date}:{normalized_amount}:{business_name}:{extra_data}"
+        log.debug("Fingerprint key: %s", fingerprint_key)
+        return fingerprint_key
+
+    except (ValueError, TypeError):
+        return None
+
+
+# Back-compat alias — same as :func:`generate_transaction_fingerprint`.
+generate_transaction_fingerprint_v2 = generate_transaction_fingerprint
 class TransactionFile:
     def __init__(self, file_path):
         log.info("TransactionFile: loading %s", file_path)
@@ -56,8 +87,8 @@ class TransactionFile:
         self.clean_nan_rows()
         self.unique_identifier()
         self.unify_columns(rename_map)
-        self.file_df['fingerprint'] = self.file_df.apply(generate_transaction_fingerprint, axis=1)
-        self.file_df.dropna(subset=['fingerprint'], inplace=True)
+        self.file_df["fingerprint"] = self.file_df.apply(generate_transaction_fingerprint, axis=1)
+        self.file_df.dropna(subset=["fingerprint"], inplace=True)
         log.debug("TransactionFile: after fingerprint rows=%s", len(self.file_df))
 
     def __load_data__(self):
@@ -118,7 +149,7 @@ class TransactionFile:
         """Attach legacy **מזהה עסקה** (SHA-256 of row text) for old CSV workflows only.
 
         This is **not** the pipeline ``fingerprint`` and is **not** stored on ``ledger_transaction``.
-        SQLite/categorizer paths key off ``fingerprint`` via ``categorization.categorizer.stable_transaction_key``.
+        SQLite/categorizer paths key off ``fingerprint`` (canonical dedupe string).
         """
         def hash_row(row):
             row_string = ''.join(row.values.astype(str))

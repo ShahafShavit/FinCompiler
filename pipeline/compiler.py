@@ -62,7 +62,7 @@ def update_category_in_fingerprint_db(fingerprint, category):
     Legacy name kept for callers; ``fingerprint_db.csv`` is deprecated.
     """
     try:
-        from pipeline.ledger_category import update_category_by_fingerprint
+        from pipeline.ledger import update_category_by_fingerprint
 
         db_path = config.ledger_db_file
         if not os.path.exists(db_path):
@@ -84,8 +84,8 @@ class Compiler:
         self.new_df = pd.DataFrame()
         self.added_transactions = pd.DataFrame()
         if ledger_db:
-            from pipeline.ledger_dataframe import load_transactions_dataframe_from_ledger
-            from pipeline.ledger_migrate import migrate_ledger_db
+            from pipeline.ledger import load_transactions_dataframe_from_ledger
+            from pipeline.ledger import migrate_ledger_db
 
             migrate_ledger_db(ledger_db)
             self.main_df = load_transactions_dataframe_from_ledger(ledger_db)
@@ -231,7 +231,7 @@ class Compiler:
 
     def save_main(self):
         if self.ledger_db:
-            from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
+            from pipeline.ledger import upsert_compiled_dataframe_to_ledger
 
             upsert_compiled_dataframe_to_ledger(self.main_df, self.ledger_db)
             log.info("Wrote main ledger SQLite %s (%s rows)", self.ledger_db, len(self.main_df))
