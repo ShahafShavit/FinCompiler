@@ -1,0 +1,5 @@
+store_name,category,is_static
+StaticCafe,אוכל בחוץ,1.0
+DynamicMall,משק בית,0.0
+DynamicMall,אישי,1.0
+SingleRow,רכב,1.0

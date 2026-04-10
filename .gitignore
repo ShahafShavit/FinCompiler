@@ -9,3 +9,5 @@ __pycache__/
 testing/
 .pytest_cache/
 *.egg-info/
+*.sqlite-wal
+*.sqlite-shm

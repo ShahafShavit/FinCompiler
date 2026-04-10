@@ -5,7 +5,7 @@ import os
 import re
 import threading
 import uuid
-from typing import Optional, Union
+from typing import Mapping, Optional, Union
 
 import pandas as pd
 from bidi.algorithm import get_display
@@ -26,6 +26,39 @@ log = logging.getLogger(__name__)
 _HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
 
 ManualPrompt = Union[FluidStorePrompt, ResolveStaticPrompt, NewStorePrompt]
+
+
+def stable_transaction_key(row: Union[pd.Series, Mapping]) -> str:
+    """Stable id for prompts and HTTP queue when the dataframe row has no ``fingerprint``.
+
+    Prefer **fingerprint** (ledger + compiled pipeline). Fall back to **מזהה עסקה** only when that
+    legacy CSV hash column exists (e.g. raw ingest / old Sheets exports) — it is **not** a SQLite column.
+    """
+    if isinstance(row, pd.Series):
+        fp_ok = "fingerprint" in row.index
+        leg_ok = "מזהה עסקה" in row.index
+        fp = row["fingerprint"] if fp_ok else None
+        leg = row["מזהה עסקה"] if leg_ok else None
+    else:
+        fp = row.get("fingerprint")
+        leg = row.get("מזהה עסקה")
+    if fp is not None and pd.notna(fp) and str(fp).strip():
+        return str(fp).strip()
+    if leg is not None and pd.notna(leg):
+        return str(leg)
+    return ""
+
+
+def mask_rows_by_stable_id(df: pd.DataFrame, key: str) -> pd.Series:
+    """Match ``key`` to ``fingerprint`` first; else to legacy CSV column ``מזהה עסקה`` if present."""
+    k = str(key)
+    if "fingerprint" in df.columns:
+        m = df["fingerprint"].astype(str) == k
+        if m.any():
+            return m
+    if "מזהה עסקה" in df.columns:
+        return df["מזהה עסקה"].astype(str) == k
+    return pd.Series([False] * len(df), index=df.index)
 
 
 def category_cell_needs_manual(cat) -> bool:
@@ -70,25 +103,46 @@ def _terminal_bidi_seq(seq, left="{", right="}", *, sort=True):
 
 
 class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
-    def __init__(self, file_path, interaction_handler=None):
-        log.info("CategorizeFile: loading %s", file_path)
+    def __init__(self, file_path=None, *, ledger_db_path=None, interaction_handler=None):
+        if ledger_db_path and file_path:
+            raise ValueError("pass either file_path or ledger_db_path, not both")
+        if not ledger_db_path and not file_path:
+            raise ValueError("compiled CSV path or ledger_db_path is required")
         self.stores_df = None
-        self.file_path = file_path
-        self.file_name = os.path.basename(file_path)
-        self.file_df = pd.read_csv(file_path)
+        self._ledger_db_path = ledger_db_path
+        self.interaction = interaction_handler or TerminalCategorizationHandler()
+        self._io_lock = threading.Lock()
+
+        if ledger_db_path:
+            from pipeline.ledger_dataframe import load_transactions_dataframe_from_ledger
+            from pipeline.ledger_migrate import migrate_ledger_db
+
+            log.info("CategorizeFile: loading ledger %s", ledger_db_path)
+            migrate_ledger_db(ledger_db_path)
+            self.file_path = ledger_db_path
+            self.file_name = os.path.basename(ledger_db_path)
+            self.file_df = load_transactions_dataframe_from_ledger(ledger_db_path)
+        else:
+            log.info("CategorizeFile: loading %s", file_path)
+            self.file_path = file_path
+            self.file_name = os.path.basename(file_path)
+            self.file_df = pd.read_csv(file_path)
+
         if "קטגוריה" not in self.file_df.columns:
             self.file_df["קטגוריה"] = pd.Series([""] * len(self.file_df), dtype=object, index=self.file_df.index)
         else:
-            # read_csv often infers float64 for an empty / numeric-looking column; Hebrew labels need object.
             self.file_df["קטגוריה"] = (
                 self.file_df["קטגוריה"].map(lambda x: "" if pd.isna(x) else str(x)).astype(object)
             )
         self.awaiting_df = pd.DataFrame(columns=self.file_df.columns)
-        self.interaction = interaction_handler or TerminalCategorizationHandler()
-        # HTTP UI may revise rows from a worker thread while the main thread waits on the next prompt.
-        self._io_lock = threading.Lock()
 
     def load_stores(self):
+        if self._ledger_db_path:
+            from pipeline.ledger_dataframe import load_stores_dataframe_from_ledger
+
+            self.stores_df = load_stores_dataframe_from_ledger(self._ledger_db_path)
+            return
+
         path = config.stores_to_categories_file
         if not os.path.isfile(path):
             log.warning(
@@ -104,9 +158,19 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         self.stores_df = pd.read_csv(path)
 
     def save_stores(self):
+        if self._ledger_db_path:
+            from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+
+            sync_stores_to_ledger_from_dataframe(self._ledger_db_path, self.stores_df)
+            return
         self.stores_df.to_csv(config.stores_to_categories_file, index=False)
 
     def save_progress(self):
+        if self._ledger_db_path:
+            from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
+
+            upsert_compiled_dataframe_to_ledger(self.file_df, self._ledger_db_path)
+            return
         self.file_df.to_csv(self.file_path, index=False)
 
     def apply_session_category_revision(
@@ -123,7 +187,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             raise ValueError("category required")
         with self._io_lock:
             self.load_stores()
-            mask = self.file_df["מזהה עסקה"].astype(str) == str(transaction_id)
+            mask = mask_rows_by_stable_id(self.file_df, str(transaction_id))
             if not mask.any():
                 raise ValueError("transaction not in compiled file")
             self.file_df.loc[mask, "קטגוריה"] = new_category
@@ -166,7 +230,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
     def categorize_storename(self, row_data, method='auto', interaction_handler=None):
         store_name: str = row_data['מקור עסקה']
-        transaction_id = str(row_data["מזהה עסקה"])
+        transaction_id = stable_transaction_key(row_data)
         date = row_data['תאריך']
         expense = row_data['בחובה']
         income = row_data['בזכות']
@@ -260,7 +324,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         """
         self.load_stores()
         store_name = str(row_data["מקור עסקה"])
-        transaction_id = str(row_data["מזהה עסקה"])
+        transaction_id = stable_transaction_key(row_data)
         date = row_data["תאריך"]
         expense = row_data["בחובה"]
         income = row_data["בזכות"]
@@ -330,7 +394,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         )
 
     def _persist_category_for_transaction(self, transaction_id: str, category: str) -> None:
-        row_mask = self.file_df["מזהה עסקה"].astype(str) == str(transaction_id)
+        row_mask = mask_rows_by_stable_id(self.file_df, str(transaction_id))
         with self._io_lock:
             self.file_df.loc[row_mask, "קטגוריה"] = category
             self.save_progress()
@@ -344,8 +408,8 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         """Apply one queue answer (first unanswered row only); same side effects as interactive input."""
         self.load_stores()
         store_name = str(row_data["מקור עסקה"])
-        transaction_id = str(row_data["מזהה עסקה"])
-        row_mask = self.file_df["מזהה עסקה"].astype(str) == transaction_id
+        transaction_id = stable_transaction_key(row_data)
+        row_mask = mask_rows_by_stable_id(self.file_df, transaction_id)
 
         if kind == "fluid":
             category_input = (data.get("category") or "").strip()
@@ -416,7 +480,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         if not tid or not kind:
             return "prompt_id and kind required"
         self.load_stores()
-        row_mask = self.file_df["מזהה עסקה"].astype(str) == tid
+        row_mask = mask_rows_by_stable_id(self.file_df, tid)
         if not row_mask.any():
             return "transaction not in compiled file"
         store_name = str(self.file_df.loc[row_mask, "מקור עסקה"].iloc[0])
@@ -470,56 +534,70 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         col = self.file_df["קטגוריה"]
         return int(col.map(lambda c: category_cell_needs_manual(c)).sum())
 
+    def load_known_transactions(self):
+        """Backup category hints keyed by stable id (fingerprint from ledger; CSV legacy uses ``transaction_id``)."""
+        if self._ledger_db_path:
+            from pipeline.ledger_dataframe import load_known_transactions_backup_from_ledger
+
+            return load_known_transactions_backup_from_ledger(self._ledger_db_path)
+        if os.path.isfile(config.transaction_category_file):
+            df = pd.read_csv(config.transaction_category_file)
+            df.drop_duplicates(subset=["transaction_id"], inplace=True, keep="first")
+            return df
+        return None
+
     def auto_categorize(self):
         log.info("auto_categorize: rows=%s file=%s", len(self.file_df), self.file_path)
-        try:
-            fp_db = pd.read_csv(config.fingerprint_db_file)
-            if 'category' in fp_db.columns and 'fingerprint' in self.file_df.columns:
-                fp_db.dropna(subset=['category', 'fingerprint'], inplace=True)
-                fp_db = fp_db[fp_db['category'] != '']
-                category_map = pd.Series(fp_db.category.values, index=fp_db.fingerprint).to_dict()
+        if not self._ledger_db_path:
+            try:
+                fp_db = pd.read_csv(config.fingerprint_db_file)
+                if "category" in fp_db.columns and "fingerprint" in self.file_df.columns:
+                    fp_db.dropna(subset=["category", "fingerprint"], inplace=True)
+                    fp_db = fp_db[fp_db["category"] != ""]
+                    category_map = pd.Series(fp_db.category.values, index=fp_db.fingerprint).to_dict()
 
-                uncategorized_mask = self.file_df['קטגוריה'].fillna('').eq('')
-                fingerprints_to_map = self.file_df.loc[uncategorized_mask, 'fingerprint']
+                    uncategorized_mask = self.file_df["קטגוריה"].fillna("").eq("")
+                    fingerprints_to_map = self.file_df.loc[uncategorized_mask, "fingerprint"]
 
-                new_categories = fingerprints_to_map.map(category_map)
-                self.file_df.loc[uncategorized_mask, 'קטגוריה'] = self.file_df.loc[
-                    uncategorized_mask, 'קטגוריה'].fillna(new_categories)
+                    new_categories = fingerprints_to_map.map(category_map)
+                    self.file_df.loc[uncategorized_mask, "קטגוריה"] = self.file_df.loc[
+                        uncategorized_mask, "קטגוריה"
+                    ].fillna(new_categories)
 
-                log.info("Restored categories from fingerprint DB for uncategorized rows")
-                self.save_progress()
-        except FileNotFoundError:
-            log.warning("Fingerprint DB not found; skipping category restoration")
-        except Exception as e:
-            log.exception("Category restoration from fingerprint DB failed: %s", e)
+                    log.info("Restored categories from fingerprint DB for uncategorized rows")
+                    self.save_progress()
+            except FileNotFoundError:
+                log.warning("Fingerprint DB not found; skipping category restoration")
+            except Exception as e:
+                log.exception("Category restoration from fingerprint DB failed: %s", e)
 
         k_t = self.load_known_transactions()
         if k_t is None:
             k_t = pd.DataFrame(columns=['transaction_id', 'category'])
         self.load_stores()
         for index, row in self.file_df.iterrows():
-            transaction_id = row['מזהה עסקה']
-            if len(k_t[k_t['transaction_id'] == transaction_id]) == 1:
-                category = k_t[k_t['transaction_id'] == transaction_id]['category'].values[0]
-                if category != row['קטגוריה']:
-                    self.file_df.loc[index, 'קטגוריה'] = category
-                    log.debug("Category from backup for transaction_id=%s -> %s", transaction_id, category)
-                    self.category_store_link_backup(transaction_id, category)
+            sid = stable_transaction_key(row)
+            if len(k_t[k_t["transaction_id"] == sid]) == 1:
+                category = k_t[k_t["transaction_id"] == sid]["category"].values[0]
+                if category != row["קטגוריה"]:
+                    self.file_df.loc[index, "קטגוריה"] = category
+                    log.debug("Category from backup for id=%s -> %s", sid, category)
+                    self.category_store_link_backup(sid, category)
 
-            if row['קטגוריה'] == "" or row['קטגוריה'] == "awaiting" or pd.isna(row['קטגוריה']):
-                category = self.categorize_storename(row, method='auto')
-                self.file_df.loc[index, 'קטגוריה'] = category if category is not None else ""
+            if row["קטגוריה"] == "" or row["קטגוריה"] == "awaiting" or pd.isna(row["קטגוריה"]):
+                category = self.categorize_storename(row, method="auto")
+                self.file_df.loc[index, "קטגוריה"] = category if category is not None else ""
                 self.save_progress()
                 if category is None:
                     self.awaiting_df.loc[len(self.awaiting_df)] = row
                 if category is not None:
-                    if 'fingerprint' in row:
-                        update_category_in_fingerprint_db(row['fingerprint'], category)
-                    self.category_store_link_backup(transaction_id, category)
+                    if "fingerprint" in row:
+                        update_category_in_fingerprint_db(row["fingerprint"], category)
+                    self.category_store_link_backup(sid, category)
             else:
-                if 'fingerprint' in row:
-                    update_category_in_fingerprint_db(row['fingerprint'], row['קטגוריה'])
-                self.category_store_link_backup(transaction_id, row['קטגוריה'])
+                if "fingerprint" in row:
+                    update_category_in_fingerprint_db(row["fingerprint"], row["קטגוריה"])
+                self.category_store_link_backup(sid, row["קטגוריה"])
         awaiting = len(self.awaiting_df)
         if awaiting:
             log.info("auto_categorize: %s rows still awaiting manual category", awaiting)
@@ -537,7 +615,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 if row['קטגוריה'] == "" or row['קטגוריה'] == "awaiting" or pd.isna(row['קטגוריה']):
                     category = self.categorize_storename(row, method='input', interaction_handler=h)
 
-                    row_mask = self.file_df['מזהה עסקה'] == row['מזהה עסקה']
+                    row_mask = mask_rows_by_stable_id(self.file_df, stable_transaction_key(row))
                     with self._io_lock:
                         self.file_df.loc[row_mask, 'קטגוריה'] = category
                         self.save_progress()
@@ -557,7 +635,12 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
     def fix_null_category_status():
         fix_amount = 10
         while fix_amount > 0:
-            stores_df = pd.read_csv(config.stores_to_categories_file)
+            if os.path.isfile(config.ledger_db_file):
+                from pipeline.ledger_dataframe import load_stores_dataframe_from_ledger
+
+                stores_df = load_stores_dataframe_from_ledger(config.ledger_db_file)
+            else:
+                stores_df = pd.read_csv(config.stores_to_categories_file)
             fix_amount = len(stores_df[stores_df['is_static'] == -1])
             for index, row in stores_df.iterrows():
                 category = row['category']
@@ -572,28 +655,66 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                         f"Is this category: [{_terminal_bidi(category)}] for {_terminal_bidi(store_name)} static?"
                         f"\n (Type '0' if dynamic, type '1' if static): ")
                     is_static = int(is_static_input) if int(is_static_input) in [1, 0] else -1
-                    stores_df.loc[stores_df['store_name'] == store_name, 'is_static'] = is_static
-                    stores_df.to_csv(config.stores_to_categories_file)
+                    stores_df.loc[stores_df["store_name"] == store_name, "is_static"] = is_static
+                    if os.path.isfile(config.ledger_db_file):
+                        from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+
+                        sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
+                    else:
+                        stores_df.to_csv(config.stores_to_categories_file, index=False)
                     fix_amount -= 1
                     break
 
     @staticmethod
     def fix_nan_category():
-        stores_df = pd.read_csv(config.stores_to_categories_file)
-        categories_to_check = set(stores_df['category'].tolist())
-        stores_df['category'].fillna("NULL")
-        stores_df.to_csv(config.stores_to_categories_file, index=False)
+        if os.path.isfile(config.ledger_db_file):
+            from pipeline.ledger_dataframe import load_stores_dataframe_from_ledger
+
+            stores_df = load_stores_dataframe_from_ledger(config.ledger_db_file)
+        else:
+            stores_df = pd.read_csv(config.stores_to_categories_file)
+        categories_to_check = set(stores_df["category"].tolist())
+        stores_df["category"].fillna("NULL")
+        if os.path.isfile(config.ledger_db_file):
+            from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+
+            sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
+        else:
+            stores_df.to_csv(config.stores_to_categories_file, index=False)
 
     @staticmethod
     def fix_similar_categories_in_file():
         log.info("fix_similar_categories_in_file: starting")
-        stores_df = pd.read_csv(config.stores_to_categories_file)
-        stores_df['category'] = stores_df['category'].replace(nan, "NULL")
-        compiled_df = pd.read_csv(config.compiled_file)
-        backup_df = pd.read_csv(config.transaction_category_file)
-        categories_to_check = set(stores_df['category'].tolist())
+        if os.path.isfile(config.ledger_db_file):
+            from pipeline.ledger_dataframe import (
+                load_known_transactions_backup_from_ledger,
+                load_stores_dataframe_from_ledger,
+                load_transactions_dataframe_from_ledger,
+            )
+
+            stores_df = load_stores_dataframe_from_ledger(config.ledger_db_file)
+            compiled_df = load_transactions_dataframe_from_ledger(config.ledger_db_file)
+            backup_df = (
+                load_known_transactions_backup_from_ledger(config.ledger_db_file)
+                or pd.DataFrame(columns=["transaction_id", "category"])
+            )
+            import sqlite3
+
+            conn = sqlite3.connect(config.ledger_db_file)
+            try:
+                linked_pairs = pd.read_sql_query(
+                    "SELECT p1, p2 FROM similar_category_pair", conn
+                )
+            finally:
+                conn.close()
+        else:
+            stores_df = pd.read_csv(config.stores_to_categories_file)
+            compiled_df = pd.read_csv(config.compiled_file)
+            backup_df = pd.read_csv(config.transaction_category_file)
+            linked_pairs = pd.read_csv(similar_categories_file)
+        stores_df["category"] = stores_df["category"].replace(nan, "NULL")
+        categories_to_check = set(stores_df["category"].tolist())
         not_to_check = []
-        linked_pairs = pd.read_csv(similar_categories_file)
 
         for category in categories_to_check:
             if category not in not_to_check:
@@ -618,12 +739,33 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                             compiled_df.loc[(compiled_df['קטגוריה'] == ans[0]) | (
                                     compiled_df['קטגוריה'] == ans[1]), 'קטגוריה'] = category
                         not_to_check.extend(ans)
-                        if ans_input == '3':
+                        if ans_input == "3":
                             linked_pairs.loc[len(linked_pairs)] = pair
-        linked_pairs.to_csv(config.similar_categories_file, index=False)
-        stores_df.to_csv(config.stores_to_categories_file, index=False)
-        compiled_df.to_csv(config.compiled_file, index=False)
-        backup_df.to_csv(config.transaction_category_file, index=False)
+        if os.path.isfile(config.ledger_db_file):
+            import sqlite3
+
+            from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
+            from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+
+            sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
+            upsert_compiled_dataframe_to_ledger(compiled_df, config.ledger_db_file)
+            conn = sqlite3.connect(config.ledger_db_file)
+            try:
+                conn.execute("PRAGMA foreign_keys = ON")
+                conn.execute("DELETE FROM similar_category_pair")
+                if not linked_pairs.empty:
+                    conn.executemany(
+                        "INSERT INTO similar_category_pair (p1, p2) VALUES (?, ?)",
+                        [(str(r["p1"]), str(r["p2"])) for _, r in linked_pairs.iterrows()],
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        else:
+            linked_pairs.to_csv(config.similar_categories_file, index=False)
+            stores_df.to_csv(config.stores_to_categories_file, index=False)
+            compiled_df.to_csv(config.compiled_file, index=False)
+            backup_df.to_csv(config.transaction_category_file, index=False)
 
     @staticmethod
     def rename_category(old_name, new_name):
@@ -631,33 +773,32 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
     @staticmethod
     def category_store_link_backup(transaction_id, category):
+        if os.path.isfile(config.ledger_db_file):
+            return
         if not os.path.isfile(config.transaction_category_file):
-            data = {'transaction_id': [transaction_id], 'category': [category]}
+            data = {"transaction_id": [transaction_id], "category": [category]}
             df = pd.DataFrame(data=data)
             df.to_csv(config.transaction_category_file, index=False)
         else:
-            data = {'transaction_id': transaction_id, 'category': category}
+            data = {"transaction_id": transaction_id, "category": category}
             df = pd.read_csv(config.transaction_category_file)
-            exists = df.loc[df['transaction_id'] == transaction_id]
+            exists = df.loc[df["transaction_id"] == transaction_id]
             if exists.empty:
                 df.loc[len(df)] = data
             else:
-                df.loc[df['transaction_id'] == transaction_id, 'category'] = category
-            df.drop_duplicates(subset=['transaction_id'], inplace=True, keep='last')
+                df.loc[df["transaction_id"] == transaction_id, "category"] = category
+            df.drop_duplicates(subset=["transaction_id"], inplace=True, keep="last")
             df.to_csv(config.transaction_category_file, index=False)
 
     @staticmethod
-    def load_known_transactions():
-        if os.path.isfile(config.transaction_category_file):
-            df = pd.read_csv(config.transaction_category_file)
-            df.drop_duplicates(subset=['transaction_id'], inplace=True, keep='first')
-            return df
-        return None
-
-    @staticmethod
     def update_store_category(store_name, category):
-        df = pd.read_csv(config.stores_to_categories_file)
-        match = df[df['store_name'] == store_name]
+        if os.path.isfile(config.ledger_db_file):
+            from pipeline.ledger_dataframe import load_stores_dataframe_from_ledger
+
+            df = load_stores_dataframe_from_ledger(config.ledger_db_file)
+        else:
+            df = pd.read_csv(config.stores_to_categories_file)
+        match = df[df["store_name"] == store_name]
         if len(match) >= 2:
             df.loc[df['store_name'] == store_name, 'is_static'] = 0
             if len(match.loc[match['category'] == category]) == 0:
@@ -689,12 +830,23 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         else:
             log.error("update_store_category: store not in stores file (no match)")
             return
+        if os.path.isfile(config.ledger_db_file):
+            from pipeline.static_store_import import sync_stores_to_ledger_from_dataframe
+
+            sync_stores_to_ledger_from_dataframe(config.ledger_db_file, df)
+            return
         df.to_csv(config.stores_to_categories_file, index=False)
 
     @staticmethod
     def dupe_seeker():
-        log.info("dupe_seeker: scanning %s", config.compiled_file)
-        df = pd.read_csv(config.compiled_file)
+        if os.path.isfile(config.ledger_db_file):
+            from pipeline.ledger_dataframe import load_transactions_dataframe_from_ledger
+
+            log.info("dupe_seeker: scanning ledger %s", config.ledger_db_file)
+            df = load_transactions_dataframe_from_ledger(config.ledger_db_file)
+        else:
+            log.info("dupe_seeker: scanning %s", config.compiled_file)
+            df = pd.read_csv(config.compiled_file)
 
         grouped_expenses = df[df['בחובה'] != 0].groupby(['תאריך', 'בחובה']).size().reset_index(name='counts')
         filtered_groups = grouped_expenses[grouped_expenses['counts'] > 1]
@@ -715,7 +867,7 @@ if __name__ == "__main__":
     # kt_df = pd.read_csv(config.transaction_category_file)
     # missing_transactions = main_df[~main_df['מזהה עסקה'].isin(kt_df['transaction_id'])]
     # print(missing_transactions)
-    f = CategorizeFile(config.compiled_file)
+    f = CategorizeFile(ledger_db_path=config.ledger_db_file)
     # f.fix_categories()
     # f.auto_categorize()
     # f.manual_categorizer()

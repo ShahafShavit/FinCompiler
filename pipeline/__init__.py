@@ -280,9 +280,9 @@ def run_categorization_interactive(
     from categorization import create_interaction_handler
     from categorization.categorizer import CategorizeFile
 
-    if not os.path.isfile(config.compiled_file):
-        _notify("CATEGORIZE: skip (compiled.csv missing)", sink)
-        return
+    from pipeline.ledger_migrate import migrate_ledger_db
+
+    migrate_ledger_db()
     _notify(
         "CATEGORIZE: interactive (auto, then prompts); FINANCE_CATEGORIZE_UI=http uses the browser",
         sink,
@@ -299,7 +299,7 @@ def run_categorization_interactive(
 
     signal.signal(signal.SIGINT, _sigint)
     try:
-        f = CategorizeFile(config.compiled_file, interaction_handler=h)
+        f = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=h)
         attach = getattr(h, "attach_categorizer", None)
         if callable(attach):
             attach(f)
@@ -321,17 +321,20 @@ def compile_transactions_main(
     if not cleaned:
         _notify("COMPILE TRANSACTIONS: no CSV in clean dir; skipping", sink)
         return
-    _notify(f"COMPILE TRANSACTIONS: merging {len(cleaned)} CSV -> {config.compiled_file}", sink)
-    c = compiler.Compiler(config.compiled_file)
+    _notify(
+        f"COMPILE TRANSACTIONS: merging {len(cleaned)} clean CSV -> {config.ledger_db_file}",
+        sink,
+    )
+    c = compiler.Compiler(config.compiled_file, ledger_db=config.ledger_db_file)
     c.__compile_new__(config.transactions_clean_dir, suffix="credit")
     c.compile_to_main()
-    main_file, _ = c.save_all()
+    _, _ = c.save_all()
     c.update_fingerprint_db()
     if run_auto_categorize:
         from categorization.categorizer import CategorizeFile
 
-        _notify("CATEGORIZE: auto pass on compiled file", sink)
-        categorizer = CategorizeFile(main_file)
+        _notify("CATEGORIZE: auto pass on ledger", sink)
+        categorizer = CategorizeFile(ledger_db_path=config.ledger_db_file)
         categorizer.auto_categorize()
 
 
@@ -411,7 +414,10 @@ def run_transactions_pipeline(
     if to_csv:
         csv_from_raw_transactions(drop_profile=drop_profile, sink=sink)
     if compile_:
-        compile_transactions_main(run_auto_categorize=auto_categorize, sink=sink)
+        compile_transactions_main(
+            run_auto_categorize=auto_categorize,
+            sink=sink,
+        )
 
 
 def clean_holdings_workspace(

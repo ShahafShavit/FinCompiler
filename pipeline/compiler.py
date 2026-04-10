@@ -57,52 +57,47 @@ def parse_post_ingest_date_column(series: pd.Series) -> pd.Series:
 
 def update_category_in_fingerprint_db(fingerprint, category):
     """
-    Updates the category for a given fingerprint in the central database.
-    This can be called from the categorizer after a category is assigned.
+    Updates ``קטגוריה`` on ``ledger_transaction`` for ``fingerprint``.
+
+    Legacy name kept for callers; ``fingerprint_db.csv`` is deprecated.
     """
     try:
-        db_path = config.fingerprint_db_file
+        from pipeline.ledger_category import update_category_by_fingerprint
+
+        db_path = config.ledger_db_file
         if not os.path.exists(db_path):
-            log.debug("update_category_in_fingerprint_db: no DB at %s (skip)", db_path)
+            log.debug("update_category_in_fingerprint_db: no ledger at %s (skip)", db_path)
             return
-
-        db_df = pd.read_csv(db_path)
-        if 'category' not in db_df.columns:
-            db_df['category'] = ''
-
-        db_df['category'] = db_df['category'].astype(object).fillna('')
-
-        if 'fingerprint' not in db_df.columns:
+        if fingerprint is None or (isinstance(fingerprint, float) and pd.isna(fingerprint)):
             return
-
-        cat_str = '' if category is None else str(category)
-        mask = db_df['fingerprint'] == fingerprint
-        if mask.any():
-            current = db_df.loc[mask, 'category'].iloc[0]
-            current_str = '' if pd.isna(current) else str(current)
-            if current_str.strip() == cat_str.strip():
-                return
-
-        db_df.loc[mask, 'category'] = cat_str
-        db_df.to_csv(db_path, index=False)
-        log.info("Fingerprint DB: set category for fingerprint (len=%s)", len(str(fingerprint)))
+        update_category_by_fingerprint(db_path, str(fingerprint).strip(), category)
+        log.info("Ledger: set category for fingerprint (len=%s)", len(str(fingerprint)))
     except Exception as e:
         log.exception("update_category_in_fingerprint_db failed: %s", e)
 
 
 class Compiler:
-    def __init__(self, path_to_main):
-        log.info("Compiler init main_file=%s", path_to_main)
+    def __init__(self, path_to_main, ledger_db: str | None = None):
+        log.info("Compiler init main_file=%s ledger_db=%s", path_to_main, ledger_db)
         self.main_file = path_to_main
+        self.ledger_db = ledger_db
         self.new_df = pd.DataFrame()
         self.added_transactions = pd.DataFrame()
-        try:
-            self.main_df = pd.read_csv(self.main_file)
-            log.debug("Loaded main CSV rows=%s", len(self.main_df))
-        except (FileNotFoundError, pandas.errors.EmptyDataError):
-            log.info("Main file missing or empty; starting fresh: %s", path_to_main)
-            self.main_df = pd.DataFrame()
-            self.main_df.to_csv(self.main_file, index=False)
+        if ledger_db:
+            from pipeline.ledger_dataframe import load_transactions_dataframe_from_ledger
+            from pipeline.ledger_migrate import migrate_ledger_db
+
+            migrate_ledger_db(ledger_db)
+            self.main_df = load_transactions_dataframe_from_ledger(ledger_db)
+            log.debug("Loaded ledger rows=%s from %s", len(self.main_df), ledger_db)
+        else:
+            try:
+                self.main_df = pd.read_csv(self.main_file)
+                log.debug("Loaded main CSV rows=%s", len(self.main_df))
+            except (FileNotFoundError, pandas.errors.EmptyDataError):
+                log.info("Main file missing or empty; starting fresh: %s", path_to_main)
+                self.main_df = pd.DataFrame()
+                self.main_df.to_csv(self.main_file, index=False)
 
     def __compile_new__(self, path_to_files, suffix):
         log.info("__compile_new__: path=%s suffix=%s", path_to_files, suffix)
@@ -131,15 +126,13 @@ class Compiler:
         self.new_df['תאריך'] = self.new_df['תאריך'].dt.date
         self.new_df.sort_values(by='תאריך', inplace=True)
         self.new_df.reset_index(drop=True, inplace=True)
-        if 'מזהה עסקה' in self.new_df.columns:
-            self.new_df['תאריך עדכון'] = datetime.date.today()
 
     def compile_to_main(self):
         log.info("compile_to_main: new_df empty=%s", self.new_df.empty)
         if self.new_df.empty:
             log.info("Nothing to merge into main (new_df empty).")
             return
-        if 'מזהה עסקה' in self.new_df.columns:  # transactions branch
+        if "fingerprint" in self.new_df.columns:  # transactions branch (clean CSV from TransactionFile)
             log.debug("compile_to_main: transactions branch (fingerprints)")
             original_fingerprints = set()
             if not self.main_df.empty and 'fingerprint' in self.main_df.columns:
@@ -194,12 +187,17 @@ class Compiler:
             self.main_df['תאריך'] = self.main_df['תאריך'].dt.date
 
     def update_fingerprint_db(self):
+        """Deprecated: category data lives on ``ledger_transaction`` when using SQLite."""
+        if self.ledger_db:
+            log.debug("update_fingerprint_db: skipped (ledger mode)")
+            return
         if self.added_transactions.empty:
             log.info("Fingerprint DB unchanged (no new transactions).")
             return
 
-        new_fingerprints_df = self.added_transactions[['fingerprint', 'מזהה עסקה']].copy()
-        new_fingerprints_df['category'] = ''
+        # Legacy fingerprint_db.csv sidecar: still pairs fingerprint with old row-hash column when present.
+        new_fingerprints_df = self.added_transactions[["fingerprint", "מזהה עסקה"]].copy()
+        new_fingerprints_df["category"] = ""
 
         db_path = config.fingerprint_db_file
         db_dir = os.path.dirname(db_path)
@@ -208,20 +206,23 @@ class Compiler:
 
         try:
             fingerprint_df = pd.read_csv(db_path)
-            if 'category' not in fingerprint_df.columns:
-                fingerprint_df['category'] = ''
+            if "category" not in fingerprint_df.columns:
+                fingerprint_df["category"] = ""
             updated_df = pd.concat([fingerprint_df, new_fingerprints_df], ignore_index=True)
         except FileNotFoundError:
             updated_df = new_fingerprints_df
 
-        updated_df['category'] = updated_df['category'].astype(object).fillna('')
-        updated_df.sort_values(by=['fingerprint', 'category'], ascending=[True, False], inplace=True)
-        updated_df.drop_duplicates(subset=['fingerprint'], keep='first', inplace=True)
+        updated_df["category"] = updated_df["category"].astype(object).fillna("")
+        updated_df.sort_values(by=["fingerprint", "category"], ascending=[True, False], inplace=True)
+        updated_df.drop_duplicates(subset=["fingerprint"], keep="first", inplace=True)
 
         updated_df.to_csv(db_path, index=False)
         log.info("Fingerprint DB updated with %s new entries -> %s", len(new_fingerprints_df), db_path)
 
     def save_new(self):
+        if self.ledger_db:
+            log.debug("save_new: skipped (ledger mode; no slice CSV)")
+            return ""
         today_date = f"{datetime.datetime.now().date()}_{datetime.datetime.now().hour}-{datetime.datetime.now().minute}"
         output_path = os.path.join(config.compiled_dir, f"new_{today_date}_{self.suffix}.csv")
         self.new_df.to_csv(output_path, index=False)
@@ -229,6 +230,12 @@ class Compiler:
         return output_path
 
     def save_main(self):
+        if self.ledger_db:
+            from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
+
+            upsert_compiled_dataframe_to_ledger(self.main_df, self.ledger_db)
+            log.info("Wrote main ledger SQLite %s (%s rows)", self.ledger_db, len(self.main_df))
+            return self.ledger_db
         self.main_df.to_csv(self.main_file, index=False)
         log.info("Wrote main ledger %s (%s rows)", self.main_file, len(self.main_df))
         return self.main_file

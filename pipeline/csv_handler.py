@@ -115,6 +115,11 @@ class TransactionFile:
         return file_df
 
     def unique_identifier(self):
+        """Attach legacy **מזהה עסקה** (SHA-256 of row text) for old CSV workflows only.
+
+        This is **not** the pipeline ``fingerprint`` and is **not** stored on ``ledger_transaction``.
+        SQLite/categorizer paths key off ``fingerprint`` via ``categorization.categorizer.stable_transaction_key``.
+        """
         def hash_row(row):
             row_string = ''.join(row.values.astype(str))
             return hashlib.sha256(row_string.encode()).hexdigest()

@@ -26,6 +26,18 @@ def _pipeline_sink(message: str) -> None:
     logger.log_process_ongoing(message=message)
 
 
+def _materialize_totals_csv_for_sheets() -> str:
+    """Export the SQLite ledger to a temp CSV for ``GSLink`` (API still expects file paths)."""
+    import tempfile
+
+    from pipeline.ledger_dataframe import export_transactions_dataframe_to_csv
+
+    fd, path = tempfile.mkstemp(prefix="ledger_totals_", suffix=".csv")
+    os.close(fd)
+    export_transactions_dataframe_to_csv(config.ledger_db_file, path)
+    return path
+
+
 def log_process(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -155,11 +167,18 @@ def ui():
     def push_transactions():
         gsh = google_sheets.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = google_sheets.GSLink(gsh)
-        gslink.update_cloud([totals_sheetname], [config.compiled_file], special_columns=[3, 5])
+        path = _materialize_totals_csv_for_sheets()
+        try:
+            gslink.update_cloud([totals_sheetname], [path], special_columns=[3, 5])
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     @log_process
     def categorize_transactions():
-        f = CategorizeFile(config.compiled_file, interaction_handler=create_interaction_handler())
+        f = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=create_interaction_handler())
         f.auto_categorize()
         f.manual_categorizer()
 
@@ -167,28 +186,59 @@ def ui():
     def check_sync():
         gsh = google_sheets.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = google_sheets.GSLink(gsh)
-        gslink.sync_check(
-            [holdings_sheetname, totals_sheetname],
-            [config.holdings_file, config.compiled_file],
-        )
+        path = _materialize_totals_csv_for_sheets()
+        try:
+            gslink.sync_check(
+                [holdings_sheetname, totals_sheetname],
+                [config.holdings_file, path],
+            )
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     @log_process
     def pull_data():
+        import pandas as pd
+
+        from pipeline.ledger_compile_upsert import upsert_compiled_dataframe_to_ledger
+
         gsh = google_sheets.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = google_sheets.GSLink(gsh)
-        gslink.update_local(
-            [holdings_sheetname, totals_sheetname],
-            [config.holdings_file, config.compiled_file],
-        )
+        path = _materialize_totals_csv_for_sheets()
+        try:
+            gslink.update_local(
+                [holdings_sheetname, totals_sheetname],
+                [config.holdings_file, path],
+            )
+        finally:
+            if os.path.isfile(path):
+                try:
+                    df = pd.read_csv(path)
+                    upsert_compiled_dataframe_to_ledger(df, config.ledger_db_file)
+                except Exception:
+                    _py_log.exception("Importing pulled totals into ledger failed")
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
     @log_process
     def push_data():
         gsh = google_sheets.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = google_sheets.GSLink(gsh)
-        gslink.update_cloud(
-            [holdings_sheetname, totals_sheetname],
-            [config.holdings_file, config.compiled_file],
-        )
+        path = _materialize_totals_csv_for_sheets()
+        try:
+            gslink.update_cloud(
+                [holdings_sheetname, totals_sheetname],
+                [config.holdings_file, path],
+            )
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     @log_process
     def fix_null_category():

@@ -9,8 +9,7 @@ Calls ``pipeline.run_categorization_interactive()`` (same as ``run_pipeline.py .
 repo — the same tree as in ``.env`` with ``FINANCE_WORKSPACE_ROOT=testing/`` when you run from
 the repo root.
 
-Does **not** overwrite ``compiled.csv`` or ``stores_to_categories.csv``; it uses whatever is
-already under that root (e.g. ``testing/data/export/compiled/compiled.csv``).
+Uses ``data/ledger.sqlite`` (and store mappings in the same DB) under that workspace root.
 
 Environment (optional):
   FINANCE_CATEGORIZE_HTTP_PORT   default 9777
@@ -46,11 +45,11 @@ def main() -> int:
     import config
 
     print(f"FINANCE_WORKSPACE_ROOT={config.workspace_root() or '(cwd-relative default)'}", flush=True)
-    print(f"compiled_file={config.compiled_file}", flush=True)
+    print(f"ledger_db_file={config.ledger_db_file}", flush=True)
 
-    if not os.path.isfile(config.compiled_file):
-        print(f"Missing compiled CSV; run the compile step first:\n  {config.compiled_file}", file=sys.stderr)
-        return 1
+    from pipeline.ledger_migrate import migrate_ledger_db
+
+    migrate_ledger_db()
 
     import pipeline
 

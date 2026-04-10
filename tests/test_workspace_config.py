@@ -46,9 +46,11 @@ class WorkspaceRootTests(unittest.TestCase):
                 for path in (
                     config_mod.download_inbox_dir,
                     config_mod.compiled_file,
+                    config_mod.ledger_db_file,
                     config_mod.stores_to_categories_file,
                     config_mod.fingerprint_db_file,
                     config_mod.web_totals_file,
+                    config_mod.backup_parent_dir,
                     config_mod.holdings_inbox_dir,
                     config_mod.transactions_clean_dir,
                 ):

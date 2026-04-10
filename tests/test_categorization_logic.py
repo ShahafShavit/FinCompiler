@@ -34,7 +34,8 @@ from categorization.interactive.prompts import (
     ResolveStaticPrompt,
 )
 
-# Minimal columns required for CategorizeFile.__init__ and categorize_storename
+# Minimal columns required for CategorizeFile.__init__ and categorize_storename.
+# Includes legacy **מזהה עסקה** (not a ledger column); production ledger paths use **fingerprint**.
 _COMPILED_COLS = [
     "מזהה עסקה",
     "מקור עסקה",

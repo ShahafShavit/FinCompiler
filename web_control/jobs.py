@@ -16,6 +16,16 @@ log = logging.getLogger(__name__)
 Sink = Callable[[str], None]
 
 
+def _maybe_backup_first(options: dict[str, Any], sink: Sink) -> None:
+    if not bool(options.get("backup_first")):
+        return
+    from pipeline.backup import create_critical_paths_backup
+
+    root, manifest = create_critical_paths_backup()
+    sink(f"BACKUP: snapshot -> {root}")
+    sink(f"BACKUP: included {manifest.get('included_top_level')!r}")
+
+
 def run_action(
     action: str,
     options: dict[str, Any],
@@ -29,6 +39,7 @@ def run_action(
       from_date, to_date (osh)
       drop_profile: full | batch
       auto_categorize, no_fetch (bools)
+      backup_first (bool) — snapshot compiled/static/web data before compile-oriented jobs
     """
     drop_profile = str(options.get("drop_profile") or "full").strip().lower()
     if drop_profile not in ("full", "batch"):
@@ -59,6 +70,8 @@ def run_action(
         if not dl and not route and not proc_h and not proc_t:
             sink("PIPELINE: enable at least one step below")
             return
+        if bool(options.get("backup_first")) and (proc_h or proc_t):
+            _maybe_backup_first(options, sink)
         if route:
             pipeline.route_inbox(sink=sink)
         elif dl and (proc_h or proc_t):
@@ -112,6 +125,7 @@ def run_action(
         return
 
     if action == "transactions_pipeline":
+        _maybe_backup_first(options, sink)
         do_cat = bool(options.get("categorize_interactive"))
         pipeline.run_transactions_pipeline(
             fetch_max_isracard=bool(options.get("fetch_max_isracard")),
@@ -132,6 +146,7 @@ def run_action(
         return
 
     if action == "both_process":
+        _maybe_backup_first(options, sink)
         auto_only = bool(options.get("auto_categorize")) and not bool(
             options.get("categorize_interactive")
         )
@@ -145,6 +160,7 @@ def run_action(
         return
 
     if action == "full_pipeline":
+        _maybe_backup_first(options, sink)
         if not bool(options.get("no_fetch")):
             h = bool(options.get("fetch_holdings", True))
             mi = bool(options.get("fetch_max_isracard", True))
@@ -183,11 +199,11 @@ def run_action(
 
 def _run_categorize_from_control(sink: Sink, control_state: Any = None) -> None:
     """Auto-assign what we can; anything left is visible at ``/categorize/`` (no blocking session)."""
-    if not os.path.isfile(config.compiled_file):
-        sink("CATEGORIZE: skip (compiled.csv missing)")
-        return
+    from pipeline.ledger_migrate import migrate_ledger_db
+
+    migrate_ledger_db()
     sink("CATEGORIZE: running auto pass (remaining questions live at /categorize/)")
-    cf = CategorizeFile(config.compiled_file, interaction_handler=TerminalCategorizationHandler())
+    cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=TerminalCategorizationHandler())
     cf.auto_categorize()
     n = cf.count_rows_needing_category()
     if n:

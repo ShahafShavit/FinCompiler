@@ -14,7 +14,7 @@ import threading
 from typing import Any, Optional
 
 import config
-from categorization.categorizer import CategorizeFile, category_cell_needs_manual
+from categorization.categorizer import CategorizeFile, category_cell_needs_manual, stable_transaction_key
 from categorization.interactive.terminal import TerminalCategorizationHandler
 from .json_safe import json_bytes_strict
 
@@ -36,12 +36,15 @@ def _session_categories(cf: CategorizeFile) -> list[str]:
 
 
 def summary() -> dict[str, Any]:
-    path = config.compiled_file
+    from pipeline.ledger_dataframe import load_transactions_dataframe_from_ledger
+    from pipeline.ledger_migrate import migrate_ledger_db
+
+    migrate_ledger_db()
+    path = config.ledger_db_file
     if not os.path.isfile(path):
         return {"open_count": 0, "compiled_exists": False}
-    import pandas as pd
 
-    df = pd.read_csv(path)
+    df = load_transactions_dataframe_from_ledger(path)
     if "קטגוריה" not in df.columns:
         return {"open_count": int(len(df)), "compiled_exists": True}
     col = df["קטגוריה"]
@@ -52,14 +55,17 @@ def summary() -> dict[str, Any]:
 def next_payload() -> dict[str, Any]:
     cats: list[str] = []
     with _lock:
-        if not os.path.isfile(config.compiled_file):
+        from pipeline.ledger_migrate import migrate_ledger_db
+
+        migrate_ledger_db()
+        if not os.path.isfile(config.ledger_db_file):
             return {
                 "pending": {"kind": "idle"},
                 "open_count": 0,
                 "history": [],
                 "session_categories": [],
             }
-        cf = CategorizeFile(config.compiled_file, interaction_handler=_terminal_handler())
+        cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=_terminal_handler())
         cats = _session_categories(cf)
         for _ in range(_MAX_REPAIR):
             cf.auto_categorize()
@@ -85,7 +91,7 @@ def next_payload() -> dict[str, Any]:
                         "session_categories": cats,
                         "error": str(e),
                     }
-                cf._persist_category_for_transaction(str(row["מזהה עסקה"]), str(cat))
+                cf._persist_category_for_transaction(stable_transaction_key(row), str(cat))
                 cats = _session_categories(cf)
                 continue
             return {
@@ -99,7 +105,7 @@ def next_payload() -> dict[str, Any]:
             "open_count": 0,
             "history": [],
             "session_categories": cats,
-            "error": "queue repair exceeded; check compiled.csv and stores_to_categories.csv",
+            "error": "queue repair exceeded; check ledger.sqlite and store mappings",
         }
 
 
@@ -109,12 +115,15 @@ def respond(data: dict[str, Any]) -> Optional[str]:
     if not tid or not kind:
         return "prompt_id and kind required"
     with _lock:
-        cf = CategorizeFile(config.compiled_file, interaction_handler=_terminal_handler())
+        from pipeline.ledger_migrate import migrate_ledger_db
+
+        migrate_ledger_db()
+        cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=_terminal_handler())
         cf.auto_categorize()
         if cf.awaiting_df.empty:
             return "no unanswered rows"
         row0 = cf.awaiting_df.iloc[0]
-        if str(row0["מזהה עסקה"]) != tid:
+        if str(stable_transaction_key(row0)) != tid:
             return "not the first unanswered row; refresh /api/next"
         try:
             p = cf.build_manual_prompt_for_row(row0)
@@ -131,7 +140,10 @@ def respond(data: dict[str, Any]) -> Optional[str]:
 
 def revise(data: dict[str, Any]) -> Optional[str]:
     with _lock:
-        cf = CategorizeFile(config.compiled_file, interaction_handler=_terminal_handler())
+        from pipeline.ledger_migrate import migrate_ledger_db
+
+        migrate_ledger_db()
+        cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=_terminal_handler())
         return cf.apply_queue_revise(data)
 
 

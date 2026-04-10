@@ -169,7 +169,8 @@ _DASHBOARD_HTML = (
     <p class="hint">Automatically stays on when you compile (so new downloads reach the right pipeline folders).</p>
 
     <label class="row"><input type="checkbox" id="p_hold"/> <strong>Compile holdings</strong> → <code>data/export/compiled/holdings.csv</code></label>
-    <label class="row"><input type="checkbox" id="p_tx"/> <strong>Compile transactions</strong> → <code>data/export/compiled/compiled.csv</code></label>
+    <label class="row"><input type="checkbox" id="p_tx"/> <strong>Compile transactions</strong> → <code>data/ledger.sqlite</code> (transactions ledger)</label>
+    <label class="row"><input type="checkbox" id="p_backup" disabled/> <strong>Backup snapshot first</strong> — copy compiled, static, and <code>web/data</code> into <code>data/_backups/&lt;timestamp&gt;/</code> before compile steps</label>
     <label class="row"><input type="checkbox" id="p_auto" disabled/> <strong>Auto-categorize</strong> after transactions compile (rows still missing a category → <a href="/categorize/">/categorize/</a>)</label>
 
     <label class="row combo-row" style="margin-top:0.65rem">Transaction column-drop profile (type or pick)
@@ -188,7 +189,7 @@ _DASHBOARD_HTML = (
 
   <div class="card">
     <h2>Categorization only</h2>
-    <p class="hint">Runs an auto pass on <code>compiled.csv</code>. Open <a href="/categorize/">/categorize/</a> any time to answer whatever is still missing a category (no separate &quot;session&quot;).</p>
+    <p class="hint">Runs an auto pass on the SQLite ledger. Open <a href="/categorize/">/categorize/</a> any time to answer whatever is still missing a category (no separate &quot;session&quot;).</p>
     <button type="button" id="btn_cat">Run auto-categorize</button>
   </div>
 
@@ -231,10 +232,15 @@ _DASHBOARD_HTML = (
       if (el) el.disabled = !dl;
     });
     const procT = document.getElementById('p_tx').checked;
+    const procH = document.getElementById('p_hold').checked;
+    const backupEl = document.getElementById('p_backup');
+    if (backupEl) {
+      backupEl.disabled = !(procT || procH);
+      if (backupEl.disabled) backupEl.checked = false;
+    }
     const auto = document.getElementById('p_auto');
     auto.disabled = !procT;
     if (!procT) auto.checked = false;
-    const procH = document.getElementById('p_hold').checked;
     const route = document.getElementById('p_route');
     if (procH || procT) {
       route.checked = true;
@@ -373,6 +379,7 @@ _DASHBOARD_HTML = (
       route_inbox: route,
       process_holdings: procH,
       process_transactions: procT,
+      backup_first: !!(document.getElementById('p_backup') && document.getElementById('p_backup').checked),
       auto_categorize: document.getElementById('p_auto').checked,
       drop_profile: normalizeDropProfile(),
     });
@@ -399,7 +406,7 @@ _DASHBOARD_HTML = (
       const j = await r.json();
       const el = document.getElementById('queue_hint');
       if (!el) return;
-      if (!j.compiled_exists) { el.textContent = 'no compiled.csv'; el.className = 'pill'; return; }
+      if (!j.compiled_exists) { el.textContent = 'no ledger DB'; el.className = 'pill'; return; }
       el.textContent = j.open_count ? (j.open_count + ' need category') : 'queue empty';
       el.className = 'pill' + (j.open_count ? '' : ' run');
     } catch (_) { /* ignore */ }
@@ -653,6 +660,7 @@ def make_handler_class(state: ControlState):
                         "workspace_root": config.workspace_root() or None,
                         "input_dir": config.download_inbox_dir,
                         "compiled_file": config.compiled_file,
+                        "ledger_db_file": config.ledger_db_file,
                     }
                 )
                 self._send(200, body, "application/json; charset=utf-8")

@@ -60,9 +60,17 @@ _compiled_root = _data("export", "compiled")
 compiled_dir = _compiled_root + os.sep
 compiled_file = os.path.join(_compiled_root, "compiled.csv")
 holdings_file = os.path.join(_compiled_root, "holdings.csv")
+# Canonical SQLite ledger + static mappings + holdings (single file). Respects
+# ``FINANCE_WORKSPACE_ROOT`` via ``_data``. The repo ``.gitignore`` entry ``/data/``
+# keeps this file (and the rest of ``data/``) out of version control. WAL/SHM
+# sidecars, if enabled, live beside the DB path and are likewise under ``data/``.
+ledger_db_file = _data("ledger.sqlite")
 transaction_category_file = os.path.join(_compiled_root, "bak", "transaction_category.csv")
 _static_root = _w("data", "static")
 static_dir = _static_root + os.sep
+
+# Timestamped pipeline snapshots (MIG-B). Lives under data/ (see .gitignore /data/).
+backup_parent_dir = _data("_backups")
 stores_to_categories_file = os.path.join(_static_root, "stores_to_categories.csv")
 bank_username = os.getenv("bank_username")
 bank_password = os.getenv("bank_password")

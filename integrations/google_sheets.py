@@ -339,6 +339,7 @@ class GSLink:
                 except ValueError:
                     pass
 
+            # Legacy Sheets/CSV path: row-hash column (not ledger fingerprint). Prefer fingerprint-based flows for SQLite.
             if "מזהה עסקה" in df.columns and regular_data:
                 for index, row in df.iterrows():
                     categorizer.CategorizeFile.category_store_link_backup(
@@ -410,6 +411,7 @@ class GSLink:
                 except ValueError:
                     pass
 
+            # Legacy: מזהה עסקה is a CSV row hash, not stored on ledger_transaction.
             if 'מזהה עסקה' in df.columns and regular_data:
                 for index, row in df.iterrows():
                     categorizer.CategorizeFile.category_store_link_backup(transaction_id=row['מזהה עסקה'],

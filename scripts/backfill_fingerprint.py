@@ -1,4 +1,8 @@
-"""Backfill fingerprint column and fingerprint_db from compiled.csv (run from repo with venv)."""
+"""Backfill ``fingerprint`` and legacy ``fingerprint_db.csv`` from ``compiled.csv`` (run from repo with venv).
+
+``מזהה עסקה`` in the output sidecar is the old per-row hash column when present — it is **not**
+written to SQLite; the ledger uses ``fingerprint`` only.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +46,7 @@ def backfill():
 
     main_df.dropna(subset=["fingerprint"], inplace=True)
 
+    # fingerprint_db.csv schema: fingerprint + optional legacy hash + category (not a SQLite export).
     fingerprint_db_df = main_df[["fingerprint", "מזהה עסקה", "קטגוריה"]].copy()
     fingerprint_db_df.rename(columns={"קטגוריה": "category"}, inplace=True)
 

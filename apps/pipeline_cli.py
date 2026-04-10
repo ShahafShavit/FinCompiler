@@ -21,6 +21,14 @@ from logger import configure_pipeline_logging
 
 log = logging.getLogger(__name__)
 
+
+def _run_cli_backup_first() -> None:
+    from pipeline.backup import create_critical_paths_backup
+
+    root, _manifest = create_critical_paths_backup()
+    log.info("BACKUP: snapshot -> %s", root)
+
+
 # ---------------------------------------------------------------------------
 # Help text (shown with --help; keep lines reasonably short for 80-col terminals)
 # ---------------------------------------------------------------------------
@@ -33,7 +41,7 @@ Data flow (short version):
   - route sorts each spreadsheet into an isolated pipeline tree under data/pipeline/
   - holdings pipeline only touches .../pipeline/holdings/{inbox,raw,clean}
   - transactions pipeline only touches .../pipeline/transactions/{inbox,raw,clean}
-  - Final CSVs are always: data/export/compiled/holdings.csv and data/export/compiled/compiled.csv
+  - Holdings merge: data/export/compiled/holdings.csv; transactions ledger: data/ledger.sqlite
   - Optional: set FINANCE_WORKSPACE_ROOT to a directory to use a separate data/ and web/
     tree (safe for tests or experiments; see config).
 
@@ -45,7 +53,7 @@ MAIN_EPILOG = """\
 commands:
   route          Classify files in data/input/*.xls* and MOVE them into pipeline inboxes.
   holdings       Balances: ingest -> clean CSV -> merge into holdings.csv
-  transactions   Spending/income lines: ingest -> clean CSV -> merge into compiled.csv
+  transactions   Spending/income lines: ingest -> clean CSV -> merge into data/ledger.sqlite
   all            Optional browser downloads, then route, then BOTH pipelines in one go.
   both-process   No browser: route whatever is already in data/input, then BOTH pipelines.
 
@@ -112,7 +120,7 @@ Steps (each can be skipped with --no-*):
   1. route   - move *.xls* from data/input into the right pipeline inbox
   2. ingest  - normalize to .xlsx under transactions/raw
   3. csv     - cleaned CSV under transactions/clean (column filtering depends on --drop-profile)
-  4. compile - merge into data/export/compiled/compiled.csv (+ fingerprint DB)
+  4. compile - merge into data/ledger.sqlite
   5. optional: --auto-categorize runs the automatic category pass (same as part of the old batch flow)
 """
 
@@ -262,7 +270,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=textwrap.dedent(TRANSACTIONS_DESCRIPTION),
         epilog=textwrap.dedent(TRANSACTIONS_EPILOG),
         formatter_class=fmt,
-        help="Transactions pipeline -> data/export/compiled/compiled.csv",
+        help="Transactions pipeline -> data/ledger.sqlite",
     )
     tg_fetch = t.add_argument_group("portal fetch (optional; any combination)")
     tg_fetch.add_argument(
@@ -311,7 +319,7 @@ def _build_parser() -> argparse.ArgumentParser:
     tg_steps.add_argument(
         "--no-compile",
         action="store_true",
-        help="Skip merge into compiled.csv and fingerprint DB update.",
+        help="Skip merge into SQLite ledger (data/ledger.sqlite).",
     )
     tg_out = t.add_argument_group("after compile")
     tg_out.add_argument(
@@ -332,7 +340,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="'full' = same column drops as the GUI transaction processor (default). "
         "'batch' = smaller drop set for legacy imports.",
     )
-
+    tg_out.add_argument(
+        "--backup-first",
+        action="store_true",
+        help="Before the pipeline: write a timestamped snapshot under data/_backups/ "
+        "(compiled export, static CSVs, web/data).",
+    )
     # --- all ---
     a = sub.add_parser(
         "all",
@@ -377,7 +390,11 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PROFILE",
         help="Column-drop preset for the transactions side (see transactions --help).",
     )
-
+    ag2.add_argument(
+        "--backup-first",
+        action="store_true",
+        help="Before the pipelines: snapshot compiled, static, and web/data (see transactions --help).",
+    )
     # --- both-process ---
     b = sub.add_parser(
         "both-process",
@@ -403,7 +420,11 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PROFILE",
         help="Column-drop preset for transactions (see transactions --help).",
     )
-
+    b.add_argument(
+        "--backup-first",
+        action="store_true",
+        help="Before the pipelines: snapshot compiled, static, and web/data (see transactions --help).",
+    )
     return p
 
 
@@ -435,6 +456,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "transactions":
+        if args.backup_first:
+            _run_cli_backup_first()
         do_interactive_cat = args.categorize
         pipeline.run_transactions_pipeline(
             fetch_max_isracard=args.fetch_max_isracard,
@@ -454,6 +477,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "all":
+        if args.backup_first:
+            _run_cli_backup_first()
         if not args.no_fetch:
             pipeline.fetch_holdings()
             pipeline.fetch_transactions_max_isracard()
@@ -473,6 +498,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "both-process":
+        if args.backup_first:
+            _run_cli_backup_first()
         auto_only = args.auto_categorize and not args.categorize
         pipeline.run_all_pipelines_after_shared_downloads(
             drop_profile=args.drop_profile,
