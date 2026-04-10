@@ -122,6 +122,16 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             self.file_name = os.path.basename(ledger_db_path)
             self.file_df = load_transactions_dataframe_from_ledger(ledger_db_path)
         else:
+            if os.path.isfile(config.ledger_db_file) and os.path.normcase(
+                os.path.abspath(file_path)
+            ) == os.path.normcase(os.path.abspath(config.compiled_file)):
+                log.warning(
+                    "CategorizeFile loading compiled CSV %s while ledger exists at %s — "
+                    "use ledger_db_path=%s for native SQLite categorization",
+                    file_path,
+                    config.ledger_db_file,
+                    repr(config.ledger_db_file),
+                )
             log.info("CategorizeFile: loading %s", file_path)
             self.file_path = file_path
             self.file_name = os.path.basename(file_path)
@@ -134,6 +144,14 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 self.file_df["קטגוריה"].map(lambda x: "" if pd.isna(x) else str(x)).astype(object)
             )
         self.awaiting_df = pd.DataFrame(columns=self.file_df.columns)
+
+    def _use_legacy_fingerprint_csv_sidecar(self) -> bool:
+        """True only when no ledger on disk — legacy ``fingerprint_db.csv`` (MIG-E3)."""
+        if self._ledger_db_path:
+            return False
+        if os.path.isfile(config.ledger_db_file):
+            return False
+        return True
 
     def load_stores(self):
         if self._ledger_db_path:
@@ -547,7 +565,8 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
     def auto_categorize(self):
         log.info("auto_categorize: rows=%s file=%s", len(self.file_df), self.file_path)
-        if not self._ledger_db_path:
+        progress_dirty = False
+        if self._use_legacy_fingerprint_csv_sidecar():
             try:
                 fp_db = pd.read_csv(config.fingerprint_db_file)
                 if "category" in fp_db.columns and "fingerprint" in self.file_df.columns:
@@ -564,7 +583,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                     ].fillna(new_categories)
 
                     log.info("Restored categories from fingerprint DB for uncategorized rows")
-                    self.save_progress()
+                    progress_dirty = True
             except FileNotFoundError:
                 log.warning("Fingerprint DB not found; skipping category restoration")
             except Exception as e:
@@ -580,23 +599,26 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 category = k_t[k_t["transaction_id"] == sid]["category"].values[0]
                 if category != row["קטגוריה"]:
                     self.file_df.loc[index, "קטגוריה"] = category
+                    progress_dirty = True
                     log.debug("Category from backup for id=%s -> %s", sid, category)
                     self.category_store_link_backup(sid, category)
 
             if row["קטגוריה"] == "" or row["קטגוריה"] == "awaiting" or pd.isna(row["קטגוריה"]):
                 category = self.categorize_storename(row, method="auto")
                 self.file_df.loc[index, "קטגוריה"] = category if category is not None else ""
-                self.save_progress()
+                progress_dirty = True
                 if category is None:
                     self.awaiting_df.loc[len(self.awaiting_df)] = row
                 if category is not None:
-                    if "fingerprint" in row:
+                    if not self._ledger_db_path and "fingerprint" in row:
                         update_category_in_fingerprint_db(row["fingerprint"], category)
                     self.category_store_link_backup(sid, category)
             else:
-                if "fingerprint" in row:
+                if not self._ledger_db_path and "fingerprint" in row:
                     update_category_in_fingerprint_db(row["fingerprint"], row["קטגוריה"])
                 self.category_store_link_backup(sid, row["קטגוריה"])
+        if progress_dirty:
+            self.save_progress()
         awaiting = len(self.awaiting_df)
         if awaiting:
             log.info("auto_categorize: %s rows still awaiting manual category", awaiting)

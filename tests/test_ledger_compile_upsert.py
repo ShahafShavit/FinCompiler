@@ -110,6 +110,25 @@ class LedgerCompileUpsertTests(unittest.TestCase):
                 conn.close()
             self.assertEqual(cat, "UserCategory")
 
+    def test_update_fingerprint_db_does_not_write_sidecar_when_ledger_file_exists(self) -> None:
+        """MIG-E3: legacy CSV sidecar is skipped when a ledger DB file is already on disk."""
+        from pipeline import compiler
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                cfg = _reload_config()
+            os.makedirs(os.path.dirname(cfg.compiled_file), exist_ok=True)
+            pd.DataFrame(columns=["fingerprint", "מזהה עסקה"]).to_csv(cfg.compiled_file, index=False)
+            os.makedirs(os.path.dirname(cfg.ledger_db_file), exist_ok=True)
+            open(cfg.ledger_db_file, "wb").close()
+            c = compiler.Compiler(cfg.compiled_file, ledger_db=None)
+            c.added_transactions = pd.DataFrame(
+                {"fingerprint": ["n1"], "מזהה עסקה": ["h1"]}
+            )
+            c.update_fingerprint_db()
+            self.assertFalse(os.path.isfile(cfg.fingerprint_db_file))
+
 
 if __name__ == "__main__":
     unittest.main()

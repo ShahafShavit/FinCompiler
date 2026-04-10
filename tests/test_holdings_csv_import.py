@@ -37,6 +37,25 @@ class HoldingsCsvImportTests(unittest.TestCase):
             self.assertTrue(report.get("parity_ok"), msg=str(report))
             self.assertEqual(report.get("rows_upserted"), 8)
 
+    def test_long_wide_roundtrip_matches_melt(self) -> None:
+        from pipeline.holdings_csv_import import (
+            holdings_long_to_wide,
+            load_holdings_wide_csv,
+            wide_holdings_to_long,
+        )
+
+        long_a = load_holdings_wide_csv(str(_FIXTURE))
+        wide = holdings_long_to_wide(long_a)
+        long_b = wide_holdings_to_long(wide)
+        long_a = long_a.sort_values(["as_of_date", "activity_type"]).reset_index(drop=True)
+        long_b = long_b.sort_values(["as_of_date", "activity_type"]).reset_index(drop=True)
+        self.assertEqual(len(long_a), len(long_b))
+        for c in ("as_of_date", "activity_type"):
+            self.assertTrue(long_a[c].astype(str).equals(long_b[c].astype(str)))
+        self.assertTrue(
+            (long_a["balance_ils"] - long_b["balance_ils"]).abs().max() < 0.01,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

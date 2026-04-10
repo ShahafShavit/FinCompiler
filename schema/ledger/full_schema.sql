@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS similar_category_pair (
 -- If you ever freeze a permanent set of columns and want a true wide table
 -- mirroring CSV 1:1, add a follow-up migration with explicit REAL columns.
 -- -----------------------------------------------------------------------------
+-- Row identity / dedupe key: (as_of_date, activity_type) — pipeline upserts via INSERT OR REPLACE.
 CREATE TABLE IF NOT EXISTS holdings_balance (
     as_of_date    TEXT NOT NULL CHECK (date(as_of_date) = as_of_date),
     activity_type TEXT NOT NULL,

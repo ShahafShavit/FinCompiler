@@ -189,6 +189,52 @@ class CategorizeStorenameTests(unittest.TestCase):
         after = pd.read_csv(self.stores_path)
         self.assertEqual(int(after.loc[after["store_name"] == "Weird", "is_static"].iloc[0]), 1)
 
+    def test_auto_categorize_does_not_read_fingerprint_sidecar_when_ledger_file_exists(self) -> None:
+        """MIG-E3: CSV-mode categorizer must not touch fingerprint_db.csv if ledger.sqlite exists."""
+        paths: list[str] = []
+        real_read_csv = pd.read_csv
+
+        def _wrap(path, *args, **kwargs):
+            paths.append(os.path.normpath(os.path.abspath(str(path))))
+            return real_read_csv(path, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as d:
+            compiled = os.path.join(d, "compiled.csv")
+            pd.DataFrame(
+                [
+                    {
+                        "fingerprint": "fp1",
+                        "מקור עסקה": "S",
+                        "תאריך": "2024-01-01",
+                        "בחובה": 0,
+                        "בזכות": 1,
+                        "קטגוריה": "",
+                    }
+                ]
+            ).to_csv(compiled, index=False)
+            ledger = os.path.join(d, "ledger.sqlite")
+            open(ledger, "wb").close()
+            fp_sidecar = os.path.join(d, "fingerprint_db.csv")
+            pd.DataFrame([{"fingerprint": "fp1", "category": "NeverUsed"}]).to_csv(
+                fp_sidecar, index=False
+            )
+            stores = os.path.join(d, "stores.csv")
+            pd.DataFrame(columns=["store_name", "category", "is_static"]).to_csv(
+                stores, index=False
+            )
+            os.makedirs(os.path.join(d, "bak"), exist_ok=True)
+            bak = os.path.join(d, "bak", "transaction_category.csv")
+            with patch.object(config, "ledger_db_file", ledger), patch.object(
+                config, "fingerprint_db_file", fp_sidecar
+            ), patch.object(config, "stores_to_categories_file", stores), patch.object(
+                config, "transaction_category_file", bak
+            ), patch.object(pd, "read_csv", side_effect=_wrap):
+                cf = CategorizeFile(compiled)
+                cf.load_stores()
+                cf.auto_categorize()
+        abs_fp = os.path.normpath(os.path.abspath(fp_sidecar))
+        self.assertNotIn(abs_fp, paths)
+
 
 class HttpHandlerIntegrationTest(unittest.TestCase):
     """One thread blocks on prompt; another answers via the local HTTP API."""

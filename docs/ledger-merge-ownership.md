@@ -44,4 +44,5 @@ Compile rows with missing or empty fingerprint are **not** upserted (v8 allows N
 
 ## Implementation
 
-- `pipeline/ledger.py` (`upsert_compiled_dataframe_to_ledger`) — compile → SQLite upsert used when **`upsert_ledger=True`** (see `compile_transactions_main`).
+- `pipeline/ledger.py` (`upsert_compiled_dataframe_to_ledger`) — implements the merge rules above for compile output.
+- `pipeline.compile_transactions_main` always constructs `Compiler(..., ledger_db=config.ledger_db_file)`; `Compiler.save_main` calls `upsert_compiled_dataframe_to_ledger` (there is **no** `upsert_ledger` flag on `compile_transactions_main`). `pipeline/compiler.py` `update_fingerprint_db` does not run when `ledger_db` is set — category truth is on `ledger_transaction`.

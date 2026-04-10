@@ -76,26 +76,80 @@ def update_category_in_fingerprint_db(fingerprint, category):
         log.exception("update_category_in_fingerprint_db failed: %s", e)
 
 
+def _is_holdings_staging_path(path: str) -> bool:
+    return os.path.normcase(os.path.abspath(path)) == os.path.normcase(
+        os.path.abspath(config.holdings_file)
+    )
+
+
 class Compiler:
-    def __init__(self, path_to_main, ledger_db: str | None = None):
-        log.info("Compiler init main_file=%s ledger_db=%s", path_to_main, ledger_db)
-        self.main_file = path_to_main
+    def __init__(self, path_to_main: str | None = None, *, ledger_db: str | None = None):
+        """
+        Transactions path: pass ``ledger_db=config.ledger_db_file`` (``path_to_main`` optional,
+        defaults to ``config.compiled_file`` for merged CSV staging + optional seed from disk).
+
+        Holdings path: ``path_to_main=config.holdings_file``; pass ``ledger_db`` to load/store
+        ``holdings_balance`` in SQLite (merged CSV is staging only).
+        """
+        if ledger_db is None and not path_to_main:
+            raise ValueError("path_to_main is required when not using ledger_db")
+        self.main_file = path_to_main if path_to_main is not None else config.compiled_file
         self.ledger_db = ledger_db
+        self._holdings_ledger = bool(ledger_db and _is_holdings_staging_path(self.main_file))
         self.new_df = pd.DataFrame()
         self.added_transactions = pd.DataFrame()
-        if ledger_db:
+        log.info(
+            "Compiler init main_file=%s ledger_db=%s holdings_ledger=%s",
+            self.main_file,
+            ledger_db,
+            self._holdings_ledger,
+        )
+        if ledger_db and self._holdings_ledger:
+            from pipeline.holdings_csv_import import holdings_long_to_wide
+            from pipeline.holdings_csv_import import load_holdings_long_dataframe
+            from pipeline.ledger import migrate_ledger_db
+
+            migrate_ledger_db(ledger_db)
+            long_df = load_holdings_long_dataframe(ledger_db)
+            self.main_df = holdings_long_to_wide(long_df)
+            log.debug("Loaded holdings wide rows=%s from %s", len(self.main_df), ledger_db)
+            if self.main_df.empty and os.path.isfile(self.main_file):
+                try:
+                    seed = pd.read_csv(self.main_file)
+                except (FileNotFoundError, pandas.errors.EmptyDataError, OSError):
+                    seed = pd.DataFrame()
+                if not seed.empty:
+                    log.info(
+                        "holdings_balance empty: seeding from staging CSV %s (%s wide rows)",
+                        self.main_file,
+                        len(seed),
+                    )
+                    self.main_df = seed
+        elif ledger_db:
             from pipeline.ledger import load_transactions_dataframe_from_ledger
             from pipeline.ledger import migrate_ledger_db
 
             migrate_ledger_db(ledger_db)
             self.main_df = load_transactions_dataframe_from_ledger(ledger_db)
             log.debug("Loaded ledger rows=%s from %s", len(self.main_df), ledger_db)
+            if self.main_df.empty and os.path.isfile(self.main_file):
+                try:
+                    seed = pd.read_csv(self.main_file)
+                except (FileNotFoundError, pandas.errors.EmptyDataError, OSError):
+                    seed = pd.DataFrame()
+                if not seed.empty:
+                    log.info(
+                        "Ledger empty: seeding working state from merged staging CSV %s (%s rows)",
+                        self.main_file,
+                        len(seed),
+                    )
+                    self.main_df = seed
         else:
             try:
                 self.main_df = pd.read_csv(self.main_file)
                 log.debug("Loaded main CSV rows=%s", len(self.main_df))
             except (FileNotFoundError, pandas.errors.EmptyDataError):
-                log.info("Main file missing or empty; starting fresh: %s", path_to_main)
+                log.info("Main file missing or empty; starting fresh: %s", self.main_file)
                 self.main_df = pd.DataFrame()
                 self.main_df.to_csv(self.main_file, index=False)
 
@@ -174,11 +228,11 @@ class Compiler:
             self.main_df.sort_values(by='תאריך', inplace=True)
             self.main_df.reset_index(drop=True, inplace=True)
             self.main_df['תאריך'] = self.main_df['תאריך'].dt.date
-        else:  # In Holdings Mode
-            log.debug("compile_to_main: holdings branch (dedupe by date)")
+        else:  # In Holdings Mode (wide CSV; DB dedupe is on melted (תאריך, activity) keys)
+            log.debug("compile_to_main: holdings branch (wide merge; last row wins per תאריך)")
             concat_df = pd.concat([self.main_df, self.new_df], ignore_index=True)
             concat_df['תאריך'] = parse_post_ingest_date_column(concat_df['תאריך'])
-            concat_df.drop_duplicates(subset=['תאריך'], ignore_index=True, inplace=True, keep='first')
+            concat_df.drop_duplicates(subset=['תאריך'], ignore_index=True, inplace=True, keep='last')
             concat_df.fillna(value=0.0, inplace=True)
             self.main_df = concat_df
             self.main_df['תאריך'] = parse_post_ingest_date_column(self.main_df['תאריך'])
@@ -190,6 +244,12 @@ class Compiler:
         """Deprecated: category data lives on ``ledger_transaction`` when using SQLite."""
         if self.ledger_db:
             log.debug("update_fingerprint_db: skipped (ledger mode)")
+            return
+        if os.path.isfile(config.ledger_db_file):
+            log.debug(
+                "update_fingerprint_db: skipped (ledger DB present at %s)",
+                config.ledger_db_file,
+            )
             return
         if self.added_transactions.empty:
             log.info("Fingerprint DB unchanged (no new transactions).")
@@ -231,10 +291,32 @@ class Compiler:
 
     def save_main(self):
         if self.ledger_db:
+            from pipeline.holdings_csv_import import upsert_holdings_wide_to_ledger
             from pipeline.ledger import upsert_compiled_dataframe_to_ledger
 
+            parent = os.path.dirname(os.path.abspath(self.main_file))
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            self.main_df.to_csv(self.main_file, index=False)
+            if self._holdings_ledger:
+                log.info(
+                    "Wrote merged staging holdings CSV %s (%s rows); upserting holdings_balance",
+                    self.main_file,
+                    len(self.main_df),
+                )
+                upsert_holdings_wide_to_ledger(self.main_df, self.ledger_db)
+                log.info(
+                    "Committed holdings to SQLite %s (holdings_balance rows reflect DB PK dedupe)",
+                    self.ledger_db,
+                )
+                return self.ledger_db
+            log.info(
+                "Wrote merged staging CSV %s (%s rows); upserting into SQLite",
+                self.main_file,
+                len(self.main_df),
+            )
             upsert_compiled_dataframe_to_ledger(self.main_df, self.ledger_db)
-            log.info("Wrote main ledger SQLite %s (%s rows)", self.ledger_db, len(self.main_df))
+            log.info("Committed main ledger SQLite %s (%s rows)", self.ledger_db, len(self.main_df))
             return self.ledger_db
         self.main_df.to_csv(self.main_file, index=False)
         log.info("Wrote main ledger %s (%s rows)", self.main_file, len(self.main_df))

@@ -260,8 +260,11 @@ def compile_holdings_main(*, sink: Optional[Callable[[str], None]] = None) -> No
     if not cleaned:
         _notify("COMPILE HOLDINGS: no CSV in clean dir; skipping", sink)
         return
-    _notify(f"COMPILE HOLDINGS: merging {len(cleaned)} CSV -> {config.holdings_file}", sink)
-    d = compiler.Compiler(config.holdings_file)
+    _notify(
+        f"COMPILE HOLDINGS: merging {len(cleaned)} clean CSV -> {config.holdings_file} + {config.ledger_db_file}",
+        sink,
+    )
+    d = compiler.Compiler(config.holdings_file, ledger_db=config.ledger_db_file)
     d.__compile_new__(config.holdings_clean_dir, suffix="holdings")
     d.compile_to_main()
     d.save_all()
@@ -325,7 +328,7 @@ def compile_transactions_main(
         f"COMPILE TRANSACTIONS: merging {len(cleaned)} clean CSV -> {config.ledger_db_file}",
         sink,
     )
-    c = compiler.Compiler(config.compiled_file, ledger_db=config.ledger_db_file)
+    c = compiler.Compiler(ledger_db=config.ledger_db_file)
     c.__compile_new__(config.transactions_clean_dir, suffix="credit")
     c.compile_to_main()
     _, _ = c.save_all()

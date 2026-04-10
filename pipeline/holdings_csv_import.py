@@ -78,6 +78,109 @@ def load_holdings_wide_csv(path: str) -> pd.DataFrame:
     return wide_holdings_to_long(df)
 
 
+def load_holdings_long_dataframe(db_path: str) -> pd.DataFrame:
+    """All rows in ``holdings_balance`` (dedupe identity = ``(as_of_date, activity_type)``)."""
+    migrate_ledger_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        df = pd.read_sql_query(
+            "SELECT as_of_date, activity_type, balance_ils FROM holdings_balance ORDER BY as_of_date, activity_type",
+            conn,
+        )
+    finally:
+        conn.close()
+    return df
+
+
+def holdings_long_to_wide(long_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Pivot melted holdings to the wide shape used by ``holdings.csv`` staging / Sheets.
+
+    Empty table → empty frame (no columns); compiler + new ingest still work.
+    """
+    if long_df.empty:
+        return pd.DataFrame()
+    work = long_df.copy()
+    work["balance_ils"] = pd.to_numeric(work["balance_ils"], errors="coerce").fillna(0.0)
+    pt = work.pivot_table(
+        index="as_of_date",
+        columns="activity_type",
+        values="balance_ils",
+        aggfunc="last",
+    )
+    out = pt.reset_index().rename(columns={"as_of_date": "תאריך"})
+    out["תאריך"] = pd.to_datetime(out["תאריך"], errors="coerce").dt.date
+    cols = ["תאריך"] + sorted([c for c in out.columns if c != "תאריך"])
+    return out[cols]
+
+
+def upsert_holdings_long(
+    long_df: pd.DataFrame,
+    db_path: str | None = None,
+    *,
+    clear_holdings_first: bool = False,
+) -> dict[str, Any]:
+    """
+    Upsert melted rows into ``holdings_balance``.
+
+    Dedupe uses the table primary key ``(as_of_date, activity_type)`` via
+    ``INSERT OR REPLACE`` — the native database identity for a holdings row.
+    """
+    db = db_path if db_path is not None else config.ledger_db_file
+    migrate_ledger_db(db)
+
+    combined = long_df.copy()
+    if not combined.empty:
+        combined["balance_ils"] = pd.to_numeric(combined["balance_ils"], errors="coerce").fillna(0.0)
+        combined = combined.drop_duplicates(subset=["as_of_date", "activity_type"], keep="last")
+
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        if clear_holdings_first:
+            conn.execute("DELETE FROM holdings_balance")
+            conn.commit()
+        rows: list[tuple[Any, ...]] = []
+        if not combined.empty:
+            sql = """
+            INSERT OR REPLACE INTO holdings_balance (as_of_date, activity_type, balance_ils)
+            VALUES (?,?,?)
+            """
+            rows = [
+                (r["as_of_date"], r["activity_type"], float(r["balance_ils"]))
+                for _, r in combined.iterrows()
+            ]
+            conn.executemany(sql, rows)
+            conn.commit()
+        n = conn.execute("SELECT COUNT(*) FROM holdings_balance").fetchone()[0]
+    finally:
+        conn.close()
+
+    if combined.empty:
+        report = {"parity_ok": True, "expected_logical_rows": 0}
+    else:
+        report = verify_holdings_long(combined, db)
+    report["rows_upserted"] = len(rows)
+    report["holdings_table_count"] = int(n)
+    report["db_path"] = db
+    log.info(
+        "holdings upsert: %s logical rows into %s; table rows=%s parity=%s",
+        len(rows),
+        db,
+        n,
+        report.get("parity_ok"),
+    )
+    return report
+
+
+def upsert_holdings_wide_to_ledger(wide_df: pd.DataFrame, db_path: str | None = None) -> dict[str, Any]:
+    """Melt wide ``holdings.csv``-shaped frame and upsert into ``holdings_balance``."""
+    if wide_df.empty:
+        return upsert_holdings_long(pd.DataFrame(columns=["as_of_date", "activity_type", "balance_ils"]), db_path)
+    long_df = wide_holdings_to_long(wide_df)
+    return upsert_holdings_long(long_df, db_path)
+
+
 def import_holdings_csvs(
     paths: list[str],
     db_path: str | None = None,
@@ -89,44 +192,21 @@ def import_holdings_csvs(
 
     If ``clear_holdings_first`` is True, deletes all rows from ``holdings_balance`` first.
     """
-    db = db_path if db_path is not None else config.ledger_db_file
-    migrate_ledger_db(db)
-
     frames = [load_holdings_wide_csv(p) for p in paths]
     combined = pd.concat(frames, ignore_index=True)
-    # Last file wins on duplicate (as_of_date, activity_type)
     combined = combined.drop_duplicates(subset=["as_of_date", "activity_type"], keep="last")
 
-    conn = sqlite3.connect(db)
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        if clear_holdings_first:
-            conn.execute("DELETE FROM holdings_balance")
-            conn.commit()
-        sql = """
-        INSERT OR REPLACE INTO holdings_balance (as_of_date, activity_type, balance_ils)
-        VALUES (?,?,?)
-        """
-        rows = [
-            (r["as_of_date"], r["activity_type"], float(r["balance_ils"]))
-            for _, r in combined.iterrows()
-        ]
-        conn.executemany(sql, rows)
-        conn.commit()
-        n = conn.execute("SELECT COUNT(*) FROM holdings_balance").fetchone()[0]
-    finally:
-        conn.close()
-
-    report = verify_holdings_long(combined, db)
-    report["rows_upserted"] = len(rows)
-    report["holdings_table_count"] = int(n)
+    db = db_path if db_path is not None else config.ledger_db_file
+    report = upsert_holdings_long(
+        combined,
+        db,
+        clear_holdings_first=clear_holdings_first,
+    )
     report["source_files"] = list(paths)
     log.info(
-        "holdings import: %s logical rows from %s file(s); table rows=%s parity=%s",
-        len(rows),
+        "holdings import: %s file(s) merged → %s logical rows",
         len(paths),
-        n,
-        report.get("parity_ok"),
+        report.get("rows_upserted"),
     )
     return report
 

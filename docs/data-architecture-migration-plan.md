@@ -1,7 +1,7 @@
 # Data architecture migration plan (living document)
 
 **Status:** Active program plan — align implementation with `docs/data-storage-and-pipeline-evaluation.md` (architecture evaluation).  
-**Last updated:** 2026-04-10 — **Repo layout:** single `pipeline/ledger.py` for all ledger DB operations (see Section 1.4); legacy CSV columns **מזהה עסקה** / **תאריך עדכון** vs ledger **fingerprint** / **ingested_at** — see `docs/ledger-merge-ownership.md`, `schema/ledger/README.md`.  
+**Last updated:** 2026-04-10 — **Repo layout:** single `pipeline/ledger.py` for all ledger DB operations (see Section 1.4); **`compile_transactions_main` always passes `ledger_db=config.ledger_db_file`** (no separate `upsert_ledger` flag); legacy CSV columns **מזהה עסקה** / **תאריך עדכון** vs ledger **fingerprint** / **ingested_at** — see `docs/ledger-merge-ownership.md`, `schema/ledger/README.md`. **MIG-E3:** `fingerprint_db.csv` is not read or written when `config.ledger_db_file` exists on disk; legacy CSV-only runs (no ledger file) may still use the sidecar.  
 **Integration branch:** `sqlite` (or your current migration branch). **Data safety:** external copy of `data/` — restore from that if the working tree is corrupted.
 
 **How to use:** Execute phases in order unless a task explicitly allows parallel work. **Update the task tracker table below** as you complete work; keep Section 1.4 (repo assessment) updated when reality changes. Optional: create GitHub Issues with labels `migration` + `MIG-xx` and paste the same IDs for cross-linking.
@@ -47,13 +47,13 @@ Incremental development on branches before that window does not require this dow
 |----|-------|-------|--------|-------|
 | MIG-A1 | A | Architecture traceability matrix | Done | Matrix in Section 1.7 |
 | MIG-A2 | A | Baseline data snapshot procedure | Done | User confirmed external/gold backup 2026-04-10 |
-| MIG-A3 | A | Test baseline run | Done | 2026-04-10: `python -m unittest discover -s tests -p "test_*.py"` — **30** tests, exit 0, repo root (re-baseline after ledger consolidation) |
+| MIG-A3 | A | Test baseline run | Done | 2026-04-10: `python -m unittest discover -s tests -p "test_*.py"` — **32** tests, exit 0, repo root (re-baseline after MIG-E3 guards + tests) |
 | MIG-B1 | B | Backup helper module | Done | `pipeline/backup.py`, `config.backup_parent_dir` → `data/_backups/` |
 | MIG-B2 | B | CLI or control hook (`--backup-first`) | Done | `transactions` / `all` / `both-process`; web control checkbox `p_backup` |
 | MIG-B3 | B | Snapshot manifest (minimal) | Done | `snapshot_manifest.json` + `tests/test_backup_manifest.py` |
 | MIG-B4 | B | Document exclusion rules | Done | Thin snapshot exclusions: Phase B subsection after task table (evaluation Sections 12.2, 13.2) |
 | MIG-C1 | C | Choose DB path and config | Done | `config.ledger_db_file` → `data/ledger.sqlite` under workspace; `/data/` gitignored |
-| MIG-C2 | C | Migration framework | Done | `pipeline/ledger.py` (`migrate_ledger_db`); baseline when `MAX(schema_migrations.version) < 6` |
+| MIG-C2 | C | Migration framework | Done | `pipeline/ledger.py` (`migrate_ledger_db`): empty DB loads `schema/ledger/full_schema.sql`; existing v8+ files step through v9/v10 hand-rolled migrations; target schema **v10** (`_BASELINE_TARGET_VERSION` in code) |
 | MIG-C3 | C | Initial ledger table + UNIQUE(fingerprint) | Done | Baseline DDL from `migrate_ledger_db` + `schema/ledger/full_schema.sql` (not separate migration files) |
 | MIG-C4 | C | Static mappings + holdings tables (one DB; no separate fingerprint_metadata) | Done | Same single DB file: `store` / `store_category`, `similar_category_pair`, `holdings_balance` in `full_schema.sql` |
 | MIG-D1 | D | Import: ledger | Done | `pipeline/ledger.py` (`import_web_totals_to_ledger`, etc.) — all-time `web_totals.csv` → `ledger_transaction`; real `fingerprint` only — v8 nullable, no row-hash substitute |
@@ -61,8 +61,8 @@ Incremental development on branches before that window does not require this dow
 | MIG-D3 | D | Parity report | Done | `pipeline.ledger.verify_ledger_against_csv` (and related checks after `import_web_totals_to_ledger`): row counts, sum בחובה/בזכות, per-row order checks; callers/tests assert parity — **not** a separate maintained script |
 | MIG-D4 | D | Cutover decision log (canonical SQLite) | Not started | Record dates when Done (maintenance window / canonical SQLite / return-to-service); Section 0.1.1 |
 | MIG-E1 | E | Merge specification doc | Done | `docs/ledger-merge-ownership.md` (pipeline vs user columns; §13.1) |
-| MIG-E2 | E | Compiler integration → SQLite | In progress | Opt-in: `compile_transactions_main(upsert_ledger=True)`, CLI `--upsert-ledger`; `pipeline/ledger.py` (`upsert_compiled_dataframe_to_ledger`). Default compile still writes `compiled.csv` only — ledger-primary / optional CSV export next. |
-| MIG-E3 | E | Stop writing fingerprint_db.csv (redundant) | Not started | No merge/import into DB (Section 5); remove or export-only once compiler/categorizer use **`ledger_transaction`** |
+| MIG-E2 | E | Compiler integration → SQLite | Done | `compile_transactions_main` always uses `Compiler(..., ledger_db=config.ledger_db_file)`; `Compiler.save_main` → `upsert_compiled_dataframe_to_ledger` (there is **no** `upsert_ledger` parameter and **no** `--upsert-ledger` CLI). `update_fingerprint_db()` is a no-op when `ledger_db` is set. Main compile output is SQLite, not an authoritative `compiled.csv` refresh. |
+| MIG-E3 | E | Stop writing fingerprint_db.csv (redundant) | Done | When `data/ledger.sqlite` (or `config.ledger_db_file`) **exists**: `Compiler.update_fingerprint_db` and `CategorizeFile.auto_categorize` do **not** read/write `fingerprint_db.csv`. Legacy **CSV-only** workflow (no ledger file on disk) may still use the sidecar until dropped in a later cleanup. |
 | MIG-E4 | E | Divergence detection stub | Not started | |
 | MIG-F1 | F | Migration for timestamps | Not started | |
 | MIG-F2 | F | Align code with schema triggers / timestamp rules | Not started | DDL already in full_schema.sql |
@@ -75,8 +75,8 @@ Incremental development on branches before that window does not require this dow
 | MIG-H2 | H | Upload flow | Not started | Deferred: after local system stable |
 | MIG-H3 | H | Download / restore + divergence | Not started | Deferred: after local system stable |
 | MIG-H4 | H | AWS auth documentation | Not started | Deferred: after local system stable |
-| MIG-I1 | I | Ledger API from DB (web_control) | Not started | |
-| MIG-I2 | I | Categorization UX → DB | Not started | |
+| MIG-I1 | I | Ledger API from DB (web_control) | In progress | Categorize dashboard/API load from SQLite via `pipeline.ledger`; **heatmap** still uses `web/data/web_totals.csv` (not ledger SQL). |
+| MIG-I2 | I | Categorization UX → DB | In progress | `CategorizeFile(ledger_db_path=...)` in PyQt, web jobs, and categorize queue; legacy `file_path` CSV mode remains in code for no-DB scenarios. |
 | MIG-I3 | I | Reports | Not started | |
 | MIG-J1 | J | Remove authoritative static CSV edits | Not started | |
 | MIG-J2 | J | Developer documentation | Not started | |
@@ -109,15 +109,15 @@ Move the finance project toward the **target architecture** in the evaluation do
 
 ### 1.4 Current repository assessment (2026-04-10)
 
-**Configuration (`config.py`).** Runtime paths are centralized: `data/export/compiled/compiled.csv` is the merged transactions output; `data/static/` holds `stores_to_categories.csv`, `similar_pairs.csv`, and (until **MIG-E3**) legacy **`fingerprint_db.csv`** — a **redundant** category sidecar vs **`ledger_transaction.קטגוריה`** (Section 5; **no** SQLite import); `web/data/web_totals.csv` supports the heatmap. `FINANCE_WORKSPACE_ROOT` isolates data for tests or experiments. Desktop Google Sheets tab names default to **calendar-year suffixes** (`Totals{year}`, `Holdings{year}`), while a separate env-driven name (`FINANCE_TOTALS_SHEET_NAME`, default `Totals`) documents the **all-time** tab used for web-side totals — a **dual naming model** that must be rationalized when moving to **one full-ledger tab** (evaluation Section 12.3).
+**Configuration (`config.py`).** Runtime paths are centralized: `data/export/compiled/compiled.csv` is the merged transactions output; `data/static/` holds `stores_to_categories.csv`, `similar_pairs.csv`, and (legacy, **CSV-only** when no ledger file) **`fingerprint_db.csv`** — redundant vs **`ledger_transaction.קטגוריה`** when the ledger exists (**MIG-E3**); `web/data/web_totals.csv` supports the heatmap. `FINANCE_WORKSPACE_ROOT` isolates data for tests or experiments. Desktop Google Sheets tab names default to **calendar-year suffixes** (`Totals{year}`, `Holdings{year}`), while a separate env-driven name (`FINANCE_TOTALS_SHEET_NAME`, default `Totals`) documents the **all-time** tab used for web-side totals — a **dual naming model** that must be rationalized when moving to **one full-ledger tab** (evaluation Section 12.3).
 
 **Ledger module (`pipeline/ledger.py`).** All SQLite ledger operations live in **one** module (no separate `ledger_migrate`, `web_totals_import`, or `static_store_import` packages). It includes: **`migrate_ledger_db`** (hand-rolled steps + baseline `schema/ledger/full_schema.sql`); **constraint audit** (`audit_ledger_constraints`, `format_report`); **dataframe I/O** (`load_transactions_dataframe_from_ledger`, `export_transactions_dataframe_to_csv`, store/backup loaders); **category update** (`update_category_by_fingerprint`); **fingerprint NULL backfill** (`backfill_null_fingerprints`, etc.); **web totals path** (`import_web_totals_to_ledger`, `load_web_totals_dataframe`, `verify_ledger_against_csv`, shared row helpers `_normalize_date_text` / `_float_col` / `_text_or_none`); **static store / similar pairs** (`import_stores_to_ledger`, `sync_stores_to_ledger_from_dataframe`, CSV loaders); **compile upsert** (`upsert_compiled_dataframe_to_ledger`). Call sites import from **`pipeline.ledger`** only. **`pipeline/folder_tracking.py`** was removed (unused `FolderTracker`; SSE logger list in `web_control` updated accordingly).
 
-**Pipeline entrypoints.** `pipeline.compile_transactions_main` and related functions in `pipeline/__init__.py` drive compile; `apps/pipeline_cli.py` exposes CLI commands; `apps/qt_main.py` wires PyQt actions; `web_control/jobs.py` runs pipeline actions from the local control server. **SQLite:** `config.ledger_db_file` and `pipeline.ledger.migrate_ledger_db` create/upgrade the ledger DB from `schema/ledger/full_schema.sql`; **compile and UI paths still treat CSV as authoritative** until Phase D cutover (Section 1.6).
+**Pipeline entrypoints.** `pipeline.compile_transactions_main` and related functions in `pipeline/__init__.py` drive compile; `apps/pipeline_cli.py` exposes CLI commands; `apps/qt_main.py` wires PyQt actions; `web_control/jobs.py` runs pipeline actions from the local control server. **SQLite:** `config.ledger_db_file` and `pipeline.ledger.migrate_ledger_db` create/upgrade the ledger DB from `schema/ledger/full_schema.sql`. **`compile_transactions_main` always passes `ledger_db` into `Compiler`; `save_main` upserts into SQLite** (not a refresh of `compiled.csv` as the merge output). **Categorization** in PyQt and web control uses `CategorizeFile(ledger_db_path=...)` against that DB. **Heatmap** still loads **`web/data/web_totals.csv`** (Sheets-derived), not the ledger. **MIG-D4** (signed cutover note) is still **not** recorded — treat as operational/process gap vs. what the code already does.
 
 **Scripts (`scripts/`).** Maintenance CLIs for **backfill**, **one-shot import**, and **compiled-date repair** were **removed** from the repo (logic remains in `pipeline.ledger` and tests). **Remaining** entrypoints: `verify_ledger_integrity.py` (wraps `audit_ledger_constraints`), `run_categorize_http_workspace.py`, `web_control_restart.py` — see root `README.md`.
 
-**Tests.** `tests/` contains `unittest`-style modules (for example `test_workspace_config.py`, `test_pipeline_date_roundtrip.py`, `test_categorization_logic.py`, `test_ledger_migrate.py`, `test_web_totals_import.py`, `test_static_store_import.py` — all exercising **`pipeline.ledger`**). **pytest is not listed in `requirements.txt`**; verification should use **`python -m unittest discover`** unless the project adds pytest later. **Current baseline:** **30** tests passing from repo root (`python -m unittest discover -s tests -p "test_*.py"`).
+**Tests.** `tests/` contains `unittest`-style modules (for example `test_workspace_config.py`, `test_pipeline_date_roundtrip.py`, `test_categorization_logic.py`, `test_ledger_migrate.py`, `test_web_totals_import.py`, `test_static_store_import.py` — all exercising **`pipeline.ledger`**). **pytest is not listed in `requirements.txt`**; verification should use **`python -m unittest discover`** unless the project adds pytest later. **Current baseline:** **32** tests passing from repo root (`python -m unittest discover -s tests -p "test_*.py"`).
 
 **Google Sheets.** `integrations/google_sheets.py` implements **bidirectional** sync (`update_local`, `update_cloud`, sync checks). PyQt exposes **manual** pull and push buttons (user-initiated, but not necessarily a **second confirmation step**). **`web_control/totals_sheet_sync.ensure_totals_csv_present`** pulls from Sheets **automatically** when `web_totals.csv` is missing or empty — this **conflicts** with evaluation Section 12 (**no silent / implicit cloud sync** for operational state). **Resolution:** treat auto-pull as **technical debt** to remove or gate behind explicit user confirmation in the migration.
 
@@ -129,7 +129,7 @@ Move the finance project toward the **target architecture** in the evaluation do
 
 | Topic | Evaluation stance | Current code / behavior | Recommended action |
 |--------|-------------------|-------------------------|----------------------|
-| Canonical store | SQLite ledger (evaluation Sections 6, 10, 13.10) | `compiled.csv` and legacy **`fingerprint_db.csv`** (redundant category copy vs ledger) | Execute SQLite phases below; **`schema/ledger/full_schema.sql`** is the target DDL; **`fingerprint_db.csv` is not merged into SQLite** (Section 5); CSV as **export/interchange** only after cutover. |
+| Canonical store | SQLite ledger (evaluation Sections 6, 10, 13.10) | **Compile/categorize** avoid **`fingerprint_db.csv`** when a ledger DB file exists; **`compiled.csv` may lag** or serve legacy/export; **CSV-only** runs without a ledger file may still use the legacy sidecar | **`schema/ledger/full_schema.sql`** is the target DDL; **`fingerprint_db.csv` is not merged into SQLite** (Section 5). **MIG-E3** done for ledger-present paths. |
 | Sheets direction | Push-only, optional view (evaluation Sections 10, 12.3, 13.5) | Bidirectional `GSLink` flows | Deprecate pulls after SQLite cutover; implement **single-tab push** from DB. |
 | Deliberate sync | Explicit confirm for pull/push (evaluation Section 12) | PyQt pull/push are manual; **heatmap** may **auto-pull** totals CSV | Remove or **confirm-gate** `ensure_totals_csv_present` network access. |
 | One tab full ledger | One sheet for full history (evaluation Section 12.3) | Desktop sync still uses **year-suffixed** tabs | Migrate desktop sync to **one tab** or document a single source of truth for tab names. |
@@ -137,7 +137,7 @@ Move the finance project toward the **target architecture** in the evaluation do
 
 ### 1.6 Reference SQLite DDL (bootstrap script)
 
-The canonical bootstrap script is **`schema/ledger/full_schema.sql`**; **`schema/ledger/README.md`** explains ISO dates, `STRICT`, and local-time trigger defaults. The DDL defines **`ledger_transaction`** (including **`fingerprint`**, **`notes`**, evaluation Section 13.9 timestamps; **no** **`מזהה עסקה`** row-hash column), **`store`** / **`store_category`** (with static-store enforcement triggers), **`similar_category_pair`**, **`holdings_balance`**, and timestamp triggers. There is **no** `fingerprint_metadata` table — categories live on the ledger row. **One-shot imports** (via `pipeline/ledger.py` web-totals and static-store helpers, `pipeline/holdings_csv_import`) can fill the ledger (MIG-D1), static mappings (MIG-D2), and holdings; **day-to-day compile/categorizer paths** still treat CSV as authoritative until Phase D cutover (MIG-D4) and later compiler work (Phase E).
+The canonical bootstrap script is **`schema/ledger/full_schema.sql`**; **`schema/ledger/README.md`** explains ISO dates, `STRICT`, and local-time trigger defaults. The DDL defines **`ledger_transaction`** (including **`fingerprint`**, **`notes`**, evaluation Section 13.9 timestamps; **no** **`מזהה עסקה`** row-hash column), **`store`** / **`store_category`** (with static-store enforcement triggers), **`similar_category_pair`**, **`holdings_balance`**, and timestamp triggers. There is **no** `fingerprint_metadata` table — categories live on the ledger row. **One-shot imports** (via `pipeline/ledger.py` web-totals and static-store helpers, `pipeline/holdings_csv_import`) can fill the ledger (MIG-D1), static mappings (MIG-D2), and holdings. **Ongoing compile** (Phase E) **writes the ledger** via `upsert_compiled_dataframe_to_ledger`; **MIG-D4** remains the formal “canonical SQLite / return-to-service” log entry, not a gate that blocks the current code path.
 
 ### 1.7 Architecture traceability matrix (MIG-A1)
 
@@ -277,7 +277,7 @@ If you implement thin mode in tooling, record **included and excluded path patte
 
 **Merge rules (MIG-E1):** **`docs/ledger-merge-ownership.md`** — pipeline-updatable vs user-owned columns for upserts; aligns with evaluation Section 13.1.
 
-**Goal.** Change **`compile_transactions_main`** (and related) so **new compiles** upsert into SQLite by **fingerprint**, following merge rules to be **codified** (evaluation Section 13.1: pipeline vs user fields).
+**Goal.** **`compile_transactions_main`** upserts **new compiles** into SQLite by **fingerprint** via **`upsert_compiled_dataframe_to_ledger`** (merge rules in **`docs/ledger-merge-ownership.md`**, evaluation Section 13.1). Remaining Phase E work: **MIG-E3** (remove legacy **`fingerprint_db.csv`** / CSV-only branches), **MIG-E4** (divergence stub).
 
 | ID | Title | Description | Dependencies | Owner | Acceptance criteria | Risk |
 |----|--------|-------------|--------------|-------|---------------------|------|
@@ -364,7 +364,7 @@ If you implement thin mode in tooling, record **included and excluded path patte
 
 | ID | Title | Description | Dependencies | Owner | Acceptance criteria | Risk |
 |----|--------|-------------|--------------|-------|---------------------|------|
-| MIG-I1 | Ledger API from DB | Read paths in `web_control` use **SQLite** queries instead of `compiled.csv` where applicable. | Phase E | Implementer | Heatmap and categorization use same counts as DB. | High |
+| MIG-I1 | Ledger API from DB | Read paths in `web_control` use **SQLite** for categorize queue/summary; **heatmap** still loads **`web_totals.csv`** until Totals are read from the ledger or a single export path. | Phase E | Implementer | Categorization views consistent with DB; heatmap aligned with DB **or** documented as Sheets mirror only. | High |
 | MIG-I2 | Categorization UX | Wire categorizer to **update DB** with timestamp rules (Phase F). | MIG-I1, Phase F | Implementer | E2E manual: category persists after restart. | High |
 | MIG-I3 | Reports | Add or migrate **saved SQL** / Python reports per evaluation Section 10 and Section 12 reports stance. | MIG-I1 | Implementer | At least one report documented with command. | Low |
 
@@ -400,7 +400,7 @@ The following tasks **block** the most downstream work:
 
 1. **MIG-C1–C4** — SQLite file, baseline migrations (`migrate_ledger_db` + `full_schema.sql`), ledger + mappings + holdings DDL (everything else assumes a DB).
 2. **MIG-D1** — Successful **one-shot** ledger import (unlocks safe pipeline rewiring).
-3. **MIG-E2** — Compiler writing to SQLite (enables web, Sheets from DB, timestamp rules).
+3. **MIG-E2** — Compiler → SQLite (**done** in code). Next on this spine: **MIG-E3–E4**, then web/Sheets consumers.
 4. **MIG-G2–G3** — Push-only Sheets and **single-tab** clarity (aligns public view with evaluation Section 12.3).
 5. **MIG-H3** — Safe restore with **divergence** detection (multi-machine story, evaluation Section 12.1) — **only when Phase H is scheduled**; not on the critical path until local migration is stable.
 
@@ -468,7 +468,7 @@ These replace the former open-items list; reopen only if implementation uncovers
 - **Context:** Production data lives under `data/export/compiled/` and `data/static/` per `config.py`.
 - **Tasks:** Deterministic import path; **MIG-D3** parity report vs source CSV; duplicate fingerprint handling **fails loud**; then **remove authoritative CSV path** in the same implementing track (no stabilization window — Section 5). **Progress:** MIG-D1 ledger import and **MIG-D2** static mappings (`pipeline.ledger`) **Done**; **`fingerprint_db.csv`** is **not** part of import (**Section 5**).
 - **Constraints:** Align with evaluation Section 12.3 spirit (one-shot); **author decision:** no post-import dual-write.
-- **Done when:** Counts and spot checks pass; pipeline targets DB only for ledger/mappings.
+- **Done when:** Counts and spot checks pass; mainline compile/categorize paths use the ledger DB for ledger/mappings (legacy CSV-only branches may remain until MIG-E3/J1).
 
 **Brief: Phase G — Sheets push-only**
 
@@ -502,3 +502,5 @@ After each merged change set, update **Sections 1.4 and 1.6** if the repo or ref
 | 2026-04-10 | Section 0.1.1 **Cutover operations (maintenance window)** — no transition period; downtime through migration + testing; Section 5 decision #7; Phase D cutover policy bullet 3. |
 | 2026-04-10 | Clarified in `schema/ledger/README.md`, `docs/ledger-merge-ownership.md`, evaluation §13.4: **מזהה עסקה** and **תאריך עדכון** are not `ledger_transaction` columns; **ingested_at** / **fingerprint** are canonical in SQLite. |
 | 2026-04-10 | **Ledger consolidation:** merged former `ledger_migrate`, `ledger_category`, `ledger_dataframe`, `ledger_fingerprint_backfill`, `ledger_constraint_audit`, `ledger_compile_upsert`, `web_totals_import`, and `static_store_import` into **`pipeline/ledger.py`**; all imports use **`pipeline.ledger`**. **Removed** unused **`pipeline/folder_tracking.py`**. **Scripts cleanup:** removed maintained CLIs for backfill, CSV→ledger imports, and compiled-date repair; retained `verify_ledger_integrity.py`, `run_categorize_http_workspace.py`, `web_control_restart.py`. **Docs:** `README.md`, `schema/ledger/README.md`, `docs/ledger-merge-ownership.md` updated for paths. **Tests:** unittest baseline **30** tests; tracker MIG-A3 / MIG-D3 notes and **Section 1.4** (repository assessment) rewritten to match. |
+| 2026-04-10 | **Reality check:** Tracker and Sections 0–1 aligned with repo — **MIG-C2** notes (v10 migrations; superseded old “max version before baseline” wording); **MIG-E2** **Done** (no `upsert_ledger` / `--upsert-ledger`; compile always passes `ledger_db`); **MIG-E3** **Done** (ledger-present paths skip `fingerprint_db.csv`); **MIG-I1/I2** **In progress**; **MIG-D4** still **Not started**; heatmap remains **`web_totals.csv`**-based. Superseded by next row for unittest count. |
+| 2026-04-10 | **MIG-E3 Done:** `categorization/categorizer.py` (`_use_legacy_fingerprint_csv_sidecar`), `pipeline/compiler.py` (`update_fingerprint_db` skips when `config.ledger_db_file` exists); tests `test_auto_categorize_does_not_read_fingerprint_sidecar_when_ledger_file_exists`, `test_update_fingerprint_db_does_not_write_sidecar_when_ledger_file_exists`. Unittest baseline **32**. Section 1.5 row updated. |
