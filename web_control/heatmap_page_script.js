@@ -17,13 +17,10 @@
     function applySourceToolbar(data) {
       const st = data && data.sourceStatus;
       if (!st) return;
-      const can = !!st.configured;
-      refreshBtn.disabled = !can;
-      refreshBtn.title = can
-        ? ('Read-only pull from all-time cloud tab "' + (st.sheet_name || 'Totals') + '"')
-        : 'Set GOOGLE_API_USER and GOOGLE_WORKSHEET_ID to enable refresh';
-      if (!data.ok && !can) {
-        refreshStatus.textContent = 'Sheets API not configured (env vars missing or credentials file not found).';
+      refreshBtn.disabled = st.ledger_exists === false;
+      refreshBtn.title = 'Clear cache and reload from SQLite ledger';
+      if (!data.ok && st.ledger_exists === false) {
+        refreshStatus.textContent = 'Ledger missing — compile the pipeline to create ledger.sqlite.';
       }
     }
 
@@ -187,14 +184,17 @@
             gridEl.innerHTML = '';
             statsCat.innerHTML = '';
             statsMonth.innerHTML = '';
-            if (data.sourceStatus && data.sourceStatus.configured) {
-              refreshStatus.textContent = 'Use Refresh to pull from Google Sheet.';
+            if (data.sourceStatus && data.sourceStatus.ledger_exists === false) {
+              refreshStatus.textContent = 'No ledger.sqlite — run compile first.';
             }
             return;
           }
           showErr('');
-          refreshStatus.textContent = 'Synced file: ' + (data.source || '') +
-            ' — tab «' + ((data.sourceStatus && data.sourceStatus.sheet_name) || '') + '»';
+          var st = data.sourceStatus || {};
+          refreshStatus.textContent = 'Ledger: ' + (st.ledger_path || data.source || '') +
+            (typeof st.transaction_count === 'number' && st.transaction_count >= 0
+              ? (' · ' + st.transaction_count + ' rows')
+              : '');
           setView(currentView);
         })
         .catch(function (e) {
@@ -205,7 +205,7 @@
 
     refreshBtn.addEventListener('click', function () {
       refreshBtn.disabled = true;
-      refreshStatus.textContent = 'Fetching from Google…';
+      refreshStatus.textContent = 'Reloading from ledger…';
       fetchJson('/heatmap/api/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

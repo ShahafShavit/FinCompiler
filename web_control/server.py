@@ -193,13 +193,12 @@ _DASHBOARD_HTML = (
   </div>
 
   <div class="card">
-    <h2>Google Sheets (desktop sync)</h2>
-    <p class="hint">Year-style tabs match the PyQt app (e.g. <code>Holdings2026</code>, <code>Totals2026</code>). <strong>Preview</strong> compares each tab to local CSVs and lists mismatches before merge. Pull/push run the same checks unless <strong>Force</strong> is checked (overwrites local on pull or cloud on push despite differences). The heatmap&apos;s all-time totals tab is separate — refresh it from <a href="/heatmap/">Heatmap → Refresh</a>.</p>
+    <h2>Google Sheets (push only)</h2>
+    <p class="hint"><strong>Preview</strong> compares each worksheet to local data (holdings CSV + SQLite ledger export for Totals when <code>ledger.sqlite</code> exists). <strong>Push</strong> updates the cloud; there is no pull. Use <strong>Force</strong> to push even when preview reports differences. Heatmap reads from the ledger — <a href="/heatmap/">/heatmap/</a>.</p>
     <p id="sheets_status" class="hint"></p>
-    <label class="row"><input type="checkbox" id="sheets_force"/> <strong>Force</strong> — apply pull/push even when preview reports problems</label>
+    <label class="row"><input type="checkbox" id="sheets_force"/> <strong>Force</strong> — push even when preview reports problems</label>
     <div style="margin-top:0.65rem">
       <button type="button" id="btn_sheets_preview" class="secondary">Preview sync</button>
-      <button type="button" id="btn_sheets_pull">Pull from Sheets</button>
       <button type="button" id="btn_sheets_push">Push to Sheets</button>
     </div>
     <pre id="sheets_out" aria-live="polite"></pre>
@@ -275,7 +274,7 @@ _DASHBOARD_HTML = (
   }
 
   function setSheetsBusy(b) {
-    ['btn_sheets_preview', 'btn_sheets_pull', 'btn_sheets_push'].forEach((id) => {
+    ['btn_sheets_preview', 'btn_sheets_push'].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.disabled = b;
     });
@@ -337,7 +336,6 @@ _DASHBOARD_HTML = (
       setSheetsBusy(false);
     }
   }
-  document.getElementById('btn_sheets_pull').onclick = () => postSheets('pull');
   document.getElementById('btn_sheets_push').onclick = () => postSheets('push');
 
   async function postJob(action, options) {
@@ -714,20 +712,21 @@ def make_handler_class(state: ControlState):
                 if clen > 0:
                     self.rfile.read(clen)
 
-                from web_control import totals_sheet_sync
-
                 try:
-                    ok, msg = totals_sheet_sync.refresh_totals_from_cloud()
+                    heatmap.invalidate_bundle_cache()
                 except Exception:  # noqa: BLE001
                     log.exception("POST /heatmap/api/refresh failed")
                     self._send(
                         500,
-                        _json_bytes_strict({"ok": False, "message": "Refresh failed (see server log)."}),
+                        _json_bytes_strict({"ok": False, "message": "Reload failed (see server log)."}),
                         "application/json; charset=utf-8",
                     )
                     return
-                code = 200 if ok else 502
-                self._send(code, _json_bytes_strict({"ok": ok, "message": msg}), "application/json; charset=utf-8")
+                self._send(
+                    200,
+                    _json_bytes_strict({"ok": True, "message": "Reloaded heatmap data from SQLite ledger."}),
+                    "application/json; charset=utf-8",
+                )
                 return
 
             if path.startswith("/categorize/"):
@@ -756,7 +755,7 @@ def make_handler_class(state: ControlState):
                 self._send(200, _json_bytes_strict(snap), "application/json; charset=utf-8")
                 return
 
-            if path in ("/api/sheets/pull", "/api/sheets/push"):
+            if path == "/api/sheets/push":
                 from web_control import desktop_sheets_api
 
                 clen = int(self.headers.get("Content-Length", "0") or "0")
@@ -772,10 +771,7 @@ def make_handler_class(state: ControlState):
                     return
                 opts = data if isinstance(data, dict) else {}
                 force = bool(opts.get("force"))
-                if path == "/api/sheets/pull":
-                    ok, msg, preview = desktop_sheets_api.api_pull(force=force)
-                else:
-                    ok, msg, preview = desktop_sheets_api.api_push(force=force)
+                ok, msg, preview = desktop_sheets_api.api_push(force=force)
                 payload: dict = {"ok": ok, "message": msg}
                 if preview is not None:
                     payload["preview"] = preview

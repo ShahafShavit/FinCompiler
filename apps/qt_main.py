@@ -81,9 +81,8 @@ def _clear_files_in_dir(folder: str) -> None:
 
 
 def ui():
-    current_year = str(int(datetime.datetime.now().year))
-    holdings_sheetname = "Holdings" + current_year
-    totals_sheetname = "Totals" + current_year
+    holdings_sheetname = config.desktop_holdings_sheet_name()
+    totals_sheetname = config.desktop_totals_sheet_name()
 
     def delete_old_files():
         check_sync()
@@ -119,9 +118,23 @@ def ui():
         pipeline.compile_holdings_main(sink=_pipeline_sink)
 
     def push_holdings():
+        reply = QtWidgets.QMessageBox.question(
+            MainWindow,
+            "Push to Google Sheets",
+            f"Push local holdings CSV to worksheet «{holdings_sheetname}»?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
         gsh = google_sheets.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = google_sheets.GSLink(gsh)
-        gslink.update_cloud([holdings_sheetname], [config.holdings_file], special_columns=[1, 2, 3, 5])
+        gslink.update_cloud(
+            [holdings_sheetname],
+            [config.holdings_file],
+            special_columns=[1, 2, 3, 5],
+            confirm=False,
+        )
 
     @log_process
     def grab_transactions():
@@ -166,11 +179,20 @@ def ui():
 
     @log_process
     def push_transactions():
+        reply = QtWidgets.QMessageBox.question(
+            MainWindow,
+            "Push to Google Sheets",
+            f"Push the SQLite ledger (exported) to worksheet «{totals_sheetname}»?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
         gsh = google_sheets.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = google_sheets.GSLink(gsh)
         path = _materialize_totals_csv_for_sheets()
         try:
-            gslink.update_cloud([totals_sheetname], [path], special_columns=[3, 5])
+            gslink.update_cloud([totals_sheetname], [path], special_columns=[3, 5], confirm=False)
         finally:
             try:
                 os.remove(path)
@@ -200,33 +222,16 @@ def ui():
                 pass
 
     @log_process
-    def pull_data():
-        import pandas as pd
-
-        from pipeline.ledger import upsert_compiled_dataframe_to_ledger
-
-        gsh = google_sheets.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
-        gslink = google_sheets.GSLink(gsh)
-        path = _materialize_totals_csv_for_sheets()
-        try:
-            gslink.update_local(
-                [holdings_sheetname, totals_sheetname],
-                [config.holdings_file, path],
-            )
-        finally:
-            if os.path.isfile(path):
-                try:
-                    df = pd.read_csv(path)
-                    upsert_compiled_dataframe_to_ledger(df, config.ledger_db_file)
-                except Exception:
-                    _py_log.exception("Importing pulled totals into ledger failed")
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-
-    @log_process
     def push_data():
+        reply = QtWidgets.QMessageBox.question(
+            MainWindow,
+            "Push to Google Sheets",
+            f"Push holdings and ledger (exported) to «{holdings_sheetname}» and «{totals_sheetname}»?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
         gsh = google_sheets.GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
         gslink = google_sheets.GSLink(gsh)
         path = _materialize_totals_csv_for_sheets()
@@ -234,6 +239,7 @@ def ui():
             gslink.update_cloud(
                 [holdings_sheetname, totals_sheetname],
                 [config.holdings_file, path],
+                confirm=False,
             )
         finally:
             try:
@@ -302,7 +308,8 @@ def ui():
     check_sync_btn.clicked.connect(check_sync)
 
     pull_data_btn = MainWindow.findChild(QtWidgets.QPushButton, "pullData")
-    pull_data_btn.clicked.connect(pull_data)
+    if pull_data_btn:
+        pull_data_btn.hide()
 
     push_data_btn = MainWindow.findChild(QtWidgets.QPushButton, "pushData")
     push_data_btn.clicked.connect(push_data)

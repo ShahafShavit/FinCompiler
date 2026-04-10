@@ -13,7 +13,6 @@ import matplotlib as mpl
 # Assuming 'config', 'gs_handler' are in the same directory or accessible
 import config
 
-from integrations.google_sheets import GSLink, GoogleSheetsHandler
 from pipeline.compiler import parse_post_ingest_date_column
 
 
@@ -548,12 +547,8 @@ class InteractiveReportGenerator:
 
 
 if __name__ == '__main__':
-    # Ensure Google API credentials and worksheet ID are set correctly in config.py
-    gsh = GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
-    gslink = GSLink(gsh)
-    # This part pulls data from Google Sheets; ensure it's configured correctly
-    gslink.update_local(["Totals"], [config.web_totals_file], rows=5000, regular_data=False)
-
+    # Heatmap uses ``ledger.sqlite`` via ``web_control.heatmap``; this Plotly path still reads
+    # ``web_totals_file`` if you point ``data_file=`` at an export from the ledger.
     report_generator = InteractiveReportGenerator(
         data_file=config.web_totals_file,
         web_dir=config.web_dir,

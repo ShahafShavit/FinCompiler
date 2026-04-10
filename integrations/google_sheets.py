@@ -10,7 +10,6 @@ import tabulate
 from oauth2client.service_account import ServiceAccountCredentials
 import config
 import categorization.categorizer as categorizer
-from categorization import maintenance
 from pipeline import compiler as compile_handler
 import gspread.utils
 from googleapiclient.discovery import build
@@ -109,33 +108,6 @@ class GoogleSheetsHandler:
 class GSLink:
     def __init__(self, gs_handler: GoogleSheetsHandler):
         self.handler = gs_handler
-
-    def pull_sheet_readonly_to_csv(
-        self,
-        sheet_name: str,
-        dest_path: str,
-        *,
-        cell_range: str = "A1:ZZ",
-    ) -> tuple[bool, str]:
-        """
-        Read-only export from Google Sheets to CSV (no prompts, no categorizer updates).
-        """
-        try:
-            df = self.handler.fetch_worksheet_as_dataframe(sheet_name, cell_range)
-        except FileNotFoundError as e:
-            return False, str(e)
-        except Exception as e:  # noqa: BLE001
-            return False, f"{type(e).__name__}: {e}"
-        if df.empty:
-            return False, f"Worksheet {sheet_name!r} is empty or has no data rows"
-        for column in df.columns:
-            try:
-                df[column] = df[column].apply(pd.to_numeric)
-            except ValueError:
-                pass
-        Path(dest_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(dest_path, index=False)
-        return True, f"Pulled {len(df)} rows from sheet {sheet_name!r} → {dest_path}"
 
     def _sheet_pair_report(
         self,
@@ -305,60 +277,6 @@ class GSLink:
 
         return {"ok": all_ok, "issues": issues, "sheets": sheets_out}
 
-    def pull_desktop_sync_from_cloud(
-        self,
-        sheets: list,
-        compiled_files: list,
-        *,
-        cell_range: str = "A1:ZZ",
-        regular_data: bool = True,
-        force: bool = False,
-    ) -> tuple[bool, str, dict | None]:
-        """
-        Pull Holding/Totals-style tabs to local CSVs (same side effects as :meth:`update_local` when
-        ``regular_data`` is true). When ``force`` is false, requires :meth:`analyze_sync` to pass first.
-
-        Returns ``(success, message, preview_report)`` — ``preview_report`` is the structured
-        :meth:`analyze_sync` output when the operation is blocked by a failed sync check.
-        """
-        if not force:
-            rep = self.analyze_sync(sheets, compiled_files, cell_range=cell_range, for_cli=False)
-            if not rep["ok"]:
-                return (
-                    False,
-                    "Sync check failed: local data and Google Sheets do not match or the structure is wrong. "
-                    "Use Preview in the web UI, fix mismatches, or retry with force if you accept overwriting local.",
-                    rep,
-                )
-
-        for sheet_name, compiled_file in zip(sheets, compiled_files):
-            df = self.handler.fetch_worksheet_as_dataframe(sheet_name, cell_range)
-
-            for column in df.columns:
-                try:
-                    df[column] = df[column].apply(pd.to_numeric)
-                except ValueError:
-                    pass
-
-            # Legacy Sheets/CSV path: row-hash column (not ledger fingerprint). Prefer fingerprint-based flows for SQLite.
-            if "מזהה עסקה" in df.columns and regular_data:
-                for index, row in df.iterrows():
-                    maintenance.category_store_link_backup(
-                        transaction_id=row["מזהה עסקה"], category=row["קטגוריה"]
-                    )
-                    maintenance.update_store_category(
-                        store_name=row["מקור עסקה"], category=row["קטגוריה"]
-                    )
-                df.to_csv(compiled_file, index=False)
-                maintenance.fix_similar_categories_in_file()
-                maintenance.fix_null_category_status()
-
-            print(f"Pulled data for {sheet_name}")
-            Path(compiled_file).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-            df.to_csv(compiled_file, index=False)
-
-        return True, "Pulled all configured sheets from Google Sheets to local CSVs.", None
-
     def push_local_csvs_to_cloud(
         self,
         sheets: list,
@@ -400,38 +318,12 @@ class GSLink:
             return True, f"Pushed sheets; skipped missing file(s): {', '.join(skipped)}", None
         return True, "Pushed all local CSVs to Google Sheets.", None
 
-    def update_local(self, sheets: list, compiled_files:list, rows = 1000, regular_data = True):
-        if regular_data:
-            self.sync_check(sheets, compiled_files)
-        input("Are you sure you want to PULL data from the cloud?")
-        for sheet_name, compiled_file in zip(sheets, compiled_files):
-            df = self.handler.get_sheet(sheet_name, "A1:Z", rows=rows)
-            for column in df.columns:
-                try:
-                    df[column] = df[column].apply(pd.to_numeric)
-                except ValueError:
-                    pass
-
-            # Legacy: מזהה עסקה is a CSV row hash, not stored on ledger_transaction.
-            if 'מזהה עסקה' in df.columns and regular_data:
-                for index, row in df.iterrows():
-                    maintenance.category_store_link_backup(transaction_id=row['מזהה עסקה'],
-                                                                          category=row['קטגוריה'])
-                    maintenance.update_store_category(store_name=row['מקור עסקה'],
-                                                                     category=row['קטגוריה'])
-                df.to_csv(compiled_file, index=False)
-                maintenance.fix_similar_categories_in_file()
-                maintenance.fix_null_category_status()
-
-
-            print(f"Pulled data for {sheet_name}")
-            df.to_csv(compiled_file, index=False)
-
-    def update_cloud(self, sheets, compiled_files, special_columns=None):
+    def update_cloud(self, sheets, compiled_files, special_columns=None, *, confirm: bool = True):
         if special_columns is None:
             special_columns = []
         self.sync_check(sheets, compiled_files)
-        input("Are you sure you want to PUSH data the cloud?")
+        if confirm:
+            input("Are you sure you want to PUSH data the cloud?")
         for sheet_name, compiled_file in zip(sheets, compiled_files):
             try:
                 df = pd.read_csv(compiled_file)
@@ -596,11 +488,8 @@ if __name__ == "__main__":
 
     gslink = GSLink(gsh)
     # gslink.update_cloud(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])
-
-    # gslink.update_local(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])
     # categorizer.CategorizeFile.fix_similar_categories_in_file()
     # gslink.sync_check(['Holdings2', 'Totals2'], [config.holdings_file, config.compiled_file])
-    # gslink.update_local(['Holdings2', 'Totals2'], [config.holdings_file, config.compiled_file])
     # print(tabulate.tabulate(pivoted, headers='keys', showindex=True, tablefmt='plain'))
     # gsh.update_sheet(pivoted, "Monthly Look")
     push_monthly_look(gsh)

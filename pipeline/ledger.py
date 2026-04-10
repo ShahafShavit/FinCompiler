@@ -11,6 +11,8 @@ Older DBs (v7 or below) require deleting ``ledger.sqlite`` and re-importing (see
 **v10** — single ``fingerprint`` column (same values as former ``fingerprint_v2``): drop legacy ``fingerprint``,
 rename ``fingerprint_v2`` → ``fingerprint``. Requires SQLite 3.35+ (``ALTER TABLE DROP COLUMN``).
 
+**v11** — recompute ``fingerprint`` after normalizing optional text (``None`` vs ``NaN``); merge duplicate rows.
+
 Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile upsert implements MIG-E2.
 """
 from __future__ import annotations
@@ -18,6 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -582,7 +585,7 @@ def _migrate_ledger_transaction_to_v10(conn: sqlite3.Connection) -> None:
 
 def migrate_ledger_db(db_path: str | None = None) -> None:
     """
-    Ensure the ledger database exists and matches the v10 contract in ``full_schema.sql``.
+    Ensure the ledger database exists and matches the v11 contract in ``full_schema.sql``.
 
     Idempotent: safe to call repeatedly. Uses ``config.ledger_db_file`` when
     ``db_path`` is omitted (read at call time so tests can reload ``config``).
@@ -627,6 +630,12 @@ def migrate_ledger_db(db_path: str | None = None) -> None:
         )
         conn.execute(
             "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (10, 'ledger_single_fingerprint_column_v2_semantics')"
+        )
+        ver = _current_schema_version(conn)
+        if ver < 11:
+            _migrate_fingerprint_optional_text_normalize(conn)
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (11, 'fingerprint_optional_text_normalize')"
         )
         conn.commit()
     finally:
@@ -1016,6 +1025,144 @@ class WouldDuplicateDetail:
 def _row_series_from_sqlite(row: sqlite3.Row) -> pd.Series:
     d = {k: row[k] for k in _ROW_KEYS}
     return pd.Series(d)
+
+
+def _ledger_nonempty_text(val: object) -> bool:
+    if val is None:
+        return False
+    try:
+        if pd.isna(val):
+            return False
+    except TypeError:
+        pass
+    return bool(str(val).strip())
+
+
+def _ledger_pick_first_nonempty(current: object, pool: list[object]) -> object:
+    if _ledger_nonempty_text(current):
+        return current
+    for v in pool:
+        if _ledger_nonempty_text(v):
+            return v
+    return current
+
+
+def _merge_survivor_ledger_row(survivor: sqlite3.Row, losers: list[sqlite3.Row]) -> dict[str, Any]:
+    """Fields to SET on ``survivor`` when collapsing duplicate fingerprints (non-conflicting merge)."""
+    out: dict[str, Any] = {}
+    for col in ("קטגוריה", "notes", "statement_month"):
+        cur = survivor[col]
+        pool = [L[col] for L in losers]
+        pick = _ledger_pick_first_nonempty(cur, pool)
+        if pick != cur:
+            out[col] = pick
+    sur_ing = survivor["ingested_at"]
+    best = sur_ing
+    for L in losers:
+        li = L["ingested_at"]
+        if not li or not str(li).strip():
+            continue
+        bs = str(sur_ing).strip() if sur_ing else ""
+        lis = str(li).strip()
+        if not bs or lis > bs:
+            best = li
+    if best != sur_ing:
+        out["ingested_at"] = best
+    return out
+
+
+def _migrate_fingerprint_optional_text_normalize(conn: sqlite3.Connection) -> None:
+    """
+    Recompute ``fingerprint`` using :func:`generate_transaction_fingerprint` (v11 optional-field rules).
+
+    Rows that map to the same new fingerprint are merged: lowest ``id`` survives; category / notes /
+    statement_month / ``ingested_at`` are filled from the others when the survivor's values are empty.
+    """
+    prev_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        _migrate_fingerprint_optional_text_normalize_body(conn)
+    finally:
+        conn.row_factory = prev_factory
+
+
+def _migrate_fingerprint_optional_text_normalize_body(conn: sqlite3.Connection) -> None:
+    cur = conn.execute(
+        f"""
+        SELECT id, {", ".join(f'"{k}"' for k in _ROW_KEYS)},
+               "fingerprint", "קטגוריה", notes, statement_month, ingested_at
+        FROM ledger_transaction
+        ORDER BY id
+        """
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return
+
+    id_to_row = {int(r["id"]): r for r in rows}
+    id_to_fp: dict[int, str] = {}
+    skipped = 0
+    for r in rows:
+        rid = int(r["id"])
+        s = pd.Series({k: r[k] for k in _ROW_KEYS})
+        nf = generate_transaction_fingerprint(s)
+        if nf is None or not str(nf).strip():
+            skipped += 1
+            continue
+        id_to_fp[rid] = str(nf).strip()
+
+    if skipped:
+        log.warning(
+            "fingerprint v11 migration: %s row(s) skipped (uncomputable fingerprint; left unchanged)",
+            skipped,
+        )
+
+    by_fp: dict[str, list[int]] = defaultdict(list)
+    for rid, fp in id_to_fp.items():
+        by_fp[fp].append(rid)
+
+    updated = 0
+    deleted = 0
+    for fp, ids in by_fp.items():
+        ids.sort()
+        if len(ids) == 1:
+            rid = ids[0]
+            old = id_to_row[rid]["fingerprint"]
+            old_s = None if old is None else str(old).strip()
+            if old_s != fp:
+                conn.execute(
+                    "UPDATE ledger_transaction SET fingerprint = ? WHERE id = ?",
+                    (fp, rid),
+                )
+                updated += 1
+            continue
+
+        survivor_id = ids[0]
+        loser_ids = ids[1:]
+        surv = id_to_row[survivor_id]
+        losers = [id_to_row[i] for i in loser_ids]
+        merged = _merge_survivor_ledger_row(surv, losers)
+        if merged:
+            cols = ", ".join(f'"{k}" = ?' for k in merged)
+            vals = list(merged.values()) + [survivor_id]
+            conn.execute(f"UPDATE ledger_transaction SET {cols} WHERE id = ?", vals)
+        conn.execute(
+            f"DELETE FROM ledger_transaction WHERE id IN ({','.join('?' * len(loser_ids))})",
+            loser_ids,
+        )
+        deleted += len(loser_ids)
+        conn.execute(
+            "UPDATE ledger_transaction SET fingerprint = ? WHERE id = ?",
+            (fp, survivor_id),
+        )
+        updated += 1
+
+    if updated or deleted:
+        log.info(
+            "fingerprint v11 migration: %s fingerprint row(s) updated, %s duplicate row(s) removed",
+            updated,
+            deleted,
+        )
 
 
 def list_would_duplicate_null_rows(

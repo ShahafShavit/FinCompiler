@@ -94,8 +94,7 @@ fingerprint_db_file = os.path.join(_static_root, "fingerprint_db.csv")
 _web_root = _w("web")
 web_dir = _web_root + os.sep
 web_totals_file = os.path.join(_web_root, "data", "web_totals.csv")
-# Google Sheet tab for heatmap / web_totals.csv: the all-time ledger (single tab, not split by year).
-# Distinct from the desktop UI sync in ``apps/qt_main.py``, which uses ``Totals`` + calendar year for compiled.csv.
+# Google Sheet tab for heatmap / web_totals.csv and desktop Totals push (single all-time tab).
 totals_sheet_name = os.environ.get("FINANCE_TOTALS_SHEET_NAME", "Totals").strip() or "Totals"
 
 
@@ -115,12 +114,15 @@ def desktop_holdings_sheet_name() -> str:
 
 def desktop_totals_sheet_name() -> str:
     """
-    Totals / compiled tab name for desktop sync (calendar year suffix by default).
+    Totals / full-ledger tab name for desktop ↔ Sheets sync.
 
-    Override with ``FINANCE_DESKTOP_TOTALS_SHEET`` when needed.
+    Defaults to ``totals_sheet_name`` (``FINANCE_TOTALS_SHEET_NAME``, usually ``Totals``) so PyQt,
+    web heatmap refresh, and push preview use **one** all-time worksheet — not a year-suffixed tab.
+
+    Override with ``FINANCE_DESKTOP_TOTALS_SHEET`` for a non-standard title.
     """
     v = os.environ.get("FINANCE_DESKTOP_TOTALS_SHEET", "").strip()
-    return v or f"Totals{_calendar_year_str()}"
+    return v or totals_sheet_name
 
 
 def desktop_sync_sheet_pairs() -> list[tuple[str, str]]:

@@ -362,8 +362,8 @@ class HeatmapBundle:
     source_path: str
 
 
-def _build_bundle(csv_path: str) -> HeatmapBundle:
-    df = pd.read_csv(csv_path)
+def _build_bundle_from_dataframe(df: pd.DataFrame, source_label: str) -> HeatmapBundle:
+    df = df.copy()
     df["תאריך"] = _heatmap_parse_dates(df["תאריך"])
     df["YearMonth"] = df["תאריך"].dt.strftime("%Y-%m")
 
@@ -426,32 +426,64 @@ def _build_bundle(csv_path: str) -> HeatmapBundle:
         expense_summary=expense_summary,
         income_summary=income_summary,
         net_summary=net_summary,
-        source_path=csv_path,
+        source_path=source_label,
     )
 
 
-def get_bundle() -> HeatmapBundle | None:
-    from web_control.totals_sheet_sync import ensure_totals_csv_present
+def _ledger_heatmap_status() -> dict[str, Any]:
+    """JSON-friendly status for the heatmap API (SQLite canonical; no Sheets pull)."""
+    p = config.ledger_db_file
+    exists = os.path.isfile(p)
+    n = 0
+    if exists:
+        try:
+            import sqlite3
 
-    path = config.web_totals_file
-    if not (os.path.isfile(path) and os.path.getsize(path) > 0):
-        ok, err = ensure_totals_csv_present()
-        if not ok:
-            log.warning("heatmap: no local totals and cloud fetch failed: %s", err)
-            return None
+            conn = sqlite3.connect(p)
+            try:
+                n = int(conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0])
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            n = -1
+    return {"ledger_path": p, "ledger_exists": exists, "transaction_count": n}
+
+
+def get_bundle() -> HeatmapBundle | None:
+    """Load pivot data from the SQLite ledger (canonical)."""
+    db = config.ledger_db_file
+    if not os.path.isfile(db):
+        log.warning("heatmap: ledger database missing at %s", db)
+        return None
     try:
-        st = os.stat(path)
+        st = os.stat(db)
     except OSError:
         return None
     c = _bundle_cache
-    if c["path"] == path and c["mtime"] == st.st_mtime and c["bundle"] is not None:
+    if c["path"] == db and c["mtime"] == st.st_mtime and c["bundle"] is not None:
         return c["bundle"]
+    from pipeline.ledger import load_transactions_dataframe_from_ledger
+
     try:
-        bundle = _build_bundle(path)
+        df = load_transactions_dataframe_from_ledger(db)
     except Exception:  # noqa: BLE001
-        log.exception("heatmap: failed to load %s", path)
+        log.exception("heatmap: failed to load ledger %s", db)
         return None
-    c["path"] = path
+    if df.empty:
+        log.warning("heatmap: ledger empty")
+        return None
+    for col in ("תאריך", "בחובה", "בזכות", "קטגוריה"):
+        if col not in df.columns:
+            log.warning("heatmap: ledger missing column %r", col)
+            return None
+    df["בחובה"] = pd.to_numeric(df["בחובה"], errors="coerce").fillna(0.0)
+    df["בזכות"] = pd.to_numeric(df["בזכות"], errors="coerce").fillna(0.0)
+    try:
+        bundle = _build_bundle_from_dataframe(df, db)
+    except Exception:  # noqa: BLE001
+        log.exception("heatmap: failed to build bundle from ledger")
+        return None
+    c["path"] = db
     c["mtime"] = st.st_mtime
     c["bundle"] = bundle
     return bundle
@@ -542,18 +574,15 @@ def _view_payload(
 
 
 def api_snapshot() -> dict[str, Any]:
-    from web_control.totals_sheet_sync import local_totals_status
-
     bundle = get_bundle()
-    source_status = local_totals_status()
+    source_status = _ledger_heatmap_status()
     if bundle is None:
-        msg = f"Could not load heatmap data from {config.web_totals_file}."
-        if not source_status["configured"]:
-            msg += " Set GOOGLE_API_USER (service account JSON path) and GOOGLE_WORKSHEET_ID, then use Refresh from Google Sheet."
-        elif not source_status["local_exists"]:
-            msg += " Cloud fetch on load failed — check credentials and the sheet tab name."
+        if not source_status["ledger_exists"]:
+            msg = f"Could not load heatmap: ledger database not found at {config.ledger_db_file}."
+        elif source_status.get("transaction_count") == 0:
+            msg = "Could not load heatmap: ledger has no transactions yet."
         else:
-            msg += " File exists but could not be parsed (check CSV columns)."
+            msg = "Could not load heatmap from ledger (missing columns or parse error — see server log)."
         return {
             "ok": False,
             "error": "missing_or_invalid_data",
@@ -884,9 +913,9 @@ def heatmap_shell_html() -> str:
 <body>
   {control_nav.control_topnav_html()}
   <h1>מפת חום — הוצאות / הכנסות / נטו</h1>
-  <p class="subtle">מקור אמת: גיליון Google <strong>Totals</strong> — רשומות מלאות בטאב אחד (לא מחולק לפי שנה). נשמר מקומית ב־<code>web/data/web_totals.csv</code>; שם הטאב ניתן לשינוי ב־<code>FINANCE_TOTALS_SHEET_NAME</code>. לחיצה על תא פותחת פירוט תנועות.</p>
+  <p class="subtle">מקור אמת: מסד ה־SQLite (<code>ledger.sqlite</code>) — אותן תנועות כמו בקטלוג ובדחיפה ל־Google Sheets. לחיצה על תא פותחת פירוט תנועות. <strong>רענון</strong> מנקה מטמון וטוען מחדש מהמסד.</p>
   <div class="heatmap-toolbar">
-    <button type="button" id="btn-refresh">Refresh from Google Sheet</button>
+    <button type="button" id="btn-refresh">Reload from ledger</button>
     <span id="refresh-status"></span>
   </div>
   <div id="err" class="err-banner" style="display:none"></div>

@@ -64,6 +64,27 @@ class PipelineDateRoundtripTests(unittest.TestCase):
         b2 = generate_transaction_fingerprint(pd.Series(credit))
         self.assertNotEqual(a2, b2)
 
+    def test_fingerprint_optional_none_vs_nan_same_key(self) -> None:
+        """``None`` and NaN in optional text columns must not diverge (v11 ledger migration contract)."""
+        base = {
+            "תאריך": "2024-09-05",
+            "בחובה": 311.0,
+            "בזכות": 0.0,
+            "מקור עסקה": "KSP אקספרס-גמא",
+            "פירוט נוסף": "תשלום 1  מתוך 2",
+        }
+        a = pd.Series({**base, "תאור מורחב": None})
+        b = pd.Series({**base, "תאור מורחב": float("nan")})
+        c = pd.Series({**base, "תאור מורחב": pd.NA})
+        fa = generate_transaction_fingerprint(a)
+        fb = generate_transaction_fingerprint(b)
+        fc = generate_transaction_fingerprint(c)
+        self.assertEqual(fa, fb)
+        self.assertEqual(fa, fc)
+        self.assertIn("תשלום1מתוך2", fa or "")
+        self.assertNotIn("none", fa or "")
+        self.assertNotIn("nan", fa or "")
+
     def test_iso_yyyy_mm_dd_round_trips_to_jan_12(self) -> None:
         self.assertEqual(
             parse_post_ingest_date_scalar("2026-01-12").strftime("%Y-%m-%d"),
