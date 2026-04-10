@@ -106,6 +106,60 @@ def _heatmap_parse_dates(series: pd.Series) -> pd.Series:
     return pd.to_datetime(out, errors="coerce", dayfirst=True)
 
 
+def _heatmap_effective_year_month(df: pd.DataFrame) -> pd.Series:
+    """Month bucket for pivots: prefer ``statement_month`` (YYYY-MM) when set and valid; else ``תאריך``."""
+    ta = df["תאריך"]
+    ym_from_date = pd.Series(pd.NA, index=df.index, dtype="string")
+    has_t = ta.notna()
+    ym_from_date.loc[has_t] = ta.loc[has_t].dt.strftime("%Y-%m")
+
+    if "statement_month" not in df.columns:
+        return ym_from_date
+
+    sm = df["statement_month"]
+    sm_str = sm.map(lambda x: "" if pd.isna(x) else str(x).strip())
+    valid_sm = sm_str.str.fullmatch(r"\d{4}-\d{2}", na=False)
+    out = ym_from_date.copy()
+    out.loc[valid_sm] = sm_str.loc[valid_sm]
+    return out
+
+
+# Category column "average": mean over up to this many most recent *active* months (non-zero cells),
+# scanning from newest month downward — avoids dilution from long runs of zero-activity months.
+_HEATMAP_CATEGORY_MEAN_ACTIVE_MONTHS = 12
+
+
+def _heatmap_category_cell_is_active(value: float, report_type: ReportType) -> bool:
+    if not np.isfinite(value):
+        return False
+    if report_type == "net":
+        return value != 0.0
+    return value > 0.0
+
+
+def category_mean_recent_active(col: pd.Series, report_type: ReportType) -> float:
+    """Mean of values in up to the last N months with activity (N ≤ 12), newest-first index order."""
+    cap = int(_HEATMAP_CATEGORY_MEAN_ACTIVE_MONTHS)
+    if cap < 1:
+        cap = 1
+    picked: list[float] = []
+    for v in col.astype(float):
+        if _heatmap_category_cell_is_active(float(v), report_type):
+            picked.append(float(v))
+            if len(picked) >= cap:
+                break
+    if not picked:
+        return 0.0
+    return float(np.mean(picked))
+
+
+def _pivot_mean_stat(p: pd.DataFrame, axis: int, report_type: ReportType) -> pd.Series:
+    """Row axis = mean across categories (unchanged). Column axis = recent-active category mean."""
+    if axis == 1:
+        return p.mean(axis=1)
+    return pd.Series({c: category_mean_recent_active(p[c], report_type) for c in p.columns})
+
+
 STAT_DEFINITIONS: dict[str, dict[str, Any]] = {
     "total": {
         "name": "סך הכל (Total)",
@@ -114,7 +168,7 @@ STAT_DEFINITIONS: dict[str, dict[str, Any]] = {
     "mean": {
         "name_by_cat": "ממוצע חודשי (Avg)",
         "name_by_month": "ממוצע לקטגוריה (Avg)",
-        "func": lambda p, axis, rt: p.mean(axis=axis),
+        "func": _pivot_mean_stat,
     },
     "std": {
         "name": "סטיית תקן (Std Dev)",
@@ -365,7 +419,7 @@ class HeatmapBundle:
 def _build_bundle_from_dataframe(df: pd.DataFrame, source_label: str) -> HeatmapBundle:
     df = df.copy()
     df["תאריך"] = _heatmap_parse_dates(df["תאריך"])
-    df["YearMonth"] = df["תאריך"].dt.strftime("%Y-%m")
+    df["YearMonth"] = _heatmap_effective_year_month(df)
 
     expenses_df = df[df["בחובה"] > 0]
     expenses_pivot = (
@@ -527,7 +581,9 @@ def _view_payload(
         clickable.append(row_b)
     labels = [[_format_cell_money(display[i, j]) for j in range(len(categories))] for i in range(len(months))]
     column_totals = [_format_cell_money(float(pivot[c].sum())) for c in pivot.columns]
-    column_averages = [_format_cell_money(float(pivot[c].mean())) for c in pivot.columns]
+    column_averages = [
+        _format_cell_money(category_mean_recent_active(pivot[c], report_type)) for c in pivot.columns
+    ]
     row_totals = [_format_cell_money(float(pivot.loc[mi].sum())) for mi in pivot.index]
     row_averages = [_format_cell_money(float(pivot.loc[mi].mean())) for mi in pivot.index]
 
