@@ -42,7 +42,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 max_v = conn.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0]
-                self.assertEqual(max_v, 11)
+                self.assertEqual(max_v, 12)
 
                 conn.execute(
                     'INSERT INTO ledger_transaction ("fingerprint", ingested_at, "תאריך") '
@@ -89,7 +89,7 @@ class LedgerMigrateTests(unittest.TestCase):
 
             conn = sqlite3.connect(db_path)
             try:
-                conn.execute("DELETE FROM schema_migrations WHERE version = 11")
+                conn.execute("DELETE FROM schema_migrations WHERE version >= 11")
                 conn.commit()
                 conn.execute(
                     """

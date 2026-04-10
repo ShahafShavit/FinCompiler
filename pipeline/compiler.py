@@ -23,10 +23,17 @@ def _standardize_date_separators(val: object) -> str | None:
             return None
     except TypeError:
         pass
+    # ``str(Timestamp)`` includes time — would miss the ISO branch and hit dayfirst/mixed (buggy on ISO).
+    if isinstance(val, datetime.date):
+        return pd.Timestamp(val).strftime("%Y-%m-%d")
     s = str(val).strip()
     if s.lower() in ("nan", "nat", "none", "<na>"):
         return None
-    return re.sub(r"[-/.]", "-", s)
+    s = re.sub(r"[-/.]", "-", s)
+    # ISO date at start of a datetime string (Excel / ``str(Timestamp)`` round-trip)
+    if len(s) >= 10 and _ISO_YMD.fullmatch(s[:10]):
+        return s[:10]
+    return s
 
 
 def parse_post_ingest_date_scalar(val: object) -> pd.Timestamp:

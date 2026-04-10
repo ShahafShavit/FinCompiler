@@ -13,6 +13,9 @@ rename ``fingerprint_v2`` → ``fingerprint``. Requires SQLite 3.35+ (``ALTER TA
 
 **v11** — recompute ``fingerprint`` after normalizing optional text (``None`` vs ``NaN``); merge duplicate rows.
 
+**v12** — recompute ``fingerprint`` again using ISO-safe date parsing (same rules as ``parse_post_ingest_date_scalar``);
+merge duplicate rows.
+
 Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile upsert implements MIG-E2.
 """
 from __future__ import annotations
@@ -585,7 +588,7 @@ def _migrate_ledger_transaction_to_v10(conn: sqlite3.Connection) -> None:
 
 def migrate_ledger_db(db_path: str | None = None) -> None:
     """
-    Ensure the ledger database exists and matches the v11 contract in ``full_schema.sql``.
+    Ensure the ledger database exists and matches the v12 contract in ``full_schema.sql``.
 
     Idempotent: safe to call repeatedly. Uses ``config.ledger_db_file`` when
     ``db_path`` is omitted (read at call time so tests can reload ``config``).
@@ -636,6 +639,12 @@ def migrate_ledger_db(db_path: str | None = None) -> None:
             _migrate_fingerprint_optional_text_normalize(conn)
         conn.execute(
             "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (11, 'fingerprint_optional_text_normalize')"
+        )
+        ver = _current_schema_version(conn)
+        if ver < 12:
+            _migrate_fingerprint_iso_date_parse(conn)
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (12, 'fingerprint_iso_date_parse_match_compiler')"
         )
         conn.commit()
     finally:
@@ -1078,15 +1087,27 @@ def _migrate_fingerprint_optional_text_normalize(conn: sqlite3.Connection) -> No
     Rows that map to the same new fingerprint are merged: lowest ``id`` survives; category / notes /
     statement_month / ``ingested_at`` are filled from the others when the survivor's values are empty.
     """
+    _run_ledger_fingerprint_recompute_with_row_factory(conn, log_label="v11")
+
+
+def _migrate_fingerprint_iso_date_parse(conn: sqlite3.Connection) -> None:
+    """
+    Recompute fingerprints after fixing ISO ``YYYY-MM-DD`` handling in :func:`generate_transaction_fingerprint`
+    (must match :func:`parse_post_ingest_date_scalar`). Merges duplicate rows like v11.
+    """
+    _run_ledger_fingerprint_recompute_with_row_factory(conn, log_label="v12")
+
+
+def _run_ledger_fingerprint_recompute_with_row_factory(conn: sqlite3.Connection, *, log_label: str) -> None:
     prev_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
-        _migrate_fingerprint_optional_text_normalize_body(conn)
+        _recompute_ledger_fingerprints_merge_duplicates(conn, log_label=log_label)
     finally:
         conn.row_factory = prev_factory
 
 
-def _migrate_fingerprint_optional_text_normalize_body(conn: sqlite3.Connection) -> None:
+def _recompute_ledger_fingerprints_merge_duplicates(conn: sqlite3.Connection, *, log_label: str) -> None:
     cur = conn.execute(
         f"""
         SELECT id, {", ".join(f'"{k}"' for k in _ROW_KEYS)},
@@ -1113,7 +1134,8 @@ def _migrate_fingerprint_optional_text_normalize_body(conn: sqlite3.Connection) 
 
     if skipped:
         log.warning(
-            "fingerprint v11 migration: %s row(s) skipped (uncomputable fingerprint; left unchanged)",
+            "fingerprint %s migration: %s row(s) skipped (uncomputable fingerprint; left unchanged)",
+            log_label,
             skipped,
         )
 
@@ -1159,7 +1181,8 @@ def _migrate_fingerprint_optional_text_normalize_body(conn: sqlite3.Connection) 
 
     if updated or deleted:
         log.info(
-            "fingerprint v11 migration: %s fingerprint row(s) updated, %s duplicate row(s) removed",
+            "fingerprint %s migration: %s fingerprint row(s) updated, %s duplicate row(s) removed",
+            log_label,
             updated,
             deleted,
         )

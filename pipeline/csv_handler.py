@@ -9,6 +9,8 @@ from tabulate import tabulate
 
 import config
 
+from .compiler import parse_post_ingest_date_scalar
+
 log = logging.getLogger(__name__)
 
 
@@ -42,7 +44,10 @@ def _fingerprint_optional_fragment(row, key: str) -> str:
 def generate_transaction_fingerprint_legacy(row):
     """Pre–schema-v10 fingerprint: single signed amount (debit OR credit), so opposite flows could collide."""
     try:
-        normalized_date = pd.to_datetime(row["תאריך"], dayfirst=True, format="mixed").strftime("%Y-%m-%d")
+        ts = parse_post_ingest_date_scalar(row["תאריך"])
+        if pd.isna(ts):
+            return None
+        normalized_date = ts.strftime("%Y-%m-%d")
         amount = row["בחובה"] if row["בחובה"] != 0 else row["בזכות"]
         normalized_amount = f"{float(amount):.2f}"
         business_name = str(row["מקור עסקה"]).lower().strip()
@@ -63,7 +68,10 @@ def generate_transaction_fingerprint_legacy(row):
 def generate_transaction_fingerprint(row):
     """Canonical ledger dedupe key: encodes **both** ``בחובה`` and ``בזכות`` (``bh{X.XX}_bz{Y.YY}``)."""
     try:
-        normalized_date = pd.to_datetime(row["תאריך"], dayfirst=True, format="mixed").strftime("%Y-%m-%d")
+        ts = parse_post_ingest_date_scalar(row["תאריך"])
+        if pd.isna(ts):
+            return None
+        normalized_date = ts.strftime("%Y-%m-%d")
         bh = float(row.get("בחובה") or 0)
         bz = float(row.get("בזכות") or 0)
         normalized_amount = f"bh{bh:.2f}_bz{bz:.2f}"

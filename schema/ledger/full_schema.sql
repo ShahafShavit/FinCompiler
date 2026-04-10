@@ -38,6 +38,7 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (8, 'ledger_finge
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (9, 'ledger_fingerprint_v2_unique_drop_fingerprint_unique');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (10, 'ledger_single_fingerprint_column_v2_semantics');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (11, 'fingerprint_optional_text_normalize');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (12, 'fingerprint_iso_date_parse_match_compiler');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)

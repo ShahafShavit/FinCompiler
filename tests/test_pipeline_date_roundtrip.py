@@ -64,6 +64,26 @@ class PipelineDateRoundtripTests(unittest.TestCase):
         b2 = generate_transaction_fingerprint(pd.Series(credit))
         self.assertNotEqual(a2, b2)
 
+    def test_fingerprint_iso_yyyy_mm_dd_not_dayfirst_swapped(self) -> None:
+        """ISO strings use a fixed format; ``dayfirst`` + ``mixed`` mis-parses them on some pandas versions."""
+        row = pd.Series(
+            {
+                "תאריך": "2024-04-01",
+                "בחובה": 235.47,
+                "בזכות": 0.0,
+                "מקור עסקה": "פז אפליקציית יילו",
+                "פירוט נוסף": "",
+                "תאור מורחב": "",
+            }
+        )
+        fp = generate_transaction_fingerprint(row)
+        self.assertIsNotNone(fp)
+        assert fp is not None
+        self.assertTrue(
+            fp.startswith("2024-04-01:"),
+            f"expected 2024-04-01 in key, got {fp!r}",
+        )
+
     def test_fingerprint_optional_none_vs_nan_same_key(self) -> None:
         """``None`` and NaN in optional text columns must not diverge (v11 ledger migration contract)."""
         base = {
