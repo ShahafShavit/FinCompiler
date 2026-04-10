@@ -656,6 +656,39 @@ def update_category_by_fingerprint(db_path: str, fingerprint: str, category: str
         conn.close()
 
 
+def update_categories_by_fingerprint_batch(
+    db_path: str,
+    items: list[tuple[str, str]],
+) -> int:
+    """
+    Apply category updates in one transaction (categorization UI / auto pass).
+
+    Each item is ``(fingerprint, category_string)``. Skips empty fingerprints.
+    """
+    params: list[tuple[str, str]] = []
+    for fp, cat in items:
+        f = str(fp).strip()
+        if not f:
+            continue
+        c = "" if cat is None else str(cat)
+        params.append((c, f))
+    if not params:
+        return 0
+    migrate_ledger_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        sql = (
+            'UPDATE ledger_transaction SET "קטגוריה" = ? '
+            'WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") = ?'
+        )
+        conn.executemany(sql, params)
+        conn.commit()
+    finally:
+        conn.close()
+    return len(params)
+
+
 # --- DataFrame load/export (ex-ledger_dataframe) ---
 
 # DB columns only (no ``מזהה עסקה`` / ``תאריך עדכון`` — dedupe and ingestion use ``fingerprint`` + ``ingested_at``).
@@ -693,6 +726,198 @@ def load_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
         if "fingerprint" in df.columns:
             df["fingerprint"] = df["fingerprint"].map(lambda x: "" if pd.isna(x) else str(x)).astype(object)
     return df
+
+
+_SQL_NEEDS_MANUAL_CATEGORY = """(
+    "קטגוריה" IS NULL
+    OR TRIM(COALESCE("קטגוריה", '')) = ''
+    OR LOWER(TRIM("קטגוריה")) = 'awaiting'
+)"""
+
+# Same predicate for ``ledger_transaction AS lt`` (native auto-categorize UPDATE).
+_SQL_LT_NEEDS_MANUAL_CATEGORY = """(
+    lt."קטגוריה" IS NULL
+    OR TRIM(COALESCE(lt."קטגוריה", '')) = ''
+    OR LOWER(TRIM(lt."קטגוריה")) = 'awaiting'
+)"""
+
+
+def apply_auto_categories_from_static_stores_sql(db_path: str) -> int:
+    """
+    Auto pass: set ``קטגוריה`` from ``store`` / ``store_category`` where ``is_static = 1``.
+
+    Only updates rows that still need a manual category (empty / awaiting) and have a
+    fingerprint. One ``UPDATE`` — same outcome as scanning ``stores_df`` in Python.
+    """
+    migrate_ledger_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        sql = f"""
+        UPDATE ledger_transaction AS lt
+        SET "קטגוריה" = (
+            SELECT sc.category
+            FROM store AS s
+            INNER JOIN store_category AS sc ON sc.store_name = s.store_name
+            WHERE s.store_name = lt."מקור עסקה"
+              AND s.is_static = 1
+            LIMIT 1
+        )
+        WHERE lt."fingerprint" IS NOT NULL AND TRIM(lt."fingerprint") != ''
+          AND {_SQL_LT_NEEDS_MANUAL_CATEGORY}
+          AND EXISTS (
+            SELECT 1
+            FROM store AS s
+            INNER JOIN store_category AS sc ON sc.store_name = s.store_name
+            WHERE s.store_name = lt."מקור עסקה"
+              AND s.is_static = 1
+          )
+        """
+        conn.execute(sql)
+        n = conn.execute("SELECT changes()").fetchone()[0]
+        conn.commit()
+        return int(n)
+    finally:
+        conn.close()
+
+
+def forward_fill_uncategorized_for_static_stores_sql(db_path: str) -> int:
+    """
+    Bulk-apply static store categories to **uncategorized** ledger rows only.
+
+    Same implementation as :func:`apply_auto_categories_from_static_stores_sql` — rows that
+    already have a non-empty category (not ``awaiting``) are never overwritten.
+    """
+    return apply_auto_categories_from_static_stores_sql(db_path)
+
+
+def forward_fill_uncategorized_for_store_if_static_sql(db_path: str, store_name: str) -> int:
+    """
+    After ``is_static = 1`` is saved for ``store_name``, fill ``קטגוריה`` on other ledger rows
+    for that store **only** where the category is still empty / ``awaiting``. Never overwrites
+    an already-assigned category.
+    """
+    migrate_ledger_db(db_path)
+    sn = str(store_name or "").strip()
+    if not sn:
+        return 0
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        row = conn.execute(
+            "SELECT 1 FROM store WHERE store_name = ? AND is_static = 1 LIMIT 1",
+            (sn,),
+        ).fetchone()
+        if row is None:
+            return 0
+        sql = f"""
+        UPDATE ledger_transaction AS lt
+        SET "קטגוריה" = (
+            SELECT sc.category
+            FROM store AS s
+            INNER JOIN store_category AS sc ON sc.store_name = s.store_name
+            WHERE s.store_name = lt."מקור עסקה"
+              AND s.is_static = 1
+            LIMIT 1
+        )
+        WHERE lt."מקור עסקה" = ?
+          AND lt."fingerprint" IS NOT NULL AND TRIM(lt."fingerprint") != ''
+          AND {_SQL_LT_NEEDS_MANUAL_CATEGORY}
+          AND EXISTS (
+            SELECT 1
+            FROM store AS s
+            INNER JOIN store_category AS sc ON sc.store_name = s.store_name
+            WHERE s.store_name = lt."מקור עסקה"
+              AND s.is_static = 1
+          )
+        """
+        conn.execute(sql, (sn,))
+        n = conn.execute("SELECT changes()").fetchone()[0]
+        conn.commit()
+        return int(n)
+    finally:
+        conn.close()
+
+
+def count_transactions_needing_manual_category(db_path: str) -> int:
+    """Rows with empty / awaiting category and a usable fingerprint (manual categorization queue size)."""
+    migrate_ledger_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        n = conn.execute(
+            f"""
+            SELECT COUNT(*) FROM ledger_transaction
+            WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") != ''
+              AND {_SQL_NEEDS_MANUAL_CATEGORY}
+            """
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    return int(n)
+
+
+def count_ledger_transaction_rows(db_path: str) -> int:
+    """Total rows in ``ledger_transaction`` (for logging / progress without loading a dataframe)."""
+    migrate_ledger_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        n = conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0]
+    finally:
+        conn.close()
+    return int(n)
+
+
+def load_first_transaction_needing_manual_category(db_path: str) -> pd.Series | None:
+    """Next row for manual categorization (``ORDER BY תאריך, id``)."""
+    migrate_ledger_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        base = _LEDGER_TX_READ_SQL.rsplit("ORDER BY", 1)[0].strip()
+        q = f"""
+        {base}
+        WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") != ''
+          AND {_SQL_NEEDS_MANUAL_CATEGORY}
+        ORDER BY "תאריך", id
+        LIMIT 1
+        """
+        df = pd.read_sql_query(q, conn)
+    finally:
+        conn.close()
+    if df.empty:
+        return None
+    row = df.iloc[0]
+    if "קטגוריה" in row.index:
+        row["קטגוריה"] = "" if pd.isna(row["קטגוריה"]) else str(row["קטגוריה"])
+    if "fingerprint" in row.index:
+        row["fingerprint"] = "" if pd.isna(row["fingerprint"]) else str(row["fingerprint"])
+    return row
+
+
+def load_ledger_transaction_by_stable_id(db_path: str, stable_id: str) -> pd.Series | None:
+    """Load one row by ``fingerprint`` (same string as :func:`stable_transaction_key`)."""
+    sid = str(stable_id or "").strip()
+    if not sid:
+        return None
+    migrate_ledger_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        base = _LEDGER_TX_READ_SQL.rsplit("ORDER BY", 1)[0].strip()
+        q = f"""
+        {base}
+        WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") = TRIM(?)
+        LIMIT 1
+        """
+        df = pd.read_sql_query(q, conn, params=(sid,))
+    finally:
+        conn.close()
+    if df.empty:
+        return None
+    row = df.iloc[0]
+    if "קטגוריה" in row.index:
+        row["קטגוריה"] = "" if pd.isna(row["קטגוריה"]) else str(row["קטגוריה"])
+    if "fingerprint" in row.index:
+        row["fingerprint"] = "" if pd.isna(row["fingerprint"]) else str(row["fingerprint"])
+    return row
 
 
 def export_transactions_dataframe_to_csv(db_path: str, dest_path: str) -> str:

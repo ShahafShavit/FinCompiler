@@ -10,6 +10,7 @@ import tabulate
 from oauth2client.service_account import ServiceAccountCredentials
 import config
 import categorization.categorizer as categorizer
+from categorization import maintenance
 from pipeline import compiler as compile_handler
 import gspread.utils
 from googleapiclient.discovery import build
@@ -342,15 +343,15 @@ class GSLink:
             # Legacy Sheets/CSV path: row-hash column (not ledger fingerprint). Prefer fingerprint-based flows for SQLite.
             if "מזהה עסקה" in df.columns and regular_data:
                 for index, row in df.iterrows():
-                    categorizer.CategorizeFile.category_store_link_backup(
+                    maintenance.category_store_link_backup(
                         transaction_id=row["מזהה עסקה"], category=row["קטגוריה"]
                     )
-                    categorizer.CategorizeFile.update_store_category(
+                    maintenance.update_store_category(
                         store_name=row["מקור עסקה"], category=row["קטגוריה"]
                     )
                 df.to_csv(compiled_file, index=False)
-                categorizer.CategorizeFile.fix_similar_categories_in_file()
-                categorizer.CategorizeFile.fix_null_category_status()
+                maintenance.fix_similar_categories_in_file()
+                maintenance.fix_null_category_status()
 
             print(f"Pulled data for {sheet_name}")
             Path(compiled_file).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
@@ -414,13 +415,13 @@ class GSLink:
             # Legacy: מזהה עסקה is a CSV row hash, not stored on ledger_transaction.
             if 'מזהה עסקה' in df.columns and regular_data:
                 for index, row in df.iterrows():
-                    categorizer.CategorizeFile.category_store_link_backup(transaction_id=row['מזהה עסקה'],
+                    maintenance.category_store_link_backup(transaction_id=row['מזהה עסקה'],
                                                                           category=row['קטגוריה'])
-                    categorizer.CategorizeFile.update_store_category(store_name=row['מקור עסקה'],
+                    maintenance.update_store_category(store_name=row['מקור עסקה'],
                                                                      category=row['קטגוריה'])
                 df.to_csv(compiled_file, index=False)
-                categorizer.CategorizeFile.fix_similar_categories_in_file()
-                categorizer.CategorizeFile.fix_null_category_status()
+                maintenance.fix_similar_categories_in_file()
+                maintenance.fix_null_category_status()
 
 
             print(f"Pulled data for {sheet_name}")

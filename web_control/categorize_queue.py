@@ -1,8 +1,15 @@
 """File-backed categorization queue: same host as the dashboard, no 'active session'.
 
-``/categorize/api/summary`` — how many compiled rows still need a category.
-``/categorize/api/next`` — first question after an auto pass (or idle).
-``/categorize/api/respond`` / ``api/revise`` — apply one answer (first-in-queue for respond).
+``/api/summary`` — SQL count of uncategorized rows.
+
+``/api/next`` — optional forward-fill for **static** stores (empty categories only), then the
+next uncategorized row for the UI.
+
+``/api/respond`` — one ``UPDATE`` for the answered transaction; forward-fill for other empty
+rows for that store runs inside :meth:`categorization.categorizer.CategorizeFile.apply_manual_http_response`
+when ``is_static = 1``.
+
+``/api/revise`` — corrections only (no global forward-fill here).
 """
 
 from __future__ import annotations
@@ -14,14 +21,13 @@ import threading
 from typing import Any, Optional
 
 import config
-from categorization.categorizer import CategorizeFile, category_cell_needs_manual, stable_transaction_key
+from categorization.categorizer import CategorizeFile, stable_transaction_key
 from categorization.interactive.terminal import TerminalCategorizationHandler
 from .json_safe import json_bytes_strict
 
 log = logging.getLogger(__name__)
 
 _lock = threading.Lock()
-_MAX_REPAIR = 80
 
 
 def _terminal_handler() -> TerminalCategorizationHandler:
@@ -36,7 +42,7 @@ def _session_categories(cf: CategorizeFile) -> list[str]:
 
 
 def summary() -> dict[str, Any]:
-    from pipeline.ledger import load_transactions_dataframe_from_ledger
+    from pipeline.ledger import count_transactions_needing_manual_category
     from pipeline.ledger import migrate_ledger_db
 
     migrate_ledger_db()
@@ -44,17 +50,25 @@ def summary() -> dict[str, Any]:
     if not os.path.isfile(path):
         return {"open_count": 0, "compiled_exists": False}
 
-    df = load_transactions_dataframe_from_ledger(path)
-    if "קטגוריה" not in df.columns:
-        return {"open_count": int(len(df)), "compiled_exists": True}
-    col = df["קטגוריה"]
-    n = int(col.map(lambda c: category_cell_needs_manual(c)).sum())
+    n = count_transactions_needing_manual_category(path)
     return {"open_count": n, "compiled_exists": True}
+
+
+def _ledger_queue_categorize_file() -> CategorizeFile:
+    """Lightweight: stores + SQL helpers only (no full ``ledger_transaction`` dataframe)."""
+    return CategorizeFile(
+        ledger_db_path=config.ledger_db_file,
+        interaction_handler=_terminal_handler(),
+        materialize_transactions=False,
+    )
 
 
 def next_payload() -> dict[str, Any]:
     cats: list[str] = []
     with _lock:
+        from pipeline.ledger import count_transactions_needing_manual_category
+        from pipeline.ledger import forward_fill_uncategorized_for_static_stores_sql
+        from pipeline.ledger import load_first_transaction_needing_manual_category
         from pipeline.ledger import migrate_ledger_db
 
         migrate_ledger_db()
@@ -65,11 +79,14 @@ def next_payload() -> dict[str, Any]:
                 "history": [],
                 "session_categories": [],
             }
-        cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=_terminal_handler())
+
+        forward_fill_uncategorized_for_static_stores_sql(config.ledger_db_file)
+
+        cf = _ledger_queue_categorize_file()
         cats = _session_categories(cf)
-        for _ in range(_MAX_REPAIR):
-            cf.auto_categorize()
-            open_n = len(cf.awaiting_df)
+
+        for attempt in range(2):
+            open_n = count_transactions_needing_manual_category(config.ledger_db_file)
             if open_n == 0:
                 return {
                     "pending": {"kind": "idle"},
@@ -77,23 +94,31 @@ def next_payload() -> dict[str, Any]:
                     "history": [],
                     "session_categories": cats,
                 }
-            row = cf.awaiting_df.iloc[0]
+            row = load_first_transaction_needing_manual_category(config.ledger_db_file)
+            if row is None:
+                return {
+                    "pending": {"kind": "idle"},
+                    "open_count": 0,
+                    "history": [],
+                    "session_categories": cats,
+                }
             try:
                 p = cf.build_manual_prompt_for_row(row)
             except ValueError as e:
                 log.warning("queue repair: %s", e)
-                cat = cf.categorize_storename(row, method="auto")
-                if cat is None:
-                    return {
-                        "pending": {"kind": "idle"},
-                        "open_count": open_n,
-                        "history": [],
-                        "session_categories": cats,
-                        "error": str(e),
-                    }
-                cf._persist_category_for_transaction(stable_transaction_key(row), str(cat))
-                cats = _session_categories(cf)
-                continue
+                if attempt == 0:
+                    cat = cf.categorize_storename(row, method="auto")
+                    if cat is not None:
+                        cf._persist_category_for_transaction(stable_transaction_key(row), str(cat))
+                        cats = _session_categories(cf)
+                        continue
+                return {
+                    "pending": {"kind": "idle"},
+                    "open_count": open_n,
+                    "history": [],
+                    "session_categories": cats,
+                    "error": str(e),
+                }
             return {
                 "pending": p.to_display_dict(),
                 "open_count": open_n,
@@ -105,7 +130,7 @@ def next_payload() -> dict[str, Any]:
             "open_count": 0,
             "history": [],
             "session_categories": cats,
-            "error": "queue repair exceeded; check ledger.sqlite and store mappings",
+            "error": "queue repair failed after retry",
         }
 
 
@@ -115,14 +140,15 @@ def respond(data: dict[str, Any]) -> Optional[str]:
     if not tid or not kind:
         return "prompt_id and kind required"
     with _lock:
+        from pipeline.ledger import load_first_transaction_needing_manual_category
         from pipeline.ledger import migrate_ledger_db
 
         migrate_ledger_db()
-        cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=_terminal_handler())
-        cf.auto_categorize()
-        if cf.awaiting_df.empty:
+
+        cf = _ledger_queue_categorize_file()
+        row0 = load_first_transaction_needing_manual_category(config.ledger_db_file)
+        if row0 is None:
             return "no unanswered rows"
-        row0 = cf.awaiting_df.iloc[0]
         if str(stable_transaction_key(row0)) != tid:
             return "not the first unanswered row; refresh /api/next"
         try:
@@ -143,7 +169,7 @@ def revise(data: dict[str, Any]) -> Optional[str]:
         from pipeline.ledger import migrate_ledger_db
 
         migrate_ledger_db()
-        cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=_terminal_handler())
+        cf = _ledger_queue_categorize_file()
         return cf.apply_queue_revise(data)
 
 

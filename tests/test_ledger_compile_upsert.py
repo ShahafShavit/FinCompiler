@@ -129,6 +129,77 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             c.update_fingerprint_db()
             self.assertFalse(os.path.isfile(cfg.fingerprint_db_file))
 
+    def test_batch_category_updates_by_fingerprint(self) -> None:
+        from pipeline.ledger import update_categories_by_fingerprint_batch, upsert_compiled_dataframe_to_ledger
+
+        row = {
+            "תאריך": "2025-03-01",
+            "בחובה": 10.0,
+            "בזכות": 0.0,
+            "מקור עסקה": "Shop",
+            "פירוט נוסף": None,
+            "תאור מורחב": None,
+            "4 ספרות": None,
+            "קטגוריה": "",
+        }
+        fp = generate_transaction_fingerprint(pd.Series(row))
+        self.assertIsNotNone(fp)
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                cfg = _reload_config()
+            upsert_compiled_dataframe_to_ledger(pd.DataFrame([{**row, "notes": None}]), cfg.ledger_db_file)
+            n = update_categories_by_fingerprint_batch(
+                cfg.ledger_db_file,
+                [(fp, "Food"), (fp, "Food")],
+            )
+            self.assertEqual(n, 2)
+            conn = sqlite3.connect(cfg.ledger_db_file)
+            try:
+                cat = conn.execute(
+                    'SELECT "קטגוריה" FROM ledger_transaction WHERE TRIM("fingerprint") = ?',
+                    (str(fp).strip(),),
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(cat, "Food")
+
+    def test_apply_auto_categories_from_static_stores_sql(self) -> None:
+        from pipeline.ledger import apply_auto_categories_from_static_stores_sql
+        from pipeline.ledger import sync_stores_to_ledger_from_dataframe
+        from pipeline.ledger import upsert_compiled_dataframe_to_ledger
+
+        row = {
+            "תאריך": "2025-03-01",
+            "בחובה": 0.0,
+            "בזכות": 10.0,
+            "מקור עסקה": "StoreA",
+            "פירוט נוסף": None,
+            "תאור מורחב": None,
+            "4 ספרות": None,
+            "קטגוריה": "",
+        }
+        fp = generate_transaction_fingerprint(pd.Series(row))
+        self.assertIsNotNone(fp)
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                cfg = _reload_config()
+            stores_df = pd.DataFrame([{"store_name": "StoreA", "category": "Rent", "is_static": 1}])
+            sync_stores_to_ledger_from_dataframe(cfg.ledger_db_file, stores_df)
+            upsert_compiled_dataframe_to_ledger(pd.DataFrame([{**row, "notes": None}]), cfg.ledger_db_file)
+            n = apply_auto_categories_from_static_stores_sql(cfg.ledger_db_file)
+            self.assertEqual(n, 1)
+            conn = sqlite3.connect(cfg.ledger_db_file)
+            try:
+                cat = conn.execute(
+                    'SELECT "קטגוריה" FROM ledger_transaction WHERE TRIM("fingerprint") = ?',
+                    (str(fp).strip(),),
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(cat, "Rent")
+
 
 if __name__ == "__main__":
     unittest.main()

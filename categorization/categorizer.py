@@ -1,15 +1,10 @@
-import asyncio
-import difflib
 import logging
 import os
-import re
 import threading
 import uuid
 from typing import Mapping, Optional, Union
 
 import pandas as pd
-from bidi.algorithm import get_display
-from numpy import nan
 
 import config
 from categorization.interactive.prompts import (
@@ -18,12 +13,12 @@ from categorization.interactive.prompts import (
     ResolveStaticPrompt,
 )
 from categorization.interactive.terminal import TerminalCategorizationHandler
-from config import similar_categories_file
+from categorization import maintenance as _maintenance
+
+category_store_link_backup = _maintenance.category_store_link_backup
 from pipeline.compiler import update_category_in_fingerprint_db
 
 log = logging.getLogger(__name__)
-
-_HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
 
 ManualPrompt = Union[FluidStorePrompt, ResolveStaticPrompt, NewStorePrompt]
 
@@ -78,31 +73,38 @@ def category_cell_needs_manual(cat) -> bool:
     return s == "" or s.lower() == "awaiting"
 
 
-def _terminal_bidi(s):
-    """Hebrew reads correctly in LTR-only terminals (logical → visual order)."""
-    if s is None:
+def _normalized_category_value(cat) -> str:
+    """Comparable form for whether a קטגוריה cell changed."""
+    if cat is None:
         return ""
-    if isinstance(s, float) and pd.isna(s):
-        return "nan"
-    text = str(s)
-    if _HEBREW_RE.search(text):
-        return get_display(text)
-    return text
+    try:
+        if isinstance(cat, float) and pd.isna(cat):
+            return ""
+    except Exception:
+        pass
+    try:
+        if pd.isna(cat) and not isinstance(cat, str):
+            return ""
+    except Exception:
+        pass
+    return str(cat).strip()
 
 
-def _terminal_bidi_seq(seq, left="{", right="}", *, sort=True):
-    items = sorted(seq, key=lambda v: str(v)) if sort else list(seq)
-    parts = []
-    for x in items:
-        if isinstance(x, float) and pd.isna(x):
-            parts.append("nan")
-        else:
-            parts.append(repr(_terminal_bidi(str(x))))
-    return left + ", ".join(parts) + right
+class CategorizeFile:
+    """Categorization: CSV staging (legacy) or SQLite ledger.
 
-
-class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
-    def __init__(self, file_path=None, *, ledger_db_path=None, interaction_handler=None):
+    Web flow: query uncategorized rows, one ``UPDATE`` per saved answer; when a store becomes
+    static (``is_static = 1``), forward-fill runs for **other** uncategorized rows for that store
+    only (see :func:`pipeline.ledger.forward_fill_uncategorized_for_store_if_static_sql`).
+    """
+    def __init__(
+        self,
+        file_path=None,
+        *,
+        ledger_db_path=None,
+        interaction_handler=None,
+        materialize_transactions: bool = True,
+    ):
         if ledger_db_path and file_path:
             raise ValueError("pass either file_path or ledger_db_path, not both")
         if not ledger_db_path and not file_path:
@@ -116,11 +118,19 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             from pipeline.ledger import load_transactions_dataframe_from_ledger
             from pipeline.ledger import migrate_ledger_db
 
-            log.info("CategorizeFile: loading ledger %s", ledger_db_path)
             migrate_ledger_db(ledger_db_path)
             self.file_path = ledger_db_path
             self.file_name = os.path.basename(ledger_db_path)
-            self.file_df = load_transactions_dataframe_from_ledger(ledger_db_path)
+            if materialize_transactions:
+                log.info("CategorizeFile: loading ledger %s", ledger_db_path)
+                self.transactions_df = load_transactions_dataframe_from_ledger(ledger_db_path)
+            else:
+                log.debug(
+                    "CategorizeFile: ledger %s (stores/prompts only; transaction table not loaded)",
+                    ledger_db_path,
+                )
+                self.transactions_df = pd.DataFrame({"קטגוריה": pd.Series([], dtype=object)})
+            self._materialize_transactions = materialize_transactions
         else:
             if os.path.isfile(config.ledger_db_file) and os.path.normcase(
                 os.path.abspath(file_path)
@@ -135,15 +145,28 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             log.info("CategorizeFile: loading %s", file_path)
             self.file_path = file_path
             self.file_name = os.path.basename(file_path)
-            self.file_df = pd.read_csv(file_path)
+            self.transactions_df = pd.read_csv(file_path)
+            self._materialize_transactions = True
 
-        if "קטגוריה" not in self.file_df.columns:
-            self.file_df["קטגוריה"] = pd.Series([""] * len(self.file_df), dtype=object, index=self.file_df.index)
+        if "קטגוריה" not in self.transactions_df.columns:
+            self.transactions_df["קטגוריה"] = pd.Series([""] * len(self.transactions_df), dtype=object, index=self.transactions_df.index)
         else:
-            self.file_df["קטגוריה"] = (
-                self.file_df["קטגוריה"].map(lambda x: "" if pd.isna(x) else str(x)).astype(object)
+            self.transactions_df["קטגוריה"] = (
+                self.transactions_df["קטגוריה"].map(lambda x: "" if pd.isna(x) else str(x)).astype(object)
             )
-        self.awaiting_df = pd.DataFrame(columns=self.file_df.columns)
+        self.awaiting_df = pd.DataFrame(columns=self.transactions_df.columns)
+        self._ledger_category_dirty: dict[str, str] = {}
+
+    def _queue_ledger_category(self, fingerprint: object, category: object) -> None:
+        """Batch category writes for :meth:`save_progress` (SQLite ``UPDATE`` by fingerprint, no full upsert)."""
+        if not self._ledger_db_path:
+            return
+        if fingerprint is None or (isinstance(fingerprint, float) and pd.isna(fingerprint)):
+            return
+        fp = str(fingerprint).strip()
+        if not fp:
+            return
+        self._ledger_category_dirty[fp] = "" if category is None else str(category)
 
     def _use_legacy_fingerprint_csv_sidecar(self) -> bool:
         """True only when no ledger on disk — legacy ``fingerprint_db.csv`` (MIG-E3)."""
@@ -184,11 +207,22 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
 
     def save_progress(self):
         if self._ledger_db_path:
-            from pipeline.ledger import upsert_compiled_dataframe_to_ledger
+            from pipeline.ledger import update_categories_by_fingerprint_batch
 
-            upsert_compiled_dataframe_to_ledger(self.file_df, self._ledger_db_path)
+            if self._ledger_category_dirty:
+                n = update_categories_by_fingerprint_batch(
+                    self._ledger_db_path,
+                    list(self._ledger_category_dirty.items()),
+                )
+                self._ledger_category_dirty.clear()
+                if n:
+                    log.info(
+                        "ledger categories: batch-updated %s row(s) in %s",
+                        n,
+                        self._ledger_db_path,
+                    )
             return
-        self.file_df.to_csv(self.file_path, index=False)
+        self.transactions_df.to_csv(self.file_path, index=False)
 
     def apply_session_category_revision(
         self,
@@ -204,16 +238,39 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             raise ValueError("category required")
         with self._io_lock:
             self.load_stores()
-            mask = mask_rows_by_stable_id(self.file_df, str(transaction_id))
+            if self._ledger_db_path:
+                from pipeline.ledger import load_ledger_transaction_by_stable_id
+                from pipeline.ledger import update_category_by_fingerprint
+
+                row = load_ledger_transaction_by_stable_id(self._ledger_db_path, str(transaction_id))
+                if row is None:
+                    raise ValueError("transaction not in compiled file")
+                fp = str(row.get("fingerprint", "")).strip()
+                if not fp:
+                    raise ValueError("transaction has no fingerprint")
+                update_category_by_fingerprint(self._ledger_db_path, fp, new_category)
+                category_store_link_backup(transaction_id, new_category)
+                prev = (previous_category or "").strip()
+                if prev and prev != new_category:
+                    sm = self.stores_df["store_name"] == store_name
+                    cm = self.stores_df["category"] == prev
+                    if (sm & cm).any():
+                        self.stores_df.loc[sm & cm, "category"] = new_category
+                        self.save_stores()
+                return
+
+            mask = mask_rows_by_stable_id(self.transactions_df, str(transaction_id))
             if not mask.any():
                 raise ValueError("transaction not in compiled file")
-            self.file_df.loc[mask, "קטגוריה"] = new_category
-            self.save_progress()
-            if "fingerprint" in self.file_df.columns:
-                fingerprint = self.file_df.loc[mask, "fingerprint"].iloc[0]
+            self.transactions_df.loc[mask, "קטגוריה"] = new_category
+            if "fingerprint" in self.transactions_df.columns:
+                fingerprint = self.transactions_df.loc[mask, "fingerprint"].iloc[0]
                 if pd.notna(fingerprint):
-                    update_category_in_fingerprint_db(fingerprint, new_category)
-            self.category_store_link_backup(transaction_id, new_category)
+                    self._queue_ledger_category(fingerprint, new_category)
+                    if not self._ledger_db_path:
+                        update_category_in_fingerprint_db(fingerprint, new_category)
+            self.save_progress()
+            category_store_link_backup(transaction_id, new_category)
             prev = (previous_category or "").strip()
             if prev and prev != new_category:
                 sm = self.stores_df["store_name"] == store_name
@@ -232,6 +289,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 raise ValueError("store/category not in stores list")
             self.stores_df.loc[m, "is_static"] = int(is_static)
             self.save_stores()
+            self._ledger_forward_fill_uncategorized_if_static(store_name, is_static)
 
     def apply_session_new_store_static_revision(self, store_name: str, category: str, is_static: int) -> None:
         """Set is_static for an existing (store_name, category) row after the user revises new_store."""
@@ -244,6 +302,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 raise ValueError("store mapping not found")
             self.stores_df.loc[m, "is_static"] = int(is_static)
             self.save_stores()
+            self._ledger_forward_fill_uncategorized_if_static(store_name, is_static)
 
     def categorize_storename(self, row_data, method='auto', interaction_handler=None):
         store_name: str = row_data['מקור עסקה']
@@ -411,22 +470,38 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         )
 
     def _persist_category_for_transaction(self, transaction_id: str, category: str) -> None:
-        row_mask = mask_rows_by_stable_id(self.file_df, str(transaction_id))
+        if self._ledger_db_path:
+            from pipeline.ledger import load_ledger_transaction_by_stable_id
+            from pipeline.ledger import update_category_by_fingerprint
+
+            row = load_ledger_transaction_by_stable_id(self._ledger_db_path, str(transaction_id))
+            if row is None:
+                raise ValueError("transaction not in ledger")
+            fp = str(row.get("fingerprint", "")).strip()
+            if not fp:
+                raise ValueError("transaction has no fingerprint")
+            with self._io_lock:
+                update_category_by_fingerprint(self._ledger_db_path, fp, category)
+            category_store_link_backup(transaction_id, category)
+            return
+
+        row_mask = mask_rows_by_stable_id(self.transactions_df, str(transaction_id))
         with self._io_lock:
-            self.file_df.loc[row_mask, "קטגוריה"] = category
-            self.save_progress()
-            if "fingerprint" in self.file_df.columns:
-                fingerprint = self.file_df.loc[row_mask, "fingerprint"].iloc[0]
+            self.transactions_df.loc[row_mask, "קטגוריה"] = category
+            if "fingerprint" in self.transactions_df.columns:
+                fingerprint = self.transactions_df.loc[row_mask, "fingerprint"].iloc[0]
                 if pd.notna(fingerprint):
-                    update_category_in_fingerprint_db(fingerprint, category)
-        self.category_store_link_backup(transaction_id, category)
+                    self._queue_ledger_category(fingerprint, category)
+                    if not self._ledger_db_path:
+                        update_category_in_fingerprint_db(fingerprint, category)
+            self.save_progress()
+        category_store_link_backup(transaction_id, category)
 
     def apply_manual_http_response(self, row_data, kind: str, data: dict) -> None:
         """Apply one queue answer (first unanswered row only); same side effects as interactive input."""
         self.load_stores()
         store_name = str(row_data["מקור עסקה"])
         transaction_id = stable_transaction_key(row_data)
-        row_mask = mask_rows_by_stable_id(self.file_df, transaction_id)
 
         if kind == "fluid":
             category_input = (data.get("category") or "").strip()
@@ -469,6 +544,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             self.stores_df.loc[self.stores_df["store_name"] == store_name, "is_static"] = int(v)
             self.save_stores()
             self._persist_category_for_transaction(transaction_id, str(category))
+            self._ledger_forward_fill_uncategorized_if_static(store_name, int(v))
             return
 
         if kind == "new_store":
@@ -486,6 +562,7 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
             self.stores_df.loc[len(self.stores_df)] = new_row
             self.save_stores()
             self._persist_category_for_transaction(transaction_id, category_input)
+            self._ledger_forward_fill_uncategorized_if_static(store_name, int(v))
             return
 
         raise ValueError("unknown kind")
@@ -497,16 +574,29 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         if not tid or not kind:
             return "prompt_id and kind required"
         self.load_stores()
-        row_mask = mask_rows_by_stable_id(self.file_df, tid)
-        if not row_mask.any():
-            return "transaction not in compiled file"
-        store_name = str(self.file_df.loc[row_mask, "מקור עסקה"].iloc[0])
+        ldb_row = None
+        row_mask = None
+        if self._ledger_db_path:
+            from pipeline.ledger import load_ledger_transaction_by_stable_id
+
+            ldb_row = load_ledger_transaction_by_stable_id(self._ledger_db_path, tid)
+            if ldb_row is None:
+                return "transaction not in compiled file"
+            store_name = str(ldb_row["מקור עסקה"])
+        else:
+            row_mask = mask_rows_by_stable_id(self.transactions_df, tid)
+            if not row_mask.any():
+                return "transaction not in compiled file"
+            store_name = str(self.transactions_df.loc[row_mask, "מקור עסקה"].iloc[0])
         try:
             if kind == "fluid":
                 new_cat = (data.get("category") or "").strip()
                 if not new_cat:
                     return "category required"
-                prev = str(self.file_df.loc[row_mask, "קטגוריה"].iloc[0])
+                if self._ledger_db_path:
+                    prev = str(ldb_row.get("קטגוריה", "") or "")
+                else:
+                    prev = str(self.transactions_df.loc[row_mask, "קטגוריה"].iloc[0])
                 self.apply_session_category_revision(
                     tid, store_name, new_cat, previous_category=prev
                 )
@@ -517,7 +607,10 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                     return "category required"
                 if v not in (0, 1):
                     return "is_static must be 0 or 1"
-                prev_cat = str(self.file_df.loc[row_mask, "קטגוריה"].iloc[0])
+                if self._ledger_db_path:
+                    prev_cat = str(ldb_row.get("קטגוריה", "") or "")
+                else:
+                    prev_cat = str(self.transactions_df.loc[row_mask, "קטגוריה"].iloc[0])
                 if str(prev_cat or "").strip() != new_cat:
                     self.apply_session_category_revision(
                         tid, store_name, new_cat, previous_category=prev_cat
@@ -545,10 +638,14 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         return None
 
     def count_rows_needing_category(self) -> int:
-        """Fast count from current ``file_df`` (no auto pass)."""
-        if self.file_df is None or self.file_df.empty:
+        """Rows still needing a manual category (ledger: live query; CSV: ``transactions_df``)."""
+        if self._ledger_db_path:
+            from pipeline.ledger import count_transactions_needing_manual_category
+
+            return count_transactions_needing_manual_category(self._ledger_db_path)
+        if self.transactions_df is None or self.transactions_df.empty:
             return 0
-        col = self.file_df["קטגוריה"]
+        col = self.transactions_df["קטגוריה"]
         return int(col.map(lambda c: category_cell_needs_manual(c)).sum())
 
     def load_known_transactions(self):
@@ -564,21 +661,48 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         return None
 
     def auto_categorize(self):
-        log.info("auto_categorize: rows=%s file=%s", len(self.file_df), self.file_path)
+        if self._ledger_db_path:
+            from pipeline.ledger import count_ledger_transaction_rows
+            from pipeline.ledger import count_transactions_needing_manual_category
+            from pipeline.ledger import forward_fill_uncategorized_for_static_stores_sql
+            from pipeline.ledger import load_transactions_dataframe_from_ledger
+
+            total_rows = (
+                len(self.transactions_df)
+                if self._materialize_transactions
+                else count_ledger_transaction_rows(self._ledger_db_path)
+            )
+            log.info("auto_categorize: rows=%s file=%s", total_rows, self.file_path)
+            self.awaiting_df = pd.DataFrame(columns=self.transactions_df.columns)
+            n = forward_fill_uncategorized_for_static_stores_sql(self._ledger_db_path)
+            if n:
+                log.info("auto_categorize (ledger): forward_fill static stores → %s row(s)", n)
+            if self._materialize_transactions:
+                self.transactions_df = load_transactions_dataframe_from_ledger(self._ledger_db_path)
+            awaiting = count_transactions_needing_manual_category(self._ledger_db_path)
+            if awaiting:
+                log.info("auto_categorize: %s rows still awaiting manual category", awaiting)
+            else:
+                log.info("auto_categorize: complete (no awaiting rows)")
+            return
+
+        log.info("auto_categorize: rows=%s file=%s", len(self.transactions_df), self.file_path)
+        self.awaiting_df = pd.DataFrame(columns=self.transactions_df.columns)
+
         progress_dirty = False
         if self._use_legacy_fingerprint_csv_sidecar():
             try:
                 fp_db = pd.read_csv(config.fingerprint_db_file)
-                if "category" in fp_db.columns and "fingerprint" in self.file_df.columns:
+                if "category" in fp_db.columns and "fingerprint" in self.transactions_df.columns:
                     fp_db.dropna(subset=["category", "fingerprint"], inplace=True)
                     fp_db = fp_db[fp_db["category"] != ""]
                     category_map = pd.Series(fp_db.category.values, index=fp_db.fingerprint).to_dict()
 
-                    uncategorized_mask = self.file_df["קטגוריה"].fillna("").eq("")
-                    fingerprints_to_map = self.file_df.loc[uncategorized_mask, "fingerprint"]
+                    uncategorized_mask = self.transactions_df["קטגוריה"].fillna("").eq("")
+                    fingerprints_to_map = self.transactions_df.loc[uncategorized_mask, "fingerprint"]
 
                     new_categories = fingerprints_to_map.map(category_map)
-                    self.file_df.loc[uncategorized_mask, "קטגוריה"] = self.file_df.loc[
+                    self.transactions_df.loc[uncategorized_mask, "קטגוריה"] = self.transactions_df.loc[
                         uncategorized_mask, "קטגוריה"
                     ].fillna(new_categories)
 
@@ -593,31 +717,41 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         if k_t is None:
             k_t = pd.DataFrame(columns=['transaction_id', 'category'])
         self.load_stores()
-        for index, row in self.file_df.iterrows():
+        for index, row in self.transactions_df.iterrows():
             sid = stable_transaction_key(row)
             if len(k_t[k_t["transaction_id"] == sid]) == 1:
                 category = k_t[k_t["transaction_id"] == sid]["category"].values[0]
-                if category != row["קטגוריה"]:
-                    self.file_df.loc[index, "קטגוריה"] = category
+                if _normalized_category_value(category) != _normalized_category_value(
+                    self.transactions_df.loc[index, "קטגוריה"]
+                ):
+                    self.transactions_df.loc[index, "קטגוריה"] = category
+                    fp = row["fingerprint"] if "fingerprint" in row.index else None
+                    self._queue_ledger_category(fp, category)
                     progress_dirty = True
                     log.debug("Category from backup for id=%s -> %s", sid, category)
-                    self.category_store_link_backup(sid, category)
+                    category_store_link_backup(sid, category)
 
-            if row["קטגוריה"] == "" or row["קטגוריה"] == "awaiting" or pd.isna(row["קטגוריה"]):
-                category = self.categorize_storename(row, method="auto")
-                self.file_df.loc[index, "קטגוריה"] = category if category is not None else ""
-                progress_dirty = True
-                if category is None:
-                    self.awaiting_df.loc[len(self.awaiting_df)] = row
+            cur = self.transactions_df.loc[index, "קטגוריה"]
+            if category_cell_needs_manual(cur):
+                category = self.categorize_storename(self.transactions_df.loc[index], method="auto")
+                new_val = category if category is not None else ""
+                if _normalized_category_value(new_val) != _normalized_category_value(cur):
+                    self.transactions_df.loc[index, "קטגוריה"] = new_val
+                    fp = row["fingerprint"] if "fingerprint" in row.index else None
+                    self._queue_ledger_category(fp, new_val)
+                    progress_dirty = True
                 if category is not None:
-                    if not self._ledger_db_path and "fingerprint" in row:
+                    if not self._ledger_db_path and "fingerprint" in row.index:
                         update_category_in_fingerprint_db(row["fingerprint"], category)
-                    self.category_store_link_backup(sid, category)
+                    category_store_link_backup(sid, category)
+                else:
+                    if not self._ledger_db_path:
+                        self.awaiting_df.loc[len(self.awaiting_df)] = self.transactions_df.loc[index]
             else:
-                if not self._ledger_db_path and "fingerprint" in row:
+                if not self._ledger_db_path and "fingerprint" in row.index:
                     update_category_in_fingerprint_db(row["fingerprint"], row["קטגוריה"])
-                self.category_store_link_backup(sid, row["קטגוריה"])
-        if progress_dirty:
+                category_store_link_backup(sid, row["קטגוריה"])
+        if progress_dirty or self._ledger_category_dirty:
             self.save_progress()
         awaiting = len(self.awaiting_df)
         if awaiting:
@@ -625,10 +759,14 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
         else:
             log.info("auto_categorize: complete (no awaiting rows)")
 
-    def manual_categorizer(self, through='input', interaction_handler=None):
+    def manual_categorizer(self, through="input", interaction_handler=None):
+        if through.lower() != "input":
+            raise ValueError("engine must be 'input'")
+        if self._ledger_db_path:
+            self._manual_categorizer_ledger(through, interaction_handler)
+            return
+
         log.info("manual_categorizer: engine=%s awaiting rows=%s", through, len(self.awaiting_df))
-        if through.lower() not in ['input', 'discord']:
-            raise ValueError("you must specify an engine manually (input, discord)")
         self.load_stores()
         h = interaction_handler or self.interaction
         try:
@@ -636,14 +774,16 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 if row['קטגוריה'] == "" or row['קטגוריה'] == "awaiting" or pd.isna(row['קטגוריה']):
                     category = self.categorize_storename(row, method='input', interaction_handler=h)
 
-                    row_mask = mask_rows_by_stable_id(self.file_df, stable_transaction_key(row))
+                    row_mask = mask_rows_by_stable_id(self.transactions_df, stable_transaction_key(row))
                     with self._io_lock:
-                        self.file_df.loc[row_mask, 'קטגוריה'] = category
-                        self.save_progress()
-                        if 'fingerprint' in self.file_df.columns:
-                            fingerprint = self.file_df.loc[row_mask, 'fingerprint'].iloc[0]
+                        self.transactions_df.loc[row_mask, 'קטגוריה'] = category
+                        if 'fingerprint' in self.transactions_df.columns:
+                            fingerprint = self.transactions_df.loc[row_mask, 'fingerprint'].iloc[0]
                             if pd.notna(fingerprint):
-                                update_category_in_fingerprint_db(fingerprint, category)
+                                self._queue_ledger_category(fingerprint, category)
+                                if not self._ledger_db_path:
+                                    update_category_in_fingerprint_db(fingerprint, category)
+                        self.save_progress()
 
                 self.awaiting_df.drop(index=index, inplace=True)
         finally:
@@ -652,243 +792,59 @@ class CategorizeFile:  # PRE COMPILER.. DATA FROM CLEAN DIR
                 closer()
         log.info("manual_categorizer: loop complete, awaiting_df rows=%s", len(self.awaiting_df))
 
-    @staticmethod
-    def fix_null_category_status():
-        fix_amount = 10
-        while fix_amount > 0:
-            if os.path.isfile(config.ledger_db_file):
-                from pipeline.ledger import load_stores_dataframe_from_ledger
+    def _manual_categorizer_ledger(self, through: str, interaction_handler) -> None:
+        """SQLite: pull next uncategorized row, prompt, ``UPDATE`` — no dataframe staging."""
+        from pipeline.ledger import count_transactions_needing_manual_category
+        from pipeline.ledger import load_first_transaction_needing_manual_category
+        from pipeline.ledger import load_transactions_dataframe_from_ledger
+        from pipeline.ledger import update_category_by_fingerprint
 
-                stores_df = load_stores_dataframe_from_ledger(config.ledger_db_file)
-            else:
-                stores_df = pd.read_csv(config.stores_to_categories_file)
-            fix_amount = len(stores_df[stores_df['is_static'] == -1])
-            for index, row in stores_df.iterrows():
-                category = row['category']
-                store_name = row['store_name']
-                if row['is_static'] not in [1, 0]:
-                    log.info(
-                        "fix_null_category_status: store=%s category=%s",
-                        _terminal_bidi(row["store_name"]),
-                        _terminal_bidi(row["category"]),
-                    )
-                    is_static_input = input(
-                        f"Is this category: [{_terminal_bidi(category)}] for {_terminal_bidi(store_name)} static?"
-                        f"\n (Type '0' if dynamic, type '1' if static): ")
-                    is_static = int(is_static_input) if int(is_static_input) in [1, 0] else -1
-                    stores_df.loc[stores_df["store_name"] == store_name, "is_static"] = is_static
-                    if os.path.isfile(config.ledger_db_file):
-                        from pipeline.ledger import sync_stores_to_ledger_from_dataframe
-
-                        sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
-                    else:
-                        stores_df.to_csv(config.stores_to_categories_file, index=False)
-                    fix_amount -= 1
+        self.load_stores()
+        h = interaction_handler or self.interaction
+        n_open = count_transactions_needing_manual_category(self._ledger_db_path)
+        log.info("manual_categorizer (ledger): engine=%s rows_needing_category=%s", through, n_open)
+        try:
+            while True:
+                row = load_first_transaction_needing_manual_category(self._ledger_db_path)
+                if row is None:
                     break
+                category = self.categorize_storename(row, method="input", interaction_handler=h)
+                fp = row.get("fingerprint")
+                if fp is None or (isinstance(fp, float) and pd.isna(fp)) or not str(fp).strip():
+                    log.warning("manual_categorizer: skip row without fingerprint")
+                    continue
+                update_category_by_fingerprint(self._ledger_db_path, str(fp).strip(), category)
+        finally:
+            closer = getattr(h, "close", None)
+            if callable(closer):
+                closer()
+        self.transactions_df = load_transactions_dataframe_from_ledger(self._ledger_db_path)
+        log.info(
+            "manual_categorizer (ledger): complete; remaining=%s",
+            count_transactions_needing_manual_category(self._ledger_db_path),
+        )
 
-    @staticmethod
-    def fix_nan_category():
-        if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger import load_stores_dataframe_from_ledger
+    def _ledger_forward_fill_uncategorized_if_static(self, store_name: str, is_static: int) -> None:
+        """Bulk-fill other uncategorized rows for this store when it is static (never overwrites set categories)."""
+        if not self._ledger_db_path or int(is_static) != 1:
+            return
+        from pipeline.ledger import forward_fill_uncategorized_for_store_if_static_sql
 
-            stores_df = load_stores_dataframe_from_ledger(config.ledger_db_file)
-        else:
-            stores_df = pd.read_csv(config.stores_to_categories_file)
-        categories_to_check = set(stores_df["category"].tolist())
-        stores_df["category"].fillna("NULL")
-        if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger import sync_stores_to_ledger_from_dataframe
-
-            sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
-        else:
-            stores_df.to_csv(config.stores_to_categories_file, index=False)
-
-    @staticmethod
-    def fix_similar_categories_in_file():
-        log.info("fix_similar_categories_in_file: starting")
-        if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger import (
-                load_known_transactions_backup_from_ledger,
-                load_stores_dataframe_from_ledger,
-                load_transactions_dataframe_from_ledger,
+        n = forward_fill_uncategorized_for_store_if_static_sql(
+            self._ledger_db_path,
+            str(store_name).strip(),
+        )
+        if n:
+            log.info(
+                "ledger forward_fill: %s uncategorized row(s) for store %r (static)",
+                n,
+                store_name,
             )
 
-            stores_df = load_stores_dataframe_from_ledger(config.ledger_db_file)
-            compiled_df = load_transactions_dataframe_from_ledger(config.ledger_db_file)
-            backup_df = (
-                load_known_transactions_backup_from_ledger(config.ledger_db_file)
-                or pd.DataFrame(columns=["transaction_id", "category"])
-            )
-            import sqlite3
-
-            conn = sqlite3.connect(config.ledger_db_file)
-            try:
-                linked_pairs = pd.read_sql_query(
-                    "SELECT p1, p2 FROM similar_category_pair", conn
-                )
-            finally:
-                conn.close()
-        else:
-            stores_df = pd.read_csv(config.stores_to_categories_file)
-            compiled_df = pd.read_csv(config.compiled_file)
-            backup_df = pd.read_csv(config.transaction_category_file)
-            linked_pairs = pd.read_csv(similar_categories_file)
-        stores_df["category"] = stores_df["category"].replace(nan, "NULL")
-        categories_to_check = set(stores_df["category"].tolist())
-        not_to_check = []
-
-        for category in categories_to_check:
-            if category not in not_to_check:
-                ans = difflib.get_close_matches(category, categories_to_check, n=3)
-                if len(ans) > 1:
-                    match_ratio = difflib.SequenceMatcher(None, ans[0], ans[1]).ratio()
-                    if match_ratio > 0.7:
-                        pair = [ans[0], ans[1]]
-                        if pair in linked_pairs.values.tolist() or list(reversed(pair)) in linked_pairs.values.tolist():
-                            continue
-                        log.info("Similar categories check for: %s", _terminal_bidi(category))
-                        for i, option in enumerate(ans, 1):
-                            log.info("  %s. %s", i, _terminal_bidi(option))
-                        ans_input = input(f"Choose:\n1. Keep first\n2. Keep second\n3. Keep both\n")
-                        if ans_input in ['1', '2']:
-                            choice = int(ans_input) - 1
-                            category = ans[choice]
-                            stores_df.loc[((stores_df['category'] == ans[0]) | (
-                                    stores_df['category'] == ans[1])), 'category'] = category
-                            backup_df.loc[((backup_df['category'] == ans[0]) | (
-                                    backup_df['category'] == ans[1])), 'category'] = category
-                            compiled_df.loc[(compiled_df['קטגוריה'] == ans[0]) | (
-                                    compiled_df['קטגוריה'] == ans[1]), 'קטגוריה'] = category
-                        not_to_check.extend(ans)
-                        if ans_input == "3":
-                            linked_pairs.loc[len(linked_pairs)] = pair
-        if os.path.isfile(config.ledger_db_file):
-            import sqlite3
-
-            from pipeline.ledger import upsert_compiled_dataframe_to_ledger
-            from pipeline.ledger import sync_stores_to_ledger_from_dataframe
-
-            sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
-            upsert_compiled_dataframe_to_ledger(compiled_df, config.ledger_db_file)
-            conn = sqlite3.connect(config.ledger_db_file)
-            try:
-                conn.execute("PRAGMA foreign_keys = ON")
-                conn.execute("DELETE FROM similar_category_pair")
-                if not linked_pairs.empty:
-                    conn.executemany(
-                        "INSERT INTO similar_category_pair (p1, p2) VALUES (?, ?)",
-                        [(str(r["p1"]), str(r["p2"])) for _, r in linked_pairs.iterrows()],
-                    )
-                conn.commit()
-            finally:
-                conn.close()
-        else:
-            linked_pairs.to_csv(config.similar_categories_file, index=False)
-            stores_df.to_csv(config.stores_to_categories_file, index=False)
-            compiled_df.to_csv(config.compiled_file, index=False)
-            backup_df.to_csv(config.transaction_category_file, index=False)
-
-    @staticmethod
-    def rename_category(old_name, new_name):
-        pass
-
-    @staticmethod
-    def category_store_link_backup(transaction_id, category):
-        if os.path.isfile(config.ledger_db_file):
-            return
-        if not os.path.isfile(config.transaction_category_file):
-            data = {"transaction_id": [transaction_id], "category": [category]}
-            df = pd.DataFrame(data=data)
-            df.to_csv(config.transaction_category_file, index=False)
-        else:
-            data = {"transaction_id": transaction_id, "category": category}
-            df = pd.read_csv(config.transaction_category_file)
-            exists = df.loc[df["transaction_id"] == transaction_id]
-            if exists.empty:
-                df.loc[len(df)] = data
-            else:
-                df.loc[df["transaction_id"] == transaction_id, "category"] = category
-            df.drop_duplicates(subset=["transaction_id"], inplace=True, keep="last")
-            df.to_csv(config.transaction_category_file, index=False)
-
-    @staticmethod
-    def update_store_category(store_name, category):
-        if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger import load_stores_dataframe_from_ledger
-
-            df = load_stores_dataframe_from_ledger(config.ledger_db_file)
-        else:
-            df = pd.read_csv(config.stores_to_categories_file)
-        match = df[df["store_name"] == store_name]
-        if len(match) >= 2:
-            df.loc[df['store_name'] == store_name, 'is_static'] = 0
-            if len(match.loc[match['category'] == category]) == 0:
-                df.loc[len(df)] = [store_name, category, 0]
-            else:
-                df.drop_duplicates(subset=['store_name', 'category'], inplace=True)
-        elif len(match) == 1:
-            if match['category'].item() != category:
-                if match['is_static'].item() == 1:
-                    log.warning(
-                        "Store %s: new category %s vs existing static %s",
-                        _terminal_bidi(store_name),
-                        _terminal_bidi(category),
-                        _terminal_bidi(match["category"].item()),
-                    )
-                    ans = input(
-                        "Type: \n1 to modify current static category for store. \n2 to change store to dynamic and add "
-                        "category.\n3 to ignore.\n")
-                    if ans == '1':
-                        df.loc[df['store_name'] == store_name, 'category'] = category
-                    elif ans == '2':
-                        df.loc[df['store_name'] == store_name, 'is_static'] = 0
-                        df.loc[len(df)] = [store_name, category, 0]
-                    else:
-                        log.info("User skipped category update (option 3 or invalid)")
-                        return
-                if match['is_static'].item() == 0:
-                    df.loc[len(df)] = [store_name, category, 0]
-        else:
-            log.error("update_store_category: store not in stores file (no match)")
-            return
-        if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger import sync_stores_to_ledger_from_dataframe
-
-            sync_stores_to_ledger_from_dataframe(config.ledger_db_file, df)
-            return
-        df.to_csv(config.stores_to_categories_file, index=False)
-
-    @staticmethod
-    def dupe_seeker():
-        if os.path.isfile(config.ledger_db_file):
-            from pipeline.ledger import load_transactions_dataframe_from_ledger
-
-            log.info("dupe_seeker: scanning ledger %s", config.ledger_db_file)
-            df = load_transactions_dataframe_from_ledger(config.ledger_db_file)
-        else:
-            log.info("dupe_seeker: scanning %s", config.compiled_file)
-            df = pd.read_csv(config.compiled_file)
-
-        grouped_expenses = df[df['בחובה'] != 0].groupby(['תאריך', 'בחובה']).size().reset_index(name='counts')
-        filtered_groups = grouped_expenses[grouped_expenses['counts'] > 1]
-        result_expenses = pd.merge(df, filtered_groups[['תאריך', 'בחובה']], on=['תאריך', 'בחובה'], how='inner')
-
-        grouped_incomes = df[df['בזכות'] != 0].groupby(['תאריך', 'בזכות']).size().reset_index(name='counts')
-        filtered_groups = grouped_incomes[grouped_incomes['counts'] > 1]
-        result_incomes = pd.merge(df, filtered_groups[['תאריך', 'בזכות']], on=['תאריך', 'בזכות'], how='inner')
-
-        log.info("Duplicate expense rows (by date+amount): %s", len(result_expenses))
-        log.debug("Expense dupes:\n%s", result_expenses)
-        log.info("Duplicate income rows (by date+amount): %s", len(result_incomes))
-        log.debug("Income dupes:\n%s", result_incomes)
-
-
-if __name__ == "__main__":
-    # main_df = pd.read_csv(config.compiled_file)
-    # kt_df = pd.read_csv(config.transaction_category_file)
-    # missing_transactions = main_df[~main_df['מזהה עסקה'].isin(kt_df['transaction_id'])]
-    # print(missing_transactions)
-    f = CategorizeFile(ledger_db_path=config.ledger_db_file)
-    # f.fix_categories()
-    # f.auto_categorize()
-    # f.manual_categorizer()
+CategorizeFile.fix_null_category_status = staticmethod(_maintenance.fix_null_category_status)
+CategorizeFile.fix_nan_category = staticmethod(_maintenance.fix_nan_category)
+CategorizeFile.fix_similar_categories_in_file = staticmethod(_maintenance.fix_similar_categories_in_file)
+CategorizeFile.rename_category = staticmethod(_maintenance.rename_category)
+CategorizeFile.category_store_link_backup = staticmethod(_maintenance.category_store_link_backup)
+CategorizeFile.update_store_category = staticmethod(_maintenance.update_store_category)
+CategorizeFile.dupe_seeker = staticmethod(_maintenance.dupe_seeker)

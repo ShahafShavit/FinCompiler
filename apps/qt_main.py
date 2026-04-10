@@ -11,6 +11,7 @@ from PyQt6 import QtWidgets, uic
 import config
 import pipeline
 from categorization import create_interaction_handler
+from categorization import maintenance
 from categorization.categorizer import CategorizeFile
 from integrations import google_sheets
 from logger import Logger, configure_pipeline_logging
@@ -242,15 +243,15 @@ def ui():
 
     @log_process
     def fix_null_category():
-        CategorizeFile.fix_null_category_status()
+        maintenance.fix_null_category_status()
 
     @log_process
     def fix_similar_categories():
-        CategorizeFile.fix_similar_categories_in_file()
+        maintenance.fix_similar_categories_in_file()
 
     @log_process
     def dupe_seeker():
-        CategorizeFile.dupe_seeker()
+        maintenance.dupe_seeker()
 
     @log_process
     def push_monthly_look():
