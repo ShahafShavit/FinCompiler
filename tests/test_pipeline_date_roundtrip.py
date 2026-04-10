@@ -27,7 +27,7 @@ from pipeline.csv_handler import (
 
 
 def _compile_stage_parse(date_str: object) -> pd.Timestamp:
-    """Same rules as ``Compiler.__compile_new__`` after separator standardization."""
+    """Same rules as ``normalize_transaction_import_dates`` / legacy compile date normalization."""
     s = re.sub(r"[-/.]", "-", str(date_str))
     return parse_post_ingest_date_scalar(s)
 

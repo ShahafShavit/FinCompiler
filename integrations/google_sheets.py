@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -367,9 +368,13 @@ class GSLink:
 def push_monthly_look(gsh):
     print("Pushing updated monthly look...")
 
-    # Read the CSV file
-    df = pd.read_csv(config.compiled_file)
-    df['תאריך'] = compile_handler.parse_post_ingest_date_column(df['תאריך'])
+    if os.path.isfile(config.ledger_db_file):
+        from pipeline.ledger import load_transactions_dataframe_from_ledger
+
+        df = load_transactions_dataframe_from_ledger(config.ledger_db_file)
+    else:
+        df = pd.read_csv(config.compiled_file)
+    df["תאריך"] = compile_handler.parse_post_ingest_date_column(df["תאריך"])
     df['Month-Year'] = df['תאריך'].dt.to_period('M')
 
     # Creating a new column to distinguish between expenses and income

@@ -62,6 +62,25 @@ def parse_post_ingest_date_column(series: pd.Series) -> pd.Series:
     return series.map(parse_post_ingest_date_scalar)
 
 
+def normalize_transaction_import_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardize ``תאריך`` on a **new-import** transaction frame (same rules as legacy ``__compile_new__``).
+    """
+    if df.empty or "תאריך" not in df.columns:
+        return df
+
+    def standardize_date_format(date_str: object) -> str:
+        return re.sub(r"[-/.]", "-", str(date_str))
+
+    out = df.copy()
+    out["תאריך"] = out["תאריך"].apply(standardize_date_format)
+    out["תאריך"] = parse_post_ingest_date_column(out["תאריך"])
+    out["תאריך"] = out["תאריך"].dt.date
+    out.sort_values(by="תאריך", inplace=True)
+    out.reset_index(drop=True, inplace=True)
+    return out
+
+
 def update_category_in_fingerprint_db(fingerprint, category):
     """
     Updates ``קטגוריה`` on ``ledger_transaction`` for ``fingerprint``.
@@ -92,11 +111,13 @@ def _is_holdings_staging_path(path: str) -> bool:
 class Compiler:
     def __init__(self, path_to_main: str | None = None, *, ledger_db: str | None = None):
         """
-        Transactions path: pass ``ledger_db=config.ledger_db_file`` (``path_to_main`` optional,
-        defaults to ``config.compiled_file`` for merged CSV staging + optional seed from disk).
+        Legacy **CSV-only** compile: ``path_to_main`` is the merged ledger CSV.
 
-        Holdings path: ``path_to_main=config.holdings_file``; pass ``ledger_db`` to load/store
-        ``holdings_balance`` in SQLite (merged CSV is staging only).
+        **Holdings + SQLite:** ``path_to_main=config.holdings_file`` and ``ledger_db`` — loads
+        current wide balances from ``holdings_balance`` for merge with new clean CSVs.
+
+        **Transactions + SQLite:** use :func:`pipeline.ingest_transactions_to_ledger` instead
+        of ``Compiler`` (direct upsert; no full-ledger pandas merge).
         """
         if ledger_db is None and not path_to_main:
             raise ValueError("path_to_main is required when not using ledger_db")
@@ -120,37 +141,11 @@ class Compiler:
             long_df = load_holdings_long_dataframe(ledger_db)
             self.main_df = holdings_long_to_wide(long_df)
             log.debug("Loaded holdings wide rows=%s from %s", len(self.main_df), ledger_db)
-            if self.main_df.empty and os.path.isfile(self.main_file):
-                try:
-                    seed = pd.read_csv(self.main_file)
-                except (FileNotFoundError, pandas.errors.EmptyDataError, OSError):
-                    seed = pd.DataFrame()
-                if not seed.empty:
-                    log.info(
-                        "holdings_balance empty: seeding from staging CSV %s (%s wide rows)",
-                        self.main_file,
-                        len(seed),
-                    )
-                    self.main_df = seed
         elif ledger_db:
-            from pipeline.ledger import load_transactions_dataframe_from_ledger
-            from pipeline.ledger import migrate_ledger_db
-
-            migrate_ledger_db(ledger_db)
-            self.main_df = load_transactions_dataframe_from_ledger(ledger_db)
-            log.debug("Loaded ledger rows=%s from %s", len(self.main_df), ledger_db)
-            if self.main_df.empty and os.path.isfile(self.main_file):
-                try:
-                    seed = pd.read_csv(self.main_file)
-                except (FileNotFoundError, pandas.errors.EmptyDataError, OSError):
-                    seed = pd.DataFrame()
-                if not seed.empty:
-                    log.info(
-                        "Ledger empty: seeding working state from merged staging CSV %s (%s rows)",
-                        self.main_file,
-                        len(seed),
-                    )
-                    self.main_df = seed
+            raise ValueError(
+                "Compiler(ledger_db=...) is only valid with path_to_main=config.holdings_file; "
+                "for transactions use ingest_transactions_to_ledger()"
+            )
         else:
             try:
                 self.main_df = pd.read_csv(self.main_file)
@@ -163,10 +158,6 @@ class Compiler:
     def __compile_new__(self, path_to_files, suffix):
         log.info("__compile_new__: path=%s suffix=%s", path_to_files, suffix)
         self.suffix = suffix
-
-        def standardize_date_format(date_str):
-            date_str = str(date_str)
-            return re.sub(r'[-/.]', '-', date_str)
 
         file_list = glob.glob(os.path.join(path_to_files, '*.csv'))
         log.debug("Found %s csv file(s) under %s", len(file_list), path_to_files)
@@ -182,11 +173,7 @@ class Compiler:
 
         self.new_df = pd.concat(new_df_list, ignore_index=True)
         log.info("Concatenated new_df rows=%s", len(self.new_df))
-        self.new_df['תאריך'] = self.new_df['תאריך'].apply(standardize_date_format)
-        self.new_df['תאריך'] = parse_post_ingest_date_column(self.new_df['תאריך'])
-        self.new_df['תאריך'] = self.new_df['תאריך'].dt.date
-        self.new_df.sort_values(by='תאריך', inplace=True)
-        self.new_df.reset_index(drop=True, inplace=True)
+        self.new_df = normalize_transaction_import_dates(self.new_df)
 
     def compile_to_main(self):
         log.info("compile_to_main: new_df empty=%s", self.new_df.empty)
@@ -240,7 +227,9 @@ class Compiler:
             concat_df = pd.concat([self.main_df, self.new_df], ignore_index=True)
             concat_df['תאריך'] = parse_post_ingest_date_column(concat_df['תאריך'])
             concat_df.drop_duplicates(subset=['תאריך'], ignore_index=True, inplace=True, keep='last')
-            concat_df.fillna(value=0.0, inplace=True)
+            _hcols = [c for c in concat_df.columns if c != "תאריך"]
+            if _hcols:
+                concat_df[_hcols] = concat_df[_hcols].fillna(value=0.0)
             self.main_df = concat_df
             self.main_df['תאריך'] = parse_post_ingest_date_column(self.main_df['תאריך'])
             self.main_df.sort_values(by='תאריך', inplace=True)
@@ -299,31 +288,18 @@ class Compiler:
     def save_main(self):
         if self.ledger_db:
             from pipeline.holdings_csv_import import upsert_holdings_wide_to_ledger
-            from pipeline.ledger import upsert_compiled_dataframe_to_ledger
 
+            if not self._holdings_ledger:
+                raise ValueError("Compiler.save_main with ledger_db is only supported for holdings wide merge")
             parent = os.path.dirname(os.path.abspath(self.main_file))
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            self.main_df.to_csv(self.main_file, index=False)
-            if self._holdings_ledger:
-                log.info(
-                    "Wrote merged staging holdings CSV %s (%s rows); upserting holdings_balance",
-                    self.main_file,
-                    len(self.main_df),
-                )
-                upsert_holdings_wide_to_ledger(self.main_df, self.ledger_db)
-                log.info(
-                    "Committed holdings to SQLite %s (holdings_balance rows reflect DB PK dedupe)",
-                    self.ledger_db,
-                )
-                return self.ledger_db
+            upsert_holdings_wide_to_ledger(self.main_df, self.ledger_db)
             log.info(
-                "Wrote merged staging CSV %s (%s rows); upserting into SQLite",
-                self.main_file,
+                "Committed holdings to SQLite %s (%s wide rows)",
+                self.ledger_db,
                 len(self.main_df),
             )
-            upsert_compiled_dataframe_to_ledger(self.main_df, self.ledger_db)
-            log.info("Committed main ledger SQLite %s (%s rows)", self.ledger_db, len(self.main_df))
             return self.ledger_db
         self.main_df.to_csv(self.main_file, index=False)
         log.info("Wrote main ledger %s (%s rows)", self.main_file, len(self.main_df))

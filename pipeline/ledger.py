@@ -1,5 +1,5 @@
 """Ledger SQLite operations: migrations, audit, dataframe I/O, category updates, fingerprint backfill,
-web totals CSV load, static store mappings, compile upsert.
+static store mappings, compile upsert.
 
 Migrations (MIG-C2): baseline applies ``schema/ledger/full_schema.sql`` when the DB is empty.
 
@@ -33,7 +33,7 @@ import pandas as pd
 import config
 
 from pipeline.csv_handler import generate_transaction_fingerprint
-from pipeline.ingested_at_rules import compute_ingested_at_iso
+from pipeline.ingested_at_rules import ingested_at_for_new_ledger_row
 
 log = logging.getLogger(__name__)
 
@@ -1256,57 +1256,7 @@ def backfill_null_fingerprints(db_path: str, *, dry_run: bool = True) -> Backfil
     return stats
 
 
-# --- Row helpers + web totals CSV + static store mappings (folded from former modules) ---
-
-# Web totals CSV → ``ledger_transaction``
-# Tolerant column set for real-world CSVs (includes legacy headers; not all are persisted — see module doc).
-_EXPECTED_COLS = [
-    "תאריך",
-    "מקור עסקה",
-    "בחובה",
-    "מזהה עסקה",
-    "בזכות",
-    "פירוט נוסף",
-    "4 ספרות",
-    "תאור מורחב",
-    "קטגוריה",
-    "תאריך עדכון",
-    "fingerprint",
-]
-
-
-def fingerprint_from_row(row: pd.Series) -> str | None:
-    """Return stripped pipeline fingerprint, or None if absent (never use מזהה עסקה)."""
-    fp = row.get("fingerprint")
-    if pd.isna(fp):
-        return None
-    s = str(fp).strip()
-    if not s or s.lower() in ("nan", "none", "null"):
-        return None
-    return s
-
-
-def load_web_totals_dataframe(csv_path: str) -> pd.DataFrame:
-    df = pd.read_csv(csv_path)
-    missing = [c for c in _EXPECTED_COLS if c not in df.columns]
-    if missing:
-        raise ValueError(f"CSV missing columns: {missing}; expected {_EXPECTED_COLS}")
-    keys_csv: list[str | None] = []
-    computed: list[str | None] = []
-    for _, row in df.iterrows():
-        keys_csv.append(fingerprint_from_row(row))
-        computed.append(generate_transaction_fingerprint(row))
-    non_null = [k for k in computed if k is not None and str(k).strip()]
-    if len(non_null) != len(set(non_null)):
-        from collections import Counter
-
-        c = Counter(non_null)
-        bad = [k for k, n in c.items() if n > 1][:5]
-        raise ValueError(f"duplicate non-null fingerprint values (first few): {bad!r}")
-    df = df.copy()
-    df["_ledger_fingerprint_csv"] = keys_csv
-    df["_ledger_fingerprint"] = computed
-    return df
+# --- Row helpers for compile upsert + static store mappings ---
 
 
 def _normalize_date_text(val: Any) -> str | None:
@@ -1344,147 +1294,6 @@ def _text_or_none(val: Any) -> str | None:
     s = str(val).strip()
     return s if s else None
 
-
-def _web_totals_row_tuple(row: pd.Series) -> tuple:
-    d = _normalize_date_text(row["תאריך"])
-    if not d:
-        raise ValueError("missing תאריך")
-    te_raw = row["תאריך עדכון"]
-    ing = compute_ingested_at_iso(d, te_raw)
-    fp = row["_ledger_fingerprint"]
-    return (
-        d,
-        _float_col(row["בחובה"]),
-        _float_col(row["בזכות"]),
-        _text_or_none(row["מקור עסקה"]),
-        _text_or_none(row["פירוט נוסף"]),
-        _text_or_none(row["תאור מורחב"]),
-        _text_or_none(row["4 ספרות"]),
-        fp,
-        _text_or_none(row["קטגוריה"]),
-        None,
-        None,
-        ing,
-    )
-
-
-def import_web_totals_to_ledger(
-    csv_path: str | None = None,
-    db_path: str | None = None,
-    *,
-    replace: bool = True,
-) -> dict[str, Any]:
-    """
-    Load ``web_totals.csv`` into ``ledger_transaction``.
-
-    Runs ``migrate_ledger_db`` first. If ``replace`` is True, deletes existing ledger rows
-    before insert (full reload from CSV).
-    """
-    path = csv_path if csv_path is not None else config.web_totals_file
-    db = db_path if db_path is not None else config.ledger_db_file
-    migrate_ledger_db(db)
-
-    df = load_web_totals_dataframe(path)
-    rows = [_web_totals_row_tuple(r) for _, r in df.iterrows()]
-
-    conn = sqlite3.connect(db)
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        if replace:
-            conn.execute("DELETE FROM ledger_transaction")
-            conn.commit()
-        sql = """
-        INSERT INTO ledger_transaction (
-            "תאריך", "בחובה", "בזכות", "מקור עסקה", "פירוט נוסף", "תאור מורחב", "4 ספרות",
-            "fingerprint", "קטגוריה", notes, statement_month, ingested_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-        """
-        conn.executemany(sql, rows)
-        conn.commit()
-        n = conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0]
-    finally:
-        conn.close()
-
-    report = verify_ledger_against_csv(df, db)
-    report["rows_imported"] = int(n)
-    report["rows_without_fingerprint"] = int(df["_ledger_fingerprint"].isna().sum())
-    report["csv_path"] = path
-    report["db_path"] = db
-    log.info(
-        "web_totals import: %s rows into %s (parity ok=%s)",
-        n,
-        db,
-        report.get("parity_ok"),
-    )
-    return report
-
-
-def _fp_equal(a: Any, b: Any) -> bool:
-    a_null = a is None or (isinstance(a, float) and pd.isna(a)) or pd.isna(a)
-    b_null = b is None or (isinstance(b, float) and pd.isna(b)) or pd.isna(b)
-    if a_null and b_null:
-        return True
-    if a_null != b_null:
-        return False
-    return str(a).strip() == str(b).strip()
-
-
-def verify_ledger_against_csv(df: pd.DataFrame, db_path: str) -> dict[str, Any]:
-    """Row-order parity: import order matches ``ORDER BY id`` (same row count and fields)."""
-    conn = sqlite3.connect(db_path)
-    try:
-        q = """
-        SELECT id, "fingerprint", "בחובה", "בזכות", "תאריך", ingested_at
-        FROM ledger_transaction
-        ORDER BY id
-        """
-        ldb = pd.read_sql_query(q, conn)
-    finally:
-        conn.close()
-
-    if len(ldb) != len(df):
-        return {
-            "parity_ok": False,
-            "error": f"row count mismatch: csv={len(df)} db={len(ldb)}",
-        }
-
-    csv_debit = pd.to_numeric(df["בחובה"], errors="coerce").fillna(0).sum()
-    csv_credit = pd.to_numeric(df["בזכות"], errors="coerce").fillna(0).sum()
-    db_debit = pd.to_numeric(ldb["בחובה"], errors="coerce").fillna(0).sum()
-    db_credit = pd.to_numeric(ldb["בזכות"], errors="coerce").fillna(0).sum()
-
-    tol = 0.05
-    sum_ok = abs(csv_debit - db_debit) < tol and abs(csv_credit - db_credit) < tol
-
-    mismatches: list[str] = []
-    for i in range(len(df)):
-        cr = df.iloc[i]
-        dr = ldb.iloc[i]
-        if _normalize_date_text(cr["תאריך"]) != str(dr["תאריך"]):
-            mismatches.append(f"row {i} date mismatch")
-            continue
-        if not _fp_equal(cr["_ledger_fingerprint"], dr["fingerprint"]):
-            mismatches.append(
-                f"row {i} fingerprint mismatch computed={cr['_ledger_fingerprint']!r} db={dr['fingerprint']!r}"
-            )
-        cd = _float_col(cr["בחובה"])
-        cc = _float_col(cr["בזכות"])
-        if abs(float(dr["בחובה"]) - cd) > tol or abs(float(dr["בזכות"]) - cc) > tol:
-            mismatches.append(f"row {i} amounts differ")
-
-    out: dict[str, Any] = {
-        "parity_ok": sum_ok and len(mismatches) == 0,
-        "csv_rows": len(df),
-        "db_rows": len(ldb),
-        "sum_debit_csv": float(csv_debit),
-        "sum_debit_db": float(db_debit),
-        "sum_credit_csv": float(csv_credit),
-        "sum_credit_db": float(db_credit),
-        "order_mismatches": mismatches[:30],
-    }
-    if mismatches:
-        out["parity_ok"] = False
-    return out
 
 # Static store / similar pair tables
 _STORE_COLS = ["store_name", "category", "is_static"]
@@ -1730,6 +1539,28 @@ def sync_stores_to_ledger_from_dataframe(db_path: str, df: pd.DataFrame) -> None
 
 # --- Compile upsert (ex-ledger_compile_upsert) ---
 
+
+def dedupe_import_batch_by_fingerprint(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    When the same import batch contains duplicate ``fingerprint`` values, keep one row per
+    fingerprint preferring a non-empty ``קטגוריה`` (same rule as legacy ``compile_to_main``).
+
+    Does not load the ledger — caller runs this on **new** rows only before ``executemany``.
+    """
+    if df.empty or "fingerprint" not in df.columns:
+        return df
+    work = df.copy()
+    if "קטגוריה" not in work.columns:
+        work["קטגוריה"] = ""
+    work["קטגוריה"] = work["קטגוריה"].astype(object).fillna("")
+    work["_sort_key"] = work["קטגוריה"].apply(lambda x: 0 if str(x).strip() != "" else 1)
+    work.sort_values(by=["fingerprint", "_sort_key"], ascending=[True, True], inplace=True)
+    work = work.drop_duplicates(subset=["fingerprint"], keep="first")
+    work.drop(columns=["_sort_key"], inplace=True)
+    work.reset_index(drop=True, inplace=True)
+    return work
+
+
 _UPSERT_SQL = """
 INSERT INTO ledger_transaction (
     "תאריך", "בחובה", "בזכות", "מקור עסקה", "פירוט נוסף", "תאור מורחב", "4 ספרות",
@@ -1760,8 +1591,7 @@ def _row_tuple(row: pd.Series) -> tuple[Any, ...]:
     d = _normalize_date_text(row.get("תאריך"))
     if not d:
         raise ValueError("missing תאריך")
-    taarich_hidon = row.get("תאריך עדכון")
-    ing = compute_ingested_at_iso(row.get("תאריך"), taarich_hidon)
+    ing = ingested_at_for_new_ledger_row()
     fp = generate_transaction_fingerprint(row)
     if fp is None or not str(fp).strip():
         raise ValueError("missing fingerprint")
@@ -1787,6 +1617,9 @@ def upsert_compiled_dataframe_to_ledger(
 ) -> dict[str, Any]:
     """
     Upsert transaction rows into ``ledger_transaction`` by ``fingerprint``.
+
+    New rows get ``ingested_at`` = local insert date (:func:`pipeline.ingested_at_rules.ingested_at_for_new_ledger_row`).
+    On conflict, existing ``ingested_at`` is preserved (first insert wins).
 
     Skips rows without a computable ``fingerprint``. Empty ``df`` is a no-op.
     """

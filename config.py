@@ -58,11 +58,10 @@ unclassified_download_dir = _data("input", "unclassified")
 
 _compiled_root = _data("export", "compiled")
 compiled_dir = _compiled_root + os.sep
-# Merge output of the transactions compile step (clean CSVs → one frame) before SQLite
-# upsert. Not authoritative when ``ledger_db_file`` is used: the ledger is canonical;
-# this file is staging, export, Sheets sync, and one-time seed when the DB is empty.
+# Legacy path (deprecated for data plane). Pipeline writes transactions/holdings to
+# ``ledger_db_file`` only; some tooling may still reference this path when no DB exists.
 compiled_file = os.path.join(_compiled_root, "compiled.csv")
-# Wide balances staging (Sheets sync); canonical balances live in ``holdings_balance`` on ``ledger_db_file``.
+# Legacy wide balances filename; canonical balances live in ``holdings_balance`` on ``ledger_db_file``.
 holdings_file = os.path.join(_compiled_root, "holdings.csv")
 # Canonical SQLite ledger + static mappings + holdings (single file). Respects
 # ``FINANCE_WORKSPACE_ROOT`` via ``_data``. The repo ``.gitignore`` entry ``/data/``
@@ -93,8 +92,7 @@ similar_categories_file = os.path.join(_static_root, "similar_pairs.csv")
 fingerprint_db_file = os.path.join(_static_root, "fingerprint_db.csv")
 _web_root = _w("web")
 web_dir = _web_root + os.sep
-web_totals_file = os.path.join(_web_root, "data", "web_totals.csv")
-# Google Sheet tab for heatmap / web_totals.csv and desktop Totals push (single all-time tab).
+# Google Sheet tab for heatmap and desktop Totals push (single all-time tab).
 totals_sheet_name = os.environ.get("FINANCE_TOTALS_SHEET_NAME", "Totals").strip() or "Totals"
 
 

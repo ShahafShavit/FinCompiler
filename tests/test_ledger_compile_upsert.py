@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from pipeline.csv_handler import generate_transaction_fingerprint
+from pipeline.ledger import dedupe_import_batch_by_fingerprint
 
 
 def _reload_config() -> None:
@@ -163,6 +164,29 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(cat, "Food")
+
+    def test_dedupe_import_batch_prefers_category(self) -> None:
+        base = {
+            "תאריך": "2025-06-01",
+            "בחובה": 1.0,
+            "בזכות": 0.0,
+            "מקור עסקה": "DupShop",
+            "פירוט נוסף": None,
+            "תאור מורחב": None,
+            "4 ספרות": None,
+            "fingerprint": None,
+            "קטגוריה": "",
+        }
+        r1 = {**base, "קטגוריה": ""}
+        r2 = {**base, "קטגוריה": "Food"}
+        fp = generate_transaction_fingerprint(pd.Series(r1))
+        self.assertIsNotNone(fp)
+        r1["fingerprint"] = fp
+        r2["fingerprint"] = fp
+        df = pd.DataFrame([r1, r2])
+        out = dedupe_import_batch_by_fingerprint(df)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(str(out.iloc[0]["קטגוריה"]), "Food")
 
     def test_apply_auto_categories_from_static_stores_sql(self) -> None:
         from pipeline.ledger import apply_auto_categories_from_static_stores_sql

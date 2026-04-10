@@ -219,6 +219,20 @@ class TransactionFile:
         log.info("TransactionFile: wrote cleaned CSV %s rows=%s", out, len(self.file_df))
 
 
+def load_transaction_clean_dataframe(
+    file_path: str,
+    *,
+    drop_columns: list[str],
+    drop_sources: list[tuple[str, str]],
+) -> pd.DataFrame:
+    """Normalize one transaction workbook to the same columns as legacy clean CSV (no disk write)."""
+    f = TransactionFile(file_path)
+    f.drop_columns(drop_columns)
+    for col, val in drop_sources:
+        f.drop_by_column_and_value(col, val)
+    return f.file_df.copy()
+
+
 class HoldingsFile:
     def __init__(self, file_path):
         log.info("HoldingsFile: loading %s", file_path)
@@ -257,6 +271,18 @@ class HoldingsFile:
         out_path = os.path.join(out_dir, f"Holdings_{formatted_date}.csv")
         self.file_df.to_csv(out_path, index=False)
         log.info("HoldingsFile: wrote %s rows=%s", out_path, len(self.file_df))
+
+
+def load_holdings_unified_wide(
+    file_path: str,
+    *,
+    rename_map: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """Wide holdings row(s) after column rename / numeric merge (same as pipeline clean CSV)."""
+    hf = HoldingsFile(file_path)
+    rm = rename_map or {"נכון לתאריך": "תאריך"}
+    hf.unify_columns(rm)
+    return hf.file_df.copy()
 
 
 if __name__ == "__main__":

@@ -118,7 +118,6 @@ def run_action(
             fetch=bool(options.get("fetch_holdings")),
             route=not bool(options.get("no_route")),
             ingest=not bool(options.get("no_ingest")),
-            to_csv=not bool(options.get("no_csv")),
             compile_=not bool(options.get("no_compile")),
             sink=sink,
         )
@@ -135,7 +134,6 @@ def run_action(
             to_date=options.get("to_date") or None,
             route=not bool(options.get("no_route")),
             ingest=not bool(options.get("no_ingest")),
-            to_csv=not bool(options.get("no_csv")),
             compile_=not bool(options.get("no_compile")),
             auto_categorize=bool(options.get("auto_categorize")) and not do_cat,
             drop_profile=drop_profile,

@@ -39,9 +39,10 @@ Run the holdings (balances) and/or transactions pipelines without opening the GU
 Data flow (short version):
   - Chrome / Selenium still download into the shared folder: data/input/
   - route sorts each spreadsheet into an isolated pipeline tree under data/pipeline/
-  - holdings pipeline only touches .../pipeline/holdings/{inbox,raw,clean}
-  - transactions pipeline only touches .../pipeline/transactions/{inbox,raw,clean}
-  - Holdings merge: data/export/compiled/holdings.csv; transactions ledger: data/ledger.sqlite
+  - holdings pipeline: inbox -> raw xlsx -> in-memory merge -> SQLite holdings_balance
+  - transactions pipeline: inbox -> raw xlsx -> in-memory normalize -> SQLite ledger_transaction
+  - Canonical data: data/ledger.sqlite only (no pipeline CSV staging in normal runs)
+  - Set PIPELINE_DEBUG_DUMP=1 to also write legacy cleaned CSVs under pipeline/*/clean for debugging
   - Optional: set FINANCE_WORKSPACE_ROOT to a directory to use a separate data/ and web/
     tree (safe for tests or experiments; see config).
 
@@ -97,8 +98,8 @@ Balances pipeline: workbooks that end up in data/pipeline/holdings/.
 Steps (each can be skipped with --no-*):
   1. route   - move *.xls* from data/input into holdings vs transactions inboxes
   2. ingest  - normalize to .xlsx under holdings/raw
-  3. csv     - build cleaned CSV under holdings/clean
-  4. compile - merge into data/export/compiled/holdings.csv
+  3. (optional) If PIPELINE_DEBUG_DUMP=1: write cleaned CSV under holdings/clean
+  4. compile - merge raw workbooks into data/ledger.sqlite (holdings_balance)
 """
 
 HOLDINGS_EPILOG = """\
@@ -106,7 +107,7 @@ examples:
   python run_pipeline.py holdings                    # route + full pipeline
   python run_pipeline.py holdings --fetch            # download from bank first, then full pipeline
   python run_pipeline.py holdings --no-route         # files already in holdings/inbox
-  python run_pipeline.py holdings --no-compile       # stop after CSV step
+  python run_pipeline.py holdings --no-compile       # stop after ingest (no SQLite upsert)
 
 note:
   --fetch opens a browser (Selenium). Requires bank credentials in .env.
@@ -119,8 +120,8 @@ Transactions pipeline: card and account lines in data/pipeline/transactions/.
 Steps (each can be skipped with --no-*):
   1. route   - move *.xls* from data/input into the right pipeline inbox
   2. ingest  - normalize to .xlsx under transactions/raw
-  3. csv     - cleaned CSV under transactions/clean (column filtering depends on --drop-profile)
-  4. compile - merge into data/ledger.sqlite
+  3. (optional) If PIPELINE_DEBUG_DUMP=1: write cleaned CSV under transactions/clean
+  4. compile - normalize workbooks in memory and upsert into data/ledger.sqlite
   5. optional: --auto-categorize runs the automatic category pass (same as part of the old batch flow)
 """
 
@@ -234,7 +235,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=textwrap.dedent(HOLDINGS_DESCRIPTION),
         epilog=textwrap.dedent(HOLDINGS_EPILOG),
         formatter_class=fmt,
-        help="Balances pipeline -> data/export/compiled/holdings.csv",
+        help="Balances pipeline -> data/ledger.sqlite (holdings_balance)",
     )
     hg_fetch = h.add_argument_group("portal (optional)")
     hg_fetch.add_argument(
@@ -256,7 +257,7 @@ def _build_parser() -> argparse.ArgumentParser:
     hg_steps.add_argument(
         "--no-csv",
         action="store_true",
-        help="Skip building cleaned CSV files from raw xlsx.",
+        help="Ignored (compatibility). Cleaned CSVs are only written when PIPELINE_DEBUG_DUMP=1.",
     )
     hg_steps.add_argument(
         "--no-compile",
@@ -314,7 +315,7 @@ def _build_parser() -> argparse.ArgumentParser:
     tg_steps.add_argument(
         "--no-csv",
         action="store_true",
-        help="Skip raw xlsx -> cleaned CSV.",
+        help="Ignored (compatibility). Cleaned CSVs are only written when PIPELINE_DEBUG_DUMP=1.",
     )
     tg_steps.add_argument(
         "--no-compile",
@@ -450,7 +451,6 @@ def main(argv: list[str] | None = None) -> int:
             fetch=args.fetch,
             route=not args.no_route,
             ingest=not args.no_ingest,
-            to_csv=not args.no_csv,
             compile_=not args.no_compile,
         )
         return 0
@@ -467,7 +467,6 @@ def main(argv: list[str] | None = None) -> int:
             to_date=args.to_date,
             route=not args.no_route,
             ingest=not args.no_ingest,
-            to_csv=not args.no_csv,
             compile_=not args.no_compile,
             auto_categorize=args.auto_categorize and not do_interactive_cat,
             drop_profile=args.drop_profile,

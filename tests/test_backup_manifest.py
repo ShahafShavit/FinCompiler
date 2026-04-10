@@ -32,7 +32,7 @@ class BackupManifestTests(unittest.TestCase):
                     f.write("a,b\n1,2\n")
                 with open(os.path.join(static, "stores_to_categories.csv"), "w", encoding="utf-8") as f:
                     f.write("store,category\nx,y\n")
-                with open(os.path.join(webdata, "web_totals.csv"), "w", encoding="utf-8") as f:
+                with open(os.path.join(webdata, "placeholder.txt"), "w", encoding="utf-8") as f:
                     f.write("k\n1\n")
 
                 from pipeline.backup import MANIFEST_FILENAME, create_critical_paths_backup, load_manifest

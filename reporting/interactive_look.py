@@ -547,11 +547,18 @@ class InteractiveReportGenerator:
 
 
 if __name__ == '__main__':
-    # Heatmap uses ``ledger.sqlite`` via ``web_control.heatmap``; this Plotly path still reads
-    # ``web_totals_file`` if you point ``data_file=`` at an export from the ledger.
+    import sys
+
+    if len(sys.argv) < 2:
+        print(
+            "Usage: python -m reporting.interactive_look <transactions.csv>\n"
+            "Provide a CSV exported from the ledger (same columns as ledger export).",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     report_generator = InteractiveReportGenerator(
-        data_file=config.web_totals_file,
+        data_file=sys.argv[1],
         web_dir=config.web_dir,
-        _config=config
+        _config=config,
     )
     report_generator.run()

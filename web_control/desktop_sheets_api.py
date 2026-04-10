@@ -37,7 +37,7 @@ def _desktop_sync_sheet_paths() -> Iterator[tuple[list[str], list[str]]]:
     (Holdings CSV, Totals CSV) paths aligned with :func:`config.desktop_sync_sheet_pairs` sheets.
 
     When ``ledger.sqlite`` exists, Totals are exported from the DB (canonical); otherwise
-    ``compiled.csv`` is used.
+    a legacy ``compiled.csv`` path may be used if present.
     """
     cleanup: list[str] = []
     try:

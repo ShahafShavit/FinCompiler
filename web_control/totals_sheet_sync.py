@@ -1,7 +1,7 @@
 """
 Credentials helper for **push-only** Google Sheets flows.
 
-Heatmap reads from the SQLite ledger directly — there is no pull from Sheets into ``web_totals.csv``.
+Heatmap reads from the SQLite ledger directly — there is no pull from Sheets into a local CSV.
 """
 
 from __future__ import annotations

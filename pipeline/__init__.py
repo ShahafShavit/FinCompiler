@@ -12,6 +12,8 @@ import os
 import signal
 from typing import Any, Callable, Iterable, Optional
 
+import pandas as pd
+
 import config
 
 from . import compiler
@@ -69,6 +71,23 @@ def _notify(msg: str, sink: Optional[Callable[[str], None]]) -> None:
     log.info(msg)
     if sink:
         sink(msg)
+
+
+def _pipeline_debug_dump() -> bool:
+    """When set, mirror legacy cleaned CSVs under pipeline clean dirs for inspection."""
+    v = os.environ.get("PIPELINE_DEBUG_DUMP", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+def transaction_drop_pairs(
+    drop_profile: str,
+    drop_sources: Optional[Iterable[tuple[str, str]]] = None,
+) -> list[tuple[str, str]]:
+    if drop_sources is not None:
+        return list(drop_sources)
+    if drop_profile == "full":
+        return TRANSACTION_DROP_SOURCES + TRANSACTION_DROP_SOURCES_UI_EXTRA
+    return list(TRANSACTION_DROP_SOURCES)
 
 
 def ensure_pipeline_dirs() -> None:
@@ -239,14 +258,10 @@ def csv_from_raw_transactions(
     drop_sources: Optional[Iterable[tuple[str, str]]] = None,
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
+    """Write legacy cleaned CSVs (debug / compatibility). Normal pipeline uses in-memory ingest only."""
     files = glob.glob(os.path.join(config.transactions_raw_dir, "*.xls*"))
     _notify(f"CSV TRANSACTIONS: {len(files)} workbook(s) -> {config.transactions_clean_dir}", sink)
-    if drop_sources is not None:
-        pairs = list(drop_sources)
-    elif drop_profile == "full":
-        pairs = TRANSACTION_DROP_SOURCES + TRANSACTION_DROP_SOURCES_UI_EXTRA
-    else:
-        pairs = list(TRANSACTION_DROP_SOURCES)
+    pairs = transaction_drop_pairs(drop_profile, drop_sources)
     for path in files:
         f = csv_handler.TransactionFile(path)
         f.drop_columns(TRANSACTION_DROP_COLUMNS)
@@ -255,19 +270,67 @@ def csv_from_raw_transactions(
         f.to_csv(output_clean_dir=config.transactions_clean_dir)
 
 
-def compile_holdings_main(*, sink: Optional[Callable[[str], None]] = None) -> None:
-    cleaned = glob.glob(os.path.join(config.holdings_clean_dir, "*.csv"))
-    if not cleaned:
-        _notify("COMPILE HOLDINGS: no CSV in clean dir; skipping", sink)
-        return
+def ingest_transactions_to_ledger(
+    *,
+    drop_profile: str = "full",
+    drop_sources: Optional[Iterable[tuple[str, str]]] = None,
+    sink: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    """Normalize raw transaction workbooks and upsert into SQLite (no full-ledger pandas merge)."""
+    from pipeline.ledger import dedupe_import_batch_by_fingerprint
+    from pipeline.ledger import upsert_compiled_dataframe_to_ledger
+
+    pairs = transaction_drop_pairs(drop_profile, drop_sources)
+    files = sorted(glob.glob(os.path.join(config.transactions_raw_dir, "*.xls*")))
+    if not files:
+        _notify("INGEST TRANSACTIONS: no raw workbooks; skipping", sink)
+        return {"rows_upserted": 0, "skipped": True, "db_path": config.ledger_db_file}
     _notify(
-        f"COMPILE HOLDINGS: merging {len(cleaned)} clean CSV -> {config.holdings_file} + {config.ledger_db_file}",
+        f"INGEST TRANSACTIONS: {len(files)} workbook(s) -> {config.ledger_db_file}",
         sink,
     )
-    d = compiler.Compiler(config.holdings_file, ledger_db=config.ledger_db_file)
-    d.__compile_new__(config.holdings_clean_dir, suffix="holdings")
-    d.compile_to_main()
-    d.save_all()
+    log.info("phase=normalize: raw dir=%s", config.transactions_raw_dir)
+    dfs: list[pd.DataFrame] = []
+    for path in files:
+        dfs.append(
+            csv_handler.load_transaction_clean_dataframe(
+                path,
+                drop_columns=TRANSACTION_DROP_COLUMNS,
+                drop_sources=pairs,
+            )
+        )
+    merged = pd.concat(dfs, ignore_index=True)
+    merged = compiler.normalize_transaction_import_dates(merged)
+    log.info("phase=dedupe: rows before=%s", len(merged))
+    merged = dedupe_import_batch_by_fingerprint(merged)
+    log.info("phase=upsert: rows after=%s", len(merged))
+    return upsert_compiled_dataframe_to_ledger(merged, config.ledger_db_file)
+
+
+def compile_holdings_main(*, sink: Optional[Callable[[str], None]] = None) -> None:
+    from pipeline.holdings_csv_import import upsert_holdings_wide_to_ledger
+
+    files = sorted(glob.glob(os.path.join(config.holdings_raw_dir, "*.xls*")))
+    if not files:
+        _notify("COMPILE HOLDINGS: no raw workbooks; skipping", sink)
+        return
+    _notify(
+        f"COMPILE HOLDINGS: {len(files)} raw workbook(s) -> {config.ledger_db_file}",
+        sink,
+    )
+    parts = [csv_handler.load_holdings_unified_wide(f) for f in files]
+    merged = pd.concat(parts, ignore_index=True)
+    merged["תאריך"] = compiler.parse_post_ingest_date_column(merged["תאריך"])
+    merged.drop_duplicates(subset=["תאריך"], keep="last", inplace=True, ignore_index=True)
+    # fillna only balance columns — תאריך is datetime64 and cannot take 0.0
+    _bal_cols = [c for c in merged.columns if c != "תאריך"]
+    if _bal_cols:
+        merged[_bal_cols] = merged[_bal_cols].fillna(value=0.0)
+    merged["תאריך"] = compiler.parse_post_ingest_date_column(merged["תאריך"])
+    merged.sort_values(by="תאריך", inplace=True)
+    merged.reset_index(drop=True, inplace=True)
+    merged["תאריך"] = merged["תאריך"].dt.date
+    upsert_holdings_wide_to_ledger(merged, config.ledger_db_file)
 
 
 def run_categorization_interactive(
@@ -318,21 +381,15 @@ def run_categorization_interactive(
 def compile_transactions_main(
     *,
     run_auto_categorize: bool = False,
+    drop_profile: str = "full",
+    drop_sources: Optional[Iterable[tuple[str, str]]] = None,
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
-    cleaned = glob.glob(os.path.join(config.transactions_clean_dir, "*.csv"))
-    if not cleaned:
-        _notify("COMPILE TRANSACTIONS: no CSV in clean dir; skipping", sink)
-        return
-    _notify(
-        f"COMPILE TRANSACTIONS: merging {len(cleaned)} clean CSV -> {config.ledger_db_file}",
-        sink,
+    ingest_transactions_to_ledger(
+        drop_profile=drop_profile,
+        drop_sources=drop_sources,
+        sink=sink,
     )
-    c = compiler.Compiler(ledger_db=config.ledger_db_file)
-    c.__compile_new__(config.transactions_clean_dir, suffix="credit")
-    c.compile_to_main()
-    _, _ = c.save_all()
-    c.update_fingerprint_db()
     if run_auto_categorize:
         from categorization.categorizer import CategorizeFile
 
@@ -346,7 +403,6 @@ def run_holdings_pipeline(
     fetch: bool = False,
     route: bool = True,
     ingest: bool = True,
-    to_csv: bool = True,
     compile_: bool = True,
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
@@ -357,7 +413,7 @@ def run_holdings_pipeline(
         route_inbox(sink=sink)
     if ingest:
         ingest_holdings_inbox(sink=sink)
-    if to_csv:
+    if _pipeline_debug_dump():
         csv_from_raw_holdings(sink=sink)
     if compile_:
         compile_holdings_main(sink=sink)
@@ -393,7 +449,6 @@ def run_transactions_pipeline(
     to_date: Optional[str] = None,
     route: bool = True,
     ingest: bool = True,
-    to_csv: bool = True,
     compile_: bool = True,
     auto_categorize: bool = False,
     drop_profile: str = "full",
@@ -414,11 +469,12 @@ def run_transactions_pipeline(
         route_inbox(sink=sink)
     if ingest:
         ingest_transactions_inbox(sink=sink)
-    if to_csv:
+    if _pipeline_debug_dump():
         csv_from_raw_transactions(drop_profile=drop_profile, sink=sink)
     if compile_:
         compile_transactions_main(
             run_auto_categorize=auto_categorize,
+            drop_profile=drop_profile,
             sink=sink,
         )
 
