@@ -397,6 +397,17 @@ def compile_transactions_main(
         categorizer = CategorizeFile(ledger_db_path=config.ledger_db_file)
         categorizer.auto_categorize()
 
+    try:
+        from pipeline.installment_statement_months import run_installment_statement_month_fill
+
+        run_installment_statement_month_fill(
+            config.ledger_db_file,
+            dry_run=False,
+            sink=sink,
+        )
+    except Exception:
+        log.exception("compile_transactions_main: installment statement_month fill failed")
+
 
 def run_holdings_pipeline(
     *,
