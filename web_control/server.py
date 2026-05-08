@@ -880,6 +880,41 @@ def make_handler_class(state: ControlState):
                 self._send(code, _json_bytes_strict(out), "application/json; charset=utf-8")
                 return
 
+            if path == "/api/holdings/move-date":
+                from pipeline.holdings_csv_import import move_holdings_date
+
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError:
+                    self._send(
+                        400,
+                        _json_bytes_strict({"ok": False, "error": "invalid_json", "message": "invalid JSON body"}),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+                source_date = (data or {}).get("source_date")
+                target_date = (data or {}).get("target_date")
+                overwrite = bool((data or {}).get("overwrite_conflicts"))
+                try:
+                    out = move_holdings_date(
+                        source_date,
+                        target_date,
+                        config.ledger_db_file,
+                        overwrite_conflicts=overwrite,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    self._send(
+                        400,
+                        _json_bytes_strict({"ok": False, "error": "invalid_request", "message": str(e)}),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+                code = 200 if out.get("ok") else 409
+                self._send(code, _json_bytes_strict(out), "application/json; charset=utf-8")
+                return
+
             if path == "/api/sheets/push":
                 from web_control import desktop_sheets_api
 

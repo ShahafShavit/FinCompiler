@@ -108,6 +108,20 @@ class WebControlHoldingsApiTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertTrue(saved.get("ok"))
+
+                status, moved = self._request_json(
+                    conn,
+                    "POST",
+                    "/api/holdings/move-date",
+                    {
+                        "source_date": "2026-05-01",
+                        "target_date": "2026-04-15",
+                        "overwrite_conflicts": True,
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertTrue(moved.get("ok"))
+                self.assertEqual(moved.get("target_date"), "2026-04-01")
             finally:
                 conn.close()
                 server.shutdown()

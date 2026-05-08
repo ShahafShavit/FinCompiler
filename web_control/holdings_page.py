@@ -42,6 +42,21 @@ def holdings_shell_html() -> str:
     .mode.active { display:block; }
     .activity-row { display:grid; grid-template-columns: 2fr 1.2fr auto; gap:0.5rem; margin:0.45rem 0; }
     .status { white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; background:#0b0c0f; border:1px solid #2b2c33; border-radius:8px; padding:0.6rem; }
+    .tl_cell_input {
+      width: 100%;
+      min-width: 7rem;
+      text-align: right;
+      box-sizing: border-box;
+      padding: 0.2rem 0.35rem;
+      border-radius: 6px;
+    }
+    .tl_cell_input[readonly] {
+      border-color: transparent;
+      background: transparent;
+      padding-left: 0;
+      padding-right: 0;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -60,6 +75,9 @@ def holdings_shell_html() -> str:
         <select id="tl_acts" multiple size="4"></select>
       </label>
       <button type="button" id="btn_tl_reload">Reload</button>
+      <button type="button" class="secondary" id="btn_tl_edit">Edit Table</button>
+      <button type="button" id="btn_tl_save" disabled>Save Edits</button>
+      <button type="button" class="secondary" id="btn_tl_cancel" disabled>Cancel</button>
     </div>
     <p id="meta_line" class="hint"></p>
     <div id="summary" class="hint"></div>
@@ -99,6 +117,8 @@ def holdings_shell_html() -> str:
   (function () {
     let meta = null;
     let parsedPasteRows = [];
+    let timelineEditing = false;
+    let timelineRows = [];
 
     const metaLine = document.getElementById('meta_line');
     const tlActs = document.getElementById('tl_acts');
@@ -107,6 +127,47 @@ def holdings_shell_html() -> str:
     const ingestStatus = document.getElementById('ingest_status');
     const activityRows = document.getElementById('activity_rows');
     const pasteParseHint = document.getElementById('paste_parse_hint');
+    const btnTlEdit = document.getElementById('btn_tl_edit');
+    const btnTlSave = document.getElementById('btn_tl_save');
+    const btnTlCancel = document.getElementById('btn_tl_cancel');
+
+    function parseLooseNumber(v) {
+      const s = String(v == null ? '' : v).trim().replace(/,/g, '');
+      if (s === '') return 0;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    function hasTimelineChanges() {
+      const dateInputs = tlTable.querySelectorAll('.tl_date_input');
+      for (const el of dateInputs) {
+        const originalDate = String(el.getAttribute('data-original-date') || '').trim();
+        const currentDate = String(el.value || '').trim();
+        if (!currentDate || currentDate !== originalDate) {
+          return true;
+        }
+      }
+      const inputs = tlTable.querySelectorAll('.tl_cell_input');
+      for (const el of inputs) {
+        const original = parseLooseNumber(el.getAttribute('data-original'));
+        const current = parseLooseNumber(el.value);
+        if (!Number.isFinite(current)) {
+          return true;
+        }
+        if (Math.abs(current - original) > 0.000001) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function refreshTimelineDirtyState() {
+      if (!timelineEditing) {
+        btnTlSave.disabled = true;
+        return;
+      }
+      btnTlSave.disabled = !hasTimelineChanges();
+    }
 
     function setStatus(obj) {
       ingestStatus.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
@@ -168,10 +229,26 @@ def holdings_shell_html() -> str:
       document.body.appendChild(dl);
     }
 
+    function setTimelineEditing(enabled) {
+      timelineEditing = !!enabled;
+      btnTlEdit.disabled = timelineEditing;
+      btnTlSave.disabled = true;
+      btnTlCancel.disabled = !timelineEditing;
+      tlTable.querySelectorAll('.tl_cell_input').forEach(function (el) {
+        el.readOnly = !timelineEditing;
+      });
+      tlTable.querySelectorAll('.tl_date_input').forEach(function (el) {
+        el.readOnly = !timelineEditing;
+      });
+      refreshTimelineDirtyState();
+    }
+
     function renderTimelineRows(rows) {
+      timelineRows = Array.isArray(rows) ? rows.slice() : [];
       if (!rows || rows.length === 0) {
         tlTable.innerHTML = '<tr><td>No data</td></tr>';
         summary.textContent = '';
+        setTimelineEditing(false);
         return;
       }
       const acts = Array.from(new Set(rows.map(function (r) { return r.activity_type; }))).sort();
@@ -186,11 +263,12 @@ def holdings_shell_html() -> str:
       html += '<th>Total</th></tr></thead><tbody>';
       dates.forEach(function (d) {
         let total = 0;
-        html += '<tr><td>' + d + '</td>';
+        html += '<tr data-original-date="' + d + '"><td><input class="tl_date_input" data-original-date="' + d + '" type="date" value="' + d + '" readonly/></td>';
         acts.forEach(function (a) {
           const v = Number((byDate[d] && byDate[d][a]) || 0);
           total += v;
-          html += '<td>' + v.toLocaleString(undefined, { maximumFractionDigits: 2 }) + '</td>';
+          const displayVal = Number.isFinite(v) ? String(v) : '0';
+          html += '<td><input class="tl_cell_input" data-activity="' + a + '" data-original="' + displayVal + '" type="text" value="' + displayVal + '" readonly/></td>';
         });
         html += '<td>' + total.toLocaleString(undefined, { maximumFractionDigits: 2 }) + '</td></tr>';
       });
@@ -204,6 +282,7 @@ def holdings_shell_html() -> str:
       summary.textContent =
         'Latest total (' + latest + '): ' + totalLatest.toLocaleString(undefined, { maximumFractionDigits: 2 }) +
         (prev ? (' · Delta vs ' + prev + ': ' + delta.toLocaleString(undefined, { maximumFractionDigits: 2 })) : '');
+      setTimelineEditing(false);
     }
 
     async function loadTimeline() {
@@ -215,6 +294,74 @@ def holdings_shell_html() -> str:
       selectedActivities().forEach(function (a) { p.append('activity', a); });
       const res = await fetchJson('/api/holdings/timeline?' + p.toString(), { cache: 'no-store' });
       renderTimelineRows((res.data && res.data.rows) || []);
+    }
+
+    function timelineEditedRowsPayload() {
+      const rows = [];
+      const seen = new Set();
+      const tableRows = tlTable.querySelectorAll('tbody tr');
+      for (const tr of tableRows) {
+        const dateInput = tr.querySelector('.tl_date_input');
+        const asOfDate = String(dateInput && dateInput.value || '').trim();
+        if (!asOfDate) {
+          throw new Error('Date is required for all timeline rows.');
+        }
+        const inputs = tr.querySelectorAll('.tl_cell_input');
+        for (const el of inputs) {
+          const activityType = String(el.getAttribute('data-activity') || '').trim();
+          if (!activityType) continue;
+          const raw = String(el.value || '').trim().replace(/,/g, '');
+          if (raw === '') continue;
+          const val = Number(raw);
+          if (!Number.isFinite(val)) {
+            throw new Error('Invalid number for ' + asOfDate + ' / ' + activityType + ': ' + raw);
+          }
+          const key = asOfDate + '||' + activityType;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push({ as_of_date: asOfDate, activity_type: activityType, balance_ils: val });
+        }
+      }
+      return rows;
+    }
+
+    function timelineDateMovesPayload() {
+      const moves = [];
+      const tableRows = tlTable.querySelectorAll('tbody tr');
+      for (const tr of tableRows) {
+        const fromDate = String(tr.getAttribute('data-original-date') || '').trim();
+        const dateInput = tr.querySelector('.tl_date_input');
+        const toDate = String(dateInput && dateInput.value || '').trim();
+        if (!fromDate || !toDate || fromDate === toDate) continue;
+        moves.push({ source_date: fromDate, target_date: toDate });
+      }
+      return moves;
+    }
+
+    async function moveTimelineDate(sourceDate, targetDate) {
+      const firstTry = await fetchJson('/api/holdings/move-date', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_date: sourceDate, target_date: targetDate, overwrite_conflicts: false }),
+      });
+      if (firstTry.ok) return firstTry.data || {};
+      const conflicts = (firstTry.data && firstTry.data.conflicts) || [];
+      if (firstTry.status !== 409 || conflicts.length === 0) {
+        throw new Error((firstTry.data && firstTry.data.message) || 'Failed to move date.');
+      }
+      const msg = 'Changing date ' + sourceDate + ' -> ' + targetDate + ' has ' + conflicts.length + ' conflict(s). Overwrite target date values?';
+      if (!window.confirm(msg)) {
+        throw new Error('Cancelled by user.');
+      }
+      const overwrite = await fetchJson('/api/holdings/move-date', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_date: sourceDate, target_date: targetDate, overwrite_conflicts: true }),
+      });
+      if (!overwrite.ok) {
+        throw new Error((overwrite.data && overwrite.data.message) || 'Failed to move date with overwrite.');
+      }
+      return overwrite.data || {};
     }
 
     function manualRowsPayload() {
@@ -258,6 +405,42 @@ def holdings_shell_html() -> str:
     }
 
     document.getElementById('btn_tl_reload').onclick = loadTimeline;
+    btnTlEdit.onclick = function () { setTimelineEditing(true); };
+    btnTlCancel.onclick = function () { renderTimelineRows(timelineRows); };
+    btnTlSave.onclick = async function () {
+      try {
+        const moves = timelineDateMovesPayload();
+        for (const mv of moves) {
+          await moveTimelineDate(mv.source_date, mv.target_date);
+        }
+        const rows = timelineEditedRowsPayload();
+        await previewAndSaveRows(rows);
+        setTimelineEditing(false);
+      } catch (e) {
+        setStatus('Error: ' + e);
+      }
+    };
+    tlTable.addEventListener('input', function (ev) {
+      const target = ev.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (!target.classList.contains('tl_cell_input') && !target.classList.contains('tl_date_input')) return;
+      refreshTimelineDirtyState();
+    });
+    tlTable.addEventListener('keydown', function (ev) {
+      const target = ev.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (!target.classList.contains('tl_cell_input') && !target.classList.contains('tl_date_input')) return;
+      if (!timelineEditing) return;
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        btnTlCancel.click();
+        return;
+      }
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        if (!btnTlSave.disabled) btnTlSave.click();
+      }
+    });
     document.getElementById('add_activity_row').onclick = function () { addActivityRow('', ''); };
     document.getElementById('btn_manual_preview').onclick = function () { previewAndSaveRows(manualRowsPayload()); };
 

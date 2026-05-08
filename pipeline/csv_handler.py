@@ -9,7 +9,7 @@ from tabulate import tabulate
 
 import config
 
-from .compiler import parse_post_ingest_date_scalar
+from .compiler import parse_post_ingest_date_column, parse_post_ingest_date_scalar
 
 log = logging.getLogger(__name__)
 
@@ -251,8 +251,12 @@ class HoldingsFile:
 
     def unify_columns(self, map):
         self.file_df.rename(columns=map, inplace=True)
-        self.file_df = self.file_df.apply(pd.to_numeric, errors='coerce')
-        merged_row = self.file_df.max()
+        if 'תאריך' in self.file_df.columns:
+            self.file_df['תאריך'] = parse_post_ingest_date_column(self.file_df['תאריך'])
+        balance_cols = [c for c in self.file_df.columns if c != 'תאריך']
+        if balance_cols:
+            self.file_df[balance_cols] = self.file_df[balance_cols].apply(pd.to_numeric, errors='coerce')
+        merged_row = self.file_df.max(numeric_only=False)
         self.file_df = pd.DataFrame([merged_row])
 
     def to_csv(self, output_clean_dir=None):

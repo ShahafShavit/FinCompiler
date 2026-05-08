@@ -14,6 +14,7 @@ from typing import Any
 import pandas as pd
 
 import config
+from pipeline.compiler import parse_post_ingest_date_scalar
 from pipeline.ledger import migrate_ledger_db
 
 log = logging.getLogger(__name__)
@@ -36,15 +37,17 @@ def _canonical_activity(name: str) -> str:
 
 
 def _norm_date(v: Any) -> str:
-    if hasattr(v, "strftime"):
-        return v.strftime("%Y-%m-%d")
-    s = str(v).strip()
-    ts = pd.to_datetime(s, errors="coerce", format="%Y-%m-%d")
-    if pd.isna(ts):
-        ts = pd.to_datetime(s, errors="coerce", dayfirst=True)
+    ts = parse_post_ingest_date_scalar(v)
     if pd.isna(ts):
         raise ValueError(f"invalid as_of_date: {v!r}")
     return ts.strftime("%Y-%m-%d")
+
+
+def _month_start_date(v: Any) -> str:
+    ts = pd.to_datetime(_norm_date(v), errors="coerce", format="%Y-%m-%d")
+    if pd.isna(ts):
+        raise ValueError(f"invalid as_of_date: {v!r}")
+    return ts.replace(day=1).strftime("%Y-%m-%d")
 
 
 def wide_holdings_to_long(df: pd.DataFrame) -> pd.DataFrame:
@@ -68,7 +71,8 @@ def wide_holdings_to_long(df: pd.DataFrame) -> pd.DataFrame:
         .rename(columns={"תאריך": "as_of_date"})
     )
 
-    long_df["as_of_date"] = long_df["as_of_date"].map(_norm_date)
+    # Holdings are monthly snapshots; anchor any in-month source date to month start.
+    long_df["as_of_date"] = long_df["as_of_date"].map(_month_start_date)
     long_df["balance_ils"] = pd.to_numeric(long_df["balance_ils"], errors="coerce").fillna(0.0)
     return long_df
 
@@ -300,6 +304,115 @@ def upsert_holdings_rows(
         "holdings_table_count": int(report.get("holdings_table_count", 0)),
         "db_path": db,
     }
+
+
+def move_holdings_date(
+    source_date: Any,
+    target_date: Any,
+    db_path: str | None = None,
+    *,
+    overwrite_conflicts: bool = False,
+) -> dict[str, Any]:
+    """
+    Move all holdings rows from one date to another date.
+
+    This is used by the timeline table editor when changing the snapshot date.
+    """
+    db = db_path if db_path is not None else config.ledger_db_file
+    migrate_ledger_db(db)
+    source = _norm_date(source_date)
+    target = _month_start_date(target_date)
+    if source == target:
+        return {
+            "ok": True,
+            "error": None,
+            "message": "source and target dates are the same",
+            "source_date": source,
+            "target_date": target,
+            "rows_moved": 0,
+        }
+
+    conn = sqlite3.connect(db)
+    try:
+        src_rows = conn.execute(
+            """
+            SELECT as_of_date, activity_type, balance_ils
+            FROM holdings_balance
+            WHERE as_of_date = ?
+            ORDER BY activity_type
+            """,
+            (source,),
+        ).fetchall()
+        if not src_rows:
+            return {
+                "ok": False,
+                "error": "source_date_not_found",
+                "message": f"no holdings rows exist for source date {source}",
+                "source_date": source,
+                "target_date": target,
+                "rows_moved": 0,
+            }
+
+        activities = [str(r[1]) for r in src_rows]
+        placeholders = ",".join("?" for _ in activities)
+        dst_rows = conn.execute(
+            f"""
+            SELECT activity_type, balance_ils
+            FROM holdings_balance
+            WHERE as_of_date = ? AND activity_type IN ({placeholders})
+            """,
+            [target, *activities],
+        ).fetchall()
+        dst_by_activity = {str(a): float(b) for a, b in dst_rows}
+        conflicts = []
+        for _, activity, bal in src_rows:
+            a = str(activity)
+            src_bal = float(bal)
+            if a in dst_by_activity and abs(dst_by_activity[a] - src_bal) > 0.01:
+                conflicts.append(
+                    {
+                        "source_date": source,
+                        "target_date": target,
+                        "activity_type": a,
+                        "source_balance_ils": src_bal,
+                        "target_balance_ils": float(dst_by_activity[a]),
+                    }
+                )
+        if conflicts and not overwrite_conflicts:
+            return {
+                "ok": False,
+                "error": "conflicts_detected",
+                "message": "Target date has rows with different balances; set overwrite_conflicts=true.",
+                "source_date": source,
+                "target_date": target,
+                "rows_moved": 0,
+                "conflicts": conflicts,
+            }
+
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM holdings_balance WHERE as_of_date = ?", (source,))
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO holdings_balance (as_of_date, activity_type, balance_ils)
+            VALUES (?,?,?)
+            """,
+            [(target, str(activity), float(bal)) for _, activity, bal in src_rows],
+        )
+        conn.commit()
+        return {
+            "ok": True,
+            "error": None,
+            "message": "holdings date moved",
+            "source_date": source,
+            "target_date": target,
+            "rows_moved": len(src_rows),
+            "conflicts": conflicts,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def parse_holdings_paste_grid(text: str) -> dict[str, Any]:
