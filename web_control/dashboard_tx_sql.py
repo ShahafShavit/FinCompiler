@@ -12,7 +12,11 @@ import sqlite3
 from collections import defaultdict
 from typing import Any
 
-from pipeline.ledger import LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR, LEDGER_SQL_EFFECTIVE_YM_EXPR
+from pipeline.ledger import (
+    LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR,
+    LEDGER_SQL_EFFECTIVE_YM_EXPR,
+    LEDGER_SQL_TX_INCLUDED,
+)
 
 # --- Shared CTEs ---------------------------------------------------------------------------
 
@@ -35,6 +39,7 @@ tx_norm AS (
       ELSE TRIM("מקור עסקה")
     END AS src_norm
   FROM ledger_transaction
+  WHERE {LEDGER_SQL_TX_INCLUDED}
 )"""
 
 PERIOD_TX_30D = """

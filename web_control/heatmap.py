@@ -498,19 +498,40 @@ def _ledger_heatmap_status() -> dict[str, Any]:
     """JSON-friendly status for the heatmap API (SQLite canonical; no Sheets pull)."""
     p = config.ledger_db_file
     exists = os.path.isfile(p)
-    n = 0
-    if exists:
-        try:
-            import sqlite3
+    payload: dict[str, Any] = {
+        "ledger_path": p,
+        "ledger_exists": exists,
+        "transaction_count": 0,
+        "transaction_count_total_stored": 0,
+        "transaction_count_excluded": 0,
+    }
+    if not exists:
+        return payload
 
-            conn = sqlite3.connect(p)
-            try:
-                n = int(conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0])
-            finally:
-                conn.close()
-        except Exception:  # noqa: BLE001
-            n = -1
-    return {"ledger_path": p, "ledger_exists": exists, "transaction_count": n}
+    try:
+        import sqlite3
+
+        from pipeline.ledger import LEDGER_SQL_TX_INCLUDED, migrate_ledger_db
+
+        migrate_ledger_db(p)
+        conn = sqlite3.connect(p)
+        try:
+            total = int(conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0] or 0)
+            inc = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM ledger_transaction WHERE {LEDGER_SQL_TX_INCLUDED}"
+                ).fetchone()[0]
+                or 0
+            )
+            payload["transaction_count_total_stored"] = total
+            payload["transaction_count_excluded"] = max(0, total - inc)
+            payload["transaction_count"] = inc
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        payload["transaction_count"] = -1
+
+    return payload
 
 
 def get_bundle() -> HeatmapBundle | None:

@@ -298,6 +298,7 @@ export default function HeatmapDetail() {
   const [err, setErr] = useState<string>('');
   const [rowErr, setRowErr] = useState<Record<number, string>>({});
   const [fpRow, setFpRow] = useState<Record<string, unknown> | null>(null);
+  const [excludingRowId, setExcludingRowId] = useState<number | null>(null);
 
   const loadDetail = useCallback(async (opts?: { preserveExisting?: boolean }) => {
     if (!queryString) {
@@ -372,6 +373,27 @@ export default function HeatmapDetail() {
     await loadDetail({ preserveExisting: true });
   };
 
+  const excludeFromCalculations = async (row: Record<string, unknown>) => {
+    const id = rowId(row);
+    if (id == null || excludingRowId != null) return;
+    setRowErr((m) => {
+      const next = { ...m };
+      delete next[id];
+      return next;
+    });
+    setExcludingRowId(id);
+    try {
+      const out = await patchLedger(id, { excluded_from_calculations: 1 });
+      if (!out.ok) {
+        setRowErr((m) => ({ ...m, [id]: out.message || 'Exclude failed' }));
+        return;
+      }
+      await loadDetail({ preserveExisting: true });
+    } finally {
+      setExcludingRowId(null);
+    }
+  };
+
   const fpModalOpen = fpRow != null;
 
   return (
@@ -414,7 +436,7 @@ export default function HeatmapDetail() {
                           {cols.map((c) => (
                             <th key={c}>{c}</th>
                           ))}
-                          <th className="hm-detail-actions-th">זהות</th>
+                          <th className="hm-detail-actions-th">פעולות</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -464,14 +486,26 @@ export default function HeatmapDetail() {
                                 ))}
                                 <td className="hm-detail-actions-td">
                                   {rid != null ? (
-                                    <button
-                                      type="button"
-                                      className="secondary hm-detail-rekey"
-                                      title="עריכת שדות שמשפיעים על טביעת האצבע"
-                                      onClick={() => setFpRow(row)}
-                                    >
-                                      זהות…
-                                    </button>
+                                    <div className="hm-detail-actions-stack">
+                                      <button
+                                        type="button"
+                                        className="secondary hm-detail-rekey"
+                                        title="עריכת שדות שמשפיעים על טביעת האצבע"
+                                        disabled={excludingRowId === rid}
+                                        onClick={() => setFpRow(row)}
+                                      >
+                                        זהות…
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="secondary hm-detail-exclude"
+                                        title="Row stays in DB but is omitted from heatmaps, KPIs, and categorize queue. Restore from Data Integrity."
+                                        disabled={excludingRowId != null}
+                                        onClick={() => void excludeFromCalculations(row)}
+                                      >
+                                        {excludingRowId === rid ? '…' : 'החרג מהחישוב'}
+                                      </button>
+                                    </div>
                                   ) : null}
                                 </td>
                               </tr>

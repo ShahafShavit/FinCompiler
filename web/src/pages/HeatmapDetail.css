@@ -105,14 +105,34 @@
 
 .hm-detail-actions-th,
 .hm-detail-actions-td {
-  width: 5rem;
-  white-space: nowrap;
+  width: auto;
+  min-width: 6.5rem;
+  white-space: normal;
   text-align: center;
+  vertical-align: middle;
+}
+
+.hm-detail-actions-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.hm-detail-rekey,
+.hm-detail-exclude {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.45rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.hm-detail-exclude:not(:disabled) {
+  color: var(--bad-fg, #722);
 }
 
 .hm-detail-rekey {
-  font-size: 0.78rem;
-  padding: 0.25rem 0.45rem;
+  white-space: nowrap;
 }
 
 .hm-detail-row-err-tr .hm-detail-row-err {

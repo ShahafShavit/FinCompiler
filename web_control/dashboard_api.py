@@ -19,7 +19,12 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import config
-from pipeline.ledger import LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR, ledger_connect_readonly
+from pipeline.ledger import (
+    LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR,
+    LEDGER_SQL_TX_INCLUDED,
+    ledger_connect_readonly,
+    migrate_ledger_db,
+)
 
 from . import dashboard_tx_sql
 
@@ -81,6 +86,8 @@ def summary() -> dict[str, Any]:
         "savings_rate_30d": None,
         "uncategorized_count": None,
         "transaction_count": None,
+        "transactions_total_stored": None,
+        "transactions_excluded_count": None,
         "last_ingest_date": None,
     }
 
@@ -89,6 +96,8 @@ def summary() -> dict[str, Any]:
         out["kpis"] = kpis
         return out
     try:
+        migrate_ledger_db(_ledger_path())
+        conn.execute("PRAGMA foreign_keys = ON")
         # Net worth = sum of latest holdings_balance snapshot.
         latest_row = conn.execute(
             "SELECT MAX(as_of_date) FROM holdings_balance"
@@ -116,22 +125,33 @@ def summary() -> dict[str, Any]:
                 kpis["net_worth_delta_mom"] = float((total or 0.0) - (prev_total or 0.0))
 
         # Transactions-side KPIs.
+        total_stored_row = conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()
+        total_stored = int(total_stored_row[0] or 0) if total_stored_row else 0
+        kpis["transactions_total_stored"] = total_stored
+
         tx_row = conn.execute(
-            'SELECT COUNT(*), MAX(ingested_at) FROM ledger_transaction'
+            f"SELECT COUNT(*), MAX(ingested_at) FROM ledger_transaction WHERE {LEDGER_SQL_TX_INCLUDED}"
         ).fetchone()
         kpis["transaction_count"] = int(tx_row[0] or 0) if tx_row else 0
+        kpis["transactions_excluded_count"] = max(0, total_stored - kpis["transaction_count"])
         kpis["last_ingest_date"] = tx_row[1] if tx_row else None
 
         uncat_row = conn.execute(
-            'SELECT COUNT(*) FROM ledger_transaction '
-            'WHERE "קטגוריה" IS NULL OR TRIM(COALESCE("קטגוריה", \'\')) = \'\' '
-            "OR LOWER(TRIM(COALESCE(\"קטגוריה\", ''))) = 'awaiting'"
+            f"""
+            SELECT COUNT(*) FROM ledger_transaction
+            WHERE {LEDGER_SQL_TX_INCLUDED}
+              AND (
+                   "קטגוריה" IS NULL OR TRIM(COALESCE("קטגוריה", '')) = ''
+                OR LOWER(TRIM(COALESCE("קטגוריה", ''))) = 'awaiting'
+              )
+            """
         ).fetchone()
         kpis["uncategorized_count"] = int(uncat_row[0] or 0) if uncat_row else 0
 
         # 30-day window: anchor at MAX(effective tx date per statement_month / תאריך), 30 calendar days.
         sql_max_eff = (
-            f"SELECT MAX(({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR})) FROM ledger_transaction"
+            f"SELECT MAX(({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR})) FROM ledger_transaction "
+            f"WHERE {LEDGER_SQL_TX_INCLUDED}"
         )
         max_date_row = conn.execute(sql_max_eff).fetchone()
         max_date_iso = max_date_row[0] if max_date_row else None
@@ -149,6 +169,7 @@ def summary() -> dict[str, Any]:
                              COALESCE(CAST("בחובה" AS REAL), 0.0) AS bh,
                              ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}) AS eff_d
                       FROM ledger_transaction
+                      WHERE {LEDGER_SQL_TX_INCLUDED}
                     )
                     SELECT COALESCE(SUM(zc), 0), COALESCE(SUM(bh), 0)
                     FROM t

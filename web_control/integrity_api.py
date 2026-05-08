@@ -10,6 +10,8 @@ from typing import Any
 
 import config
 from pipeline.ledger import (
+    LEDGER_SQL_LT_TX_INCLUDED,
+    LEDGER_SQL_TX_INCLUDED,
     forward_fill_uncategorized_for_store_if_static_sql,
     ledger_connect_readonly,
     migrate_ledger_db,
@@ -71,16 +73,46 @@ def build_integrity_report() -> dict[str, Any]:
     if not os.path.isfile(path):
         return {"ok": True, "ledger_exists": False, "sections": []}
 
+    migrate_ledger_db(path)
     conn = ledger_connect_readonly(path)
     try:
         sections: list[dict[str, Any]] = []
 
+        excl_n = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM ledger_transaction WHERE excluded_from_calculations = 1"
+            ).fetchone()[0]
+            or 0
+        )
+        excluded_rows = _rows_from_conn(
+            conn,
+            f"""
+            SELECT id, "תאריך", "מקור עסקה", "בחובה", "בזכות", "קטגוריה", fingerprint
+            FROM ledger_transaction
+            WHERE excluded_from_calculations = 1
+            ORDER BY id DESC
+            LIMIT {_ROW_LIMIT}
+            """,
+        )
+        sections.append(
+            _section(
+                "excluded_transactions",
+                "Excluded from calculations (soft-disabled)",
+                severity="info",
+                count=excl_n,
+                rows=excluded_rows,
+                note="These rows remain in the ledger but are omitted from heatmap, dashboard totals, "
+                "categorize queue, and the checks below.",
+            )
+        )
+
         dup_fp = _rows_from_conn(
             conn,
-            """
+            f"""
             SELECT fingerprint, COUNT(*) AS c
             FROM ledger_transaction
             WHERE fingerprint IS NOT NULL AND TRIM(fingerprint) != ''
+              AND {LEDGER_SQL_TX_INCLUDED}
             GROUP BY fingerprint
             HAVING c > 1
             LIMIT 20
@@ -98,9 +130,10 @@ def build_integrity_report() -> dict[str, Any]:
 
         null_fp_n = int(
             conn.execute(
-                """
+                f"""
                 SELECT COUNT(*) FROM ledger_transaction
-                WHERE fingerprint IS NULL OR TRIM(COALESCE(fingerprint, '')) = ''
+                WHERE (fingerprint IS NULL OR TRIM(COALESCE(fingerprint, '')) = '')
+                  AND {LEDGER_SQL_TX_INCLUDED}
                 """
             ).fetchone()[0]
             or 0
@@ -110,7 +143,8 @@ def build_integrity_report() -> dict[str, Any]:
             f"""
             SELECT id, "תאריך", "מקור עסקה", "בחובה", "בזכות", "קטגוריה"
             FROM ledger_transaction
-            WHERE fingerprint IS NULL OR TRIM(COALESCE(fingerprint, '')) = ''
+            WHERE (fingerprint IS NULL OR TRIM(COALESCE(fingerprint, '')) = '')
+              AND {LEDGER_SQL_TX_INCLUDED}
             LIMIT {_ROW_LIMIT}
             """,
         )
@@ -133,6 +167,7 @@ def build_integrity_report() -> dict[str, Any]:
                   FROM ledger_transaction
                   WHERE fingerprint IS NOT NULL AND TRIM(fingerprint) != ''
                     AND {_NO_STMT_MONTH}
+                    AND {LEDGER_SQL_TX_INCLUDED}
                   GROUP BY 1, 2, 3, 4
                   HAVING COUNT(DISTINCT fingerprint) > 1
                 )
@@ -150,6 +185,7 @@ def build_integrity_report() -> dict[str, Any]:
               FROM ledger_transaction
               WHERE fingerprint IS NOT NULL AND TRIM(fingerprint) != ''
                 AND {_NO_STMT_MONTH}
+                AND {LEDGER_SQL_TX_INCLUDED}
               GROUP BY 1, 2, 3, 4
               HAVING nf > 1
               LIMIT {_GROUP_LIMIT}
@@ -160,6 +196,7 @@ def build_integrity_report() -> dict[str, Any]:
               AND lt."בחובה" = dups.bh AND lt."בזכות" = dups.bz
               AND TRIM(COALESCE(lt."מקור עסקה", '')) = dups.src
             WHERE {_NO_STMT_MONTH_LT}
+              AND {LEDGER_SQL_LT_TX_INCLUDED}
             ORDER BY lt."תאריך", lt.id
             LIMIT {_ROW_LIMIT}
             """,
@@ -190,6 +227,8 @@ def build_integrity_report() -> dict[str, Any]:
              AND a."בזכות" = b."בחובה"
              AND TRIM(COALESCE(a."מקור עסקה", '')) = TRIM(COALESCE(b."מקור עסקה", ''))
             WHERE TRIM(COALESCE(a."מקור עסקה", '')) != ''
+              AND (COALESCE(a.excluded_from_calculations, 0) = 0)
+              AND (COALESCE(b.excluded_from_calculations, 0) = 0)
             LIMIT {_ROW_LIMIT}
             """,
         )
@@ -210,6 +249,7 @@ def build_integrity_report() -> dict[str, Any]:
             SELECT id, "תאריך", "בחובה", "בזכות", "מקור עסקה", "קטגוריה"
             FROM ledger_transaction
             WHERE "בחובה" != 0 AND "בזכות" != 0
+              AND {LEDGER_SQL_TX_INCLUDED}
             LIMIT {_ROW_LIMIT}
             """,
         )
@@ -225,11 +265,12 @@ def build_integrity_report() -> dict[str, Any]:
 
         ws_cat = _rows_from_conn(
             conn,
-            """
+            f"""
             SELECT DISTINCT TRIM("קטגוריה") AS trimmed, "קטגוריה" AS raw
             FROM ledger_transaction
             WHERE "קטגוריה" IS NOT NULL
               AND "קטגוריה" != TRIM("קטגוריה")
+              AND {LEDGER_SQL_TX_INCLUDED}
             LIMIT 100
             """,
         )
@@ -249,6 +290,7 @@ def build_integrity_report() -> dict[str, Any]:
             SELECT "קטגוריה" AS category, COUNT(*) AS txn_count
             FROM ledger_transaction
             WHERE "קטגוריה" IS NOT NULL AND TRIM(COALESCE("קטגוריה", '')) != ''
+              AND {LEDGER_SQL_TX_INCLUDED}
             GROUP BY "קטגוריה"
             HAVING txn_count <= 2
             ORDER BY txn_count, "קטגוריה"
@@ -266,7 +308,10 @@ def build_integrity_report() -> dict[str, Any]:
         )
 
         uncat_row = conn.execute(
-            f"SELECT COUNT(*) FROM ledger_transaction WHERE {_SQL_UNCATEGORIZED}"
+            f"""SELECT COUNT(*) FROM ledger_transaction
+            WHERE {_SQL_UNCATEGORIZED}
+              AND {LEDGER_SQL_TX_INCLUDED}
+            """
         ).fetchone()
         uncat_n = int(uncat_row[0] or 0) if uncat_row else 0
         uncat_sample = _rows_from_conn(
@@ -275,6 +320,7 @@ def build_integrity_report() -> dict[str, Any]:
             SELECT id, "תאריך", "מקור עסקה", "בחובה", "בזכות", "קטגוריה", fingerprint
             FROM ledger_transaction
             WHERE {_SQL_UNCATEGORIZED}
+              AND {LEDGER_SQL_TX_INCLUDED}
             LIMIT 80
             """,
         )
@@ -294,6 +340,7 @@ def build_integrity_report() -> dict[str, Any]:
             SELECT DISTINCT lt."קטגוריה" AS category, COUNT(*) AS txn_count
             FROM ledger_transaction lt
             WHERE lt."קטגוריה" IS NOT NULL AND TRIM(COALESCE(lt."קטגוריה", '')) != ''
+              AND {LEDGER_SQL_LT_TX_INCLUDED}
               AND NOT EXISTS (
                 SELECT 1 FROM store_category sc WHERE sc.category = lt."קטגוריה"
               )
@@ -324,6 +371,7 @@ def list_stores_aggregated() -> dict[str, Any]:
     path = _ledger_path()
     if not os.path.isfile(path):
         return {"ok": True, "ledger_exists": False, "stores": []}
+    migrate_ledger_db(path)
     conn = ledger_connect_readonly(path)
     try:
         rows = _rows_from_conn(
@@ -481,3 +529,84 @@ def patch_store_static_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
         log.debug("heatmap cache invalidate after store-static skipped", exc_info=True)
 
     return 200, {"ok": True, "updated": True, "forward_filled_uncategorized": int(forward_filled)}
+
+
+def patch_ledger_transaction_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
+    """Ledger row patch used from Data Integrity (same patch rules as ``/heatmap/api/transaction``).
+
+    Body may include::
+
+        ``id`` — sqlite ``ledger_transaction.id`` **or**
+
+        ``fingerprint`` — unique dedupe key; ``id`` is resolved server-side.
+
+    One of ``id`` or ``fingerprint`` must be present (``id`` wins if both are set).
+    """
+    from web_control import heatmap
+
+    try:
+        data = json.loads(raw_body.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return 400, {"ok": False, "error": "invalid_json", "message": "Invalid JSON body."}
+
+    if not isinstance(data, dict):
+        return 400, {"ok": False, "error": "validation_error", "message": "Body must be a JSON object."}
+
+    patch = data.get("patch")
+    if not isinstance(patch, dict):
+        return 400, {"ok": False, "error": "validation_error", "message": "patch object required."}
+
+    row_id_raw = data.get("id")
+    fp = str(data.get("fingerprint") or "").strip()
+
+    resolved_id: int | None = None
+    if row_id_raw is not None and str(row_id_raw).strip() != "":
+        try:
+            resolved_id = int(row_id_raw)
+        except (TypeError, ValueError):
+            return 400, {"ok": False, "error": "validation_error", "message": "id must be an integer."}
+    elif fp:
+        path = _ledger_path()
+        if not os.path.isfile(path):
+            return 404, {"ok": False, "error": "no_ledger", "message": "Ledger database not found"}
+        migrate_ledger_db(path)
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            row = conn.execute(
+                """
+                SELECT id FROM ledger_transaction
+                WHERE fingerprint IS NOT NULL AND TRIM(fingerprint) = ?
+                """,
+                (fp,),
+            ).fetchone()
+            if row is None:
+                return 404, {
+                    "ok": False,
+                    "error": "not_found",
+                    "message": "No ledger row with this fingerprint.",
+                }
+            resolved_id = int(row[0])
+        finally:
+            conn.close()
+    else:
+        return 400, {
+            "ok": False,
+            "error": "validation_error",
+            "message": "Provide id or fingerprint.",
+        }
+
+    forward: dict[str, Any] = {
+        "id": resolved_id,
+        "patch": patch,
+    }
+    if data.get("confirm_fingerprint_change"):
+        forward["confirm_fingerprint_change"] = True
+    phrase = data.get("confirm_fingerprint_phrase")
+    if phrase is not None:
+        forward["confirm_fingerprint_phrase"] = phrase
+
+    status, payload = heatmap.ledger_transaction_patch_api(json.dumps(forward).encode("utf-8"))
+    if isinstance(payload, dict) and payload.get("ok"):
+        payload = {**payload, "id": resolved_id}
+    return status, payload

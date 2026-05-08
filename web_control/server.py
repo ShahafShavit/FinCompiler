@@ -789,6 +789,25 @@ def make_handler_class(state: ControlState):
             parsed = urlparse(self.path)
             path = _normalize_http_path(parsed.path)
 
+            if path == "/api/integrity/ledger-tx":
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                try:
+                    status, payload = integrity_api.patch_ledger_transaction_api(raw)
+                    body = _json_bytes_strict(payload)
+                except Exception:  # noqa: BLE001
+                    log.exception("PATCH /api/integrity/ledger-tx failed")
+                    status = 500
+                    body = _json_bytes_strict(
+                        {
+                            "ok": False,
+                            "error": "server_error",
+                            "message": "Ledger row patch failed (see server log).",
+                        }
+                    )
+                self._send(status, body, "application/json; charset=utf-8")
+                return
+
             if path == "/heatmap/api/transaction":
                 clen = int(self.headers.get("Content-Length", "0") or "0")
                 raw = self.rfile.read(clen) if clen > 0 else b"{}"

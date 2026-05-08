@@ -42,7 +42,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 max_v = conn.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0]
-                self.assertEqual(max_v, 13)
+                self.assertEqual(max_v, 14)
 
                 conn.execute(
                     'INSERT INTO ledger_transaction ("fingerprint", ingested_at, "תאריך") '
@@ -127,6 +127,38 @@ class LedgerMigrateTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_excluded_from_calculations_column_defaults_zero(self) -> None:
+        import config as config_mod
+
+        from pipeline.ledger import migrate_ledger_db
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                importlib.reload(config_mod)
+
+            migrate_ledger_db()
+            conn = sqlite3.connect(config_mod.ledger_db_file)
+            try:
+                names = [
+                    row[1] for row in conn.execute("PRAGMA table_info(ledger_transaction)")
+                ]
+                self.assertIn("excluded_from_calculations", names)
+                conn.execute(
+                    'INSERT INTO ledger_transaction ('
+                    '"תאריך", "בחובה", "בזכות", "מקור עסקה", "fingerprint", ingested_at'
+                    ') VALUES ("2024-01-01", 1, 0, "x", "fp-x", "2024-01-01")'
+                )
+                conn.commit()
+                ex = conn.execute(
+                    'SELECT excluded_from_calculations FROM ledger_transaction '
+                    'WHERE fingerprint = ?',
+                    ("fp-x",),
+                ).fetchone()[0]
+                self.assertEqual(int(ex), 0)
+            finally:
+                conn.close()
+
     def test_v13_drops_similar_category_pair(self) -> None:
         import config as config_mod
 
@@ -150,7 +182,7 @@ class LedgerMigrateTests(unittest.TestCase):
                         PRIMARY KEY (p1, p2)
                     );
                     INSERT INTO similar_category_pair (p1, p2) VALUES ('a', 'b');
-                    DELETE FROM schema_migrations WHERE version = 13;
+                    DELETE FROM schema_migrations WHERE version IN (13, 14);
                     """
                 )
                 conn.commit()
@@ -166,7 +198,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 ).fetchone()
                 self.assertIsNone(gone)
                 max_v = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-                self.assertEqual(max_v, 13)
+                self.assertEqual(max_v, 14)
             finally:
                 conn.close()
 

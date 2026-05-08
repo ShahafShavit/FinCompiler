@@ -16,6 +16,9 @@ rename ``fingerprint_v2`` → ``fingerprint``. Requires SQLite 3.35+ (``ALTER TA
 **v12** — recompute ``fingerprint`` again using ISO-safe date parsing (same rules as ``parse_post_ingest_date_scalar``);
 merge duplicate rows.
 
+**v14** — ``excluded_from_calculations`` (0/1): rows set to 1 are kept in the DB but omitted from
+heatmap, dashboard aggregates, categorize queue, and integrity anomaly checks.
+
 Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile upsert implements MIG-E2.
 """
 from __future__ import annotations
@@ -188,6 +191,14 @@ def audit_ledger_constraints(conn: sqlite3.Connection) -> LedgerAuditReport:
                WHERE fingerprint IS NOT NULL
                GROUP BY fingerprint
                HAVING COUNT(*) > 1""",
+        ),
+        (
+            "ledger_transaction",
+            "lt_excluded_from_calculations_boolean",
+            "excluded_from_calculations in (0, 1) when present",
+            """SELECT id FROM ledger_transaction
+               WHERE excluded_from_calculations IS NOT NULL
+                 AND excluded_from_calculations NOT IN (0, 1)""",
         ),
         (
             "store_category",
@@ -575,9 +586,27 @@ def _migrate_ledger_transaction_to_v10(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ledger_transaction_column_names(conn: sqlite3.Connection) -> set[str]:
+    return {str(r[1]) for r in conn.execute("PRAGMA table_info(ledger_transaction)")}
+
+
+def _recreate_v_ledger_uncategorized_view(conn: sqlite3.Connection) -> None:
+    """Aligned with ``schema/ledger/full_schema.sql`` (requires ``excluded_from_calculations`` column)."""
+    conn.execute("DROP VIEW IF EXISTS v_ledger_uncategorized")
+    conn.execute(
+        """
+        CREATE VIEW v_ledger_uncategorized AS
+        SELECT *
+        FROM ledger_transaction
+        WHERE ("קטגוריה" IS NULL OR TRIM(COALESCE("קטגוריה", '')) = '')
+          AND COALESCE(excluded_from_calculations, 0) = 0
+        """
+    )
+
+
 def migrate_ledger_db(db_path: str | None = None) -> None:
     """
-    Ensure the ledger database exists and matches the v13 contract in ``full_schema.sql``.
+    Ensure the ledger database exists and matches the v14 contract in ``full_schema.sql``.
 
     Idempotent: safe to call repeatedly. Uses ``config.ledger_db_file`` when
     ``db_path`` is omitted (read at call time so tests can reload ``config``).
@@ -642,6 +671,17 @@ def migrate_ledger_db(db_path: str | None = None) -> None:
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (13, 'drop_similar_category_pair')"
             )
+            lt_cols = _ledger_transaction_column_names(conn)
+            if "excluded_from_calculations" not in lt_cols:
+                conn.execute(
+                    "ALTER TABLE ledger_transaction ADD COLUMN excluded_from_calculations "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
+            if "excluded_from_calculations" in _ledger_transaction_column_names(conn):
+                _recreate_v_ledger_uncategorized_view(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (14, 'ledger_excluded_from_calculations')"
+            )
             conn.commit()
         finally:
             conn.close()
@@ -664,6 +704,10 @@ CASE
   ELSE strftime('%Y-%m', date("תאריך"))
 END
 """.strip()
+
+# Omit from heatmap/dashboard exports and categorize queue when 1 (see schema ``excluded_from_calculations``).
+LEDGER_SQL_TX_INCLUDED = "(COALESCE(excluded_from_calculations, 0) = 0)"
+LEDGER_SQL_LT_TX_INCLUDED = "(COALESCE(lt.excluded_from_calculations, 0) = 0)"
 
 # Calendar day for 30d/YTD anchoring: first day of valid ``statement_month``, else ``תאריך``.
 LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR = """
@@ -735,7 +779,9 @@ def update_categories_by_fingerprint_batch(
 
 # --- Transaction patch (heatmap / detail UI) ---------------------------------
 
-LEDGER_TX_PATCH_SAFE_KEYS = frozenset({"notes", "קטגוריה", "4 ספרות", "statement_month"})
+LEDGER_TX_PATCH_SAFE_KEYS = frozenset(
+    {"notes", "קטגוריה", "4 ספרות", "statement_month", "excluded_from_calculations"}
+)
 LEDGER_TX_PATCH_FINGERPRINT_KEYS = frozenset(
     {"תאריך", "בחובה", "בזכות", "מקור עסקה", "פירוט נוסף", "תאור מורחב"}
 )
@@ -743,7 +789,7 @@ LEDGER_FINGERPRINT_CONFIRM_PHRASE = "REKEY"
 
 
 def _ledger_patch_sql_column(name: str) -> str:
-    if name in ("notes", "statement_month", "ingested_at", "fingerprint"):
+    if name in ("notes", "statement_month", "ingested_at", "fingerprint", "excluded_from_calculations"):
         return name
     return f'"{name}"'
 
@@ -839,7 +885,8 @@ def patch_ledger_transaction_by_id(
     """
     Apply a partial update to ``ledger_transaction`` by primary key.
 
-    * Safe keys (do not affect fingerprint inputs): ``notes``, ``קטגוריה``, ``4 ספרות``, ``statement_month``.
+    * Safe keys (do not affect fingerprint inputs): ``notes``, ``קטגוריה``, ``4 ספרות``,
+      ``statement_month``, ``excluded_from_calculations`` (must be ``0`` or ``1``).
     * Fingerprint keys: Hebrew date/amount/source/description columns — require
       ``confirm_fingerprint_change`` and phrase :data:`LEDGER_FINGERPRINT_CONFIRM_PHRASE`.
 
@@ -896,6 +943,23 @@ def patch_ledger_transaction_by_id(
                     sql_updates[k] = _ledger_normalize_optional_text(raw, empty_as_none=True)
                 elif k == "statement_month":
                     sql_updates[k] = _ledger_normalize_statement_month(raw)
+                elif k == "excluded_from_calculations":
+                    if raw is True:
+                        sql_updates[k] = 1
+                    elif raw is False:
+                        sql_updates[k] = 0
+                    elif isinstance(raw, int) and raw in (0, 1):
+                        sql_updates[k] = raw
+                    elif isinstance(raw, str):
+                        ls = raw.strip().lower()
+                        if ls in ("0", "false", "no"):
+                            sql_updates[k] = 0
+                        elif ls in ("1", "true", "yes"):
+                            sql_updates[k] = 1
+                        else:
+                            raise ValueError("excluded_from_calculations must be 0 or 1")
+                    else:
+                        raise ValueError("excluded_from_calculations must be 0 or 1")
         except ValueError as e:
             return {"ok": False, "error": "validation_error", "message": str(e)}
 
@@ -980,7 +1044,8 @@ def patch_ledger_transaction_by_id(
 # --- DataFrame load/export (ex-ledger_dataframe) ---
 
 # DB columns only (no ``מזהה עסקה`` / ``תאריך עדכון`` — dedupe and ingestion use ``fingerprint`` + ``ingested_at``).
-_LEDGER_TX_READ_SQL = f"""
+# Only rows included in aggregates (``excluded_from_calculations = 0``).
+_LEDGER_TX_READ_BODY = f"""
 SELECT
     id,
     "תאריך",
@@ -998,8 +1063,14 @@ SELECT
     category_updated_at,
     data_updated_at
 FROM ledger_transaction
-ORDER BY ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}), id
+WHERE {LEDGER_SQL_TX_INCLUDED}
 """
+
+
+_LEDGER_TX_READ_SQL = (
+    _LEDGER_TX_READ_BODY.strip()
+    + f"\nORDER BY ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}), id\n"
+)
 
 
 def read_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
@@ -1063,6 +1134,7 @@ def apply_auto_categories_from_static_stores_sql(db_path: str) -> int:
         )
         WHERE lt."fingerprint" IS NOT NULL AND TRIM(lt."fingerprint") != ''
           AND {_SQL_LT_NEEDS_MANUAL_CATEGORY}
+          AND {LEDGER_SQL_LT_TX_INCLUDED}
           AND EXISTS (
             SELECT 1
             FROM store AS s
@@ -1121,6 +1193,7 @@ def forward_fill_uncategorized_for_store_if_static_sql(db_path: str, store_name:
         WHERE lt."מקור עסקה" = ?
           AND lt."fingerprint" IS NOT NULL AND TRIM(lt."fingerprint") != ''
           AND {_SQL_LT_NEEDS_MANUAL_CATEGORY}
+          AND {LEDGER_SQL_LT_TX_INCLUDED}
           AND EXISTS (
             SELECT 1
             FROM store AS s
@@ -1147,6 +1220,7 @@ def count_transactions_needing_manual_category(db_path: str) -> int:
             SELECT COUNT(*) FROM ledger_transaction
             WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") != ''
               AND {_SQL_NEEDS_MANUAL_CATEGORY}
+              AND {LEDGER_SQL_TX_INCLUDED}
             """
         ).fetchone()[0]
     finally:
@@ -1170,10 +1244,10 @@ def load_first_transaction_needing_manual_category(db_path: str) -> pd.Series | 
     migrate_ledger_db(db_path)
     conn = sqlite3.connect(db_path)
     try:
-        base = _LEDGER_TX_READ_SQL.rsplit("ORDER BY", 1)[0].strip()
+        base = _LEDGER_TX_READ_BODY.strip()
         q = f"""
         {base}
-        WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") != ''
+          AND "fingerprint" IS NOT NULL AND TRIM("fingerprint") != ''
           AND {_SQL_NEEDS_MANUAL_CATEGORY}
         ORDER BY "תאריך", id
         LIMIT 1
@@ -1199,10 +1273,10 @@ def load_ledger_transaction_by_stable_id(db_path: str, stable_id: str) -> pd.Ser
     migrate_ledger_db(db_path)
     conn = sqlite3.connect(db_path)
     try:
-        base = _LEDGER_TX_READ_SQL.rsplit("ORDER BY", 1)[0].strip()
+        base = _LEDGER_TX_READ_BODY.strip()
         q = f"""
         {base}
-        WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") = TRIM(?)
+          AND "fingerprint" IS NOT NULL AND TRIM("fingerprint") = TRIM(?)
         LIMIT 1
         """
         df = pd.read_sql_query(q, conn, params=(sid,))
@@ -1257,12 +1331,13 @@ def load_known_transactions_backup_from_ledger(db_path: str) -> pd.DataFrame | N
     conn = sqlite3.connect(db_path)
     try:
         df = pd.read_sql_query(
-            """
+            f"""
             SELECT
                 NULLIF(TRIM("fingerprint"), '') AS transaction_id,
                 "קטגוריה" AS category
             FROM ledger_transaction
             WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") != ''
+              AND {LEDGER_SQL_TX_INCLUDED}
             """,
             conn,
         )

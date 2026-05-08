@@ -229,3 +229,16 @@
 .intg-links a {
   margin-inline-start: 0.35rem;
 }
+
+.intg-patch {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.intg-patch .intg-btn {
+  margin-inline-end: 0.25rem;
+}
+
+.intg-msg--txn {
+  margin-bottom: 1rem;
+}

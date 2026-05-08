@@ -17,7 +17,7 @@ from datetime import date
 from typing import Any, Callable, Optional
 
 import config
-from pipeline.ledger import migrate_ledger_db
+from pipeline.ledger import LEDGER_SQL_TX_INCLUDED, migrate_ledger_db
 
 log = logging.getLogger(__name__)
 
@@ -110,10 +110,11 @@ def _cluster_by_amount(rows: list[Row], max_span: float) -> list[list[Row]]:
 
 def _load_candidates(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     cur = conn.execute(
-        """
+        f"""
         SELECT id, "תאריך", "בחובה", "מקור עסקה", "פירוט נוסף", statement_month
         FROM ledger_transaction
         WHERE statement_month IS NULL
+          AND {LEDGER_SQL_TX_INCLUDED}
           AND "תאריך" IS NOT NULL
           AND TRIM("תאריך") != ''
           AND "פירוט נוסף" IS NOT NULL

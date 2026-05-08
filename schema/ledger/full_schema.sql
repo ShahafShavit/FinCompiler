@@ -40,6 +40,7 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (10, 'ledger_sing
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (11, 'fingerprint_optional_text_normalize');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (12, 'fingerprint_iso_date_parse_match_compiler');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (13, 'drop_similar_category_pair');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (14, 'ledger_excluded_from_calculations');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -74,6 +75,9 @@ CREATE TABLE IF NOT EXISTS ledger_transaction (
     ingested_at           TEXT NOT NULL CHECK (date(ingested_at) = ingested_at),
     category_updated_at   TEXT CHECK (category_updated_at IS NULL OR datetime(category_updated_at) IS NOT NULL),
     data_updated_at       TEXT CHECK (data_updated_at IS NULL OR datetime(data_updated_at) IS NOT NULL),
+
+    -- 1 = omitted from heatmap, dashboard aggregates, categorize queue, integrity anomaly scans
+    excluded_from_calculations INTEGER NOT NULL DEFAULT 0 CHECK (excluded_from_calculations IN (0, 1)),
 
     CHECK (fingerprint IS NULL OR LENGTH(TRIM(fingerprint)) > 0),
     UNIQUE ("fingerprint")
@@ -205,4 +209,5 @@ END;
 CREATE VIEW IF NOT EXISTS v_ledger_uncategorized AS
 SELECT *
 FROM ledger_transaction
-WHERE "קטגוריה" IS NULL OR TRIM(COALESCE("קטגוריה", '')) = '';
+WHERE ("קטגוריה" IS NULL OR TRIM(COALESCE("קטגוריה", '')) = '')
+  AND COALESCE(excluded_from_calculations, 0) = 0;

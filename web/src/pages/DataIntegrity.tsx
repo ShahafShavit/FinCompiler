@@ -46,6 +46,14 @@ function rowTxnLink(row: Record<string, unknown>): string | null {
   return null;
 }
 
+/** SQLite `id` for a single ledger row (some sections use other key shapes). */
+function rowTxnId(row: Record<string, unknown>): number | null {
+  const v = row.id;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && /^-?\d+$/.test(v.trim())) return parseInt(v.trim(), 10);
+  return null;
+}
+
 export default function DataIntegrity() {
   const [report, setReport] = useState<ReportResponse | null>(null);
   const [stores, setStores] = useState<StoreRow[] | null>(null);
@@ -55,7 +63,11 @@ export default function DataIntegrity() {
   const [renameTo, setRenameTo] = useState('');
   const [renameMsg, setRenameMsg] = useState<string | null>(null);
   const [renameBusy, setRenameBusy] = useState(false);
+  const [txnMsg, setTxnMsg] = useState<string | null>(null);
+  const [txnBusy, setTxnBusy] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [quickId, setQuickId] = useState('');
+  const [quickFingerprint, setQuickFingerprint] = useState('');
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -118,8 +130,59 @@ export default function DataIntegrity() {
       return;
     }
     if (typeof p.forward_filled_uncategorized === 'number' && p.forward_filled_uncategorized > 0) {
-      setRenameMsg(`Filled ${p.forward_filled_uncategorized} uncategorized row(s) for ${storeName}.`);
+      setTxnMsg(`Filled ${p.forward_filled_uncategorized} uncategorized row(s) for ${storeName}.`);
     }
+    void loadAll();
+  };
+
+  const onPatchExcluded = async (rowId: number, excluded_from_calculations: 0 | 1) => {
+    setTxnBusy(true);
+    setTxnMsg(null);
+    const r = await patchJson<Record<string, unknown>>('/api/integrity/ledger-tx', {
+      id: rowId,
+      patch: { excluded_from_calculations },
+    });
+    setTxnBusy(false);
+    const p = r.data;
+    if (!r.ok || p.ok === false) {
+      setTxnMsg(typeof p.message === 'string' ? p.message : `HTTP ${r.status}`);
+      return;
+    }
+    setTxnMsg(excluded_from_calculations === 1 ? `Row ${rowId} excluded from calculations.` : `Row ${rowId} included again.`);
+    void loadAll();
+  };
+
+  const onQuickExclude = async (excluded_from_calculations: 0 | 1) => {
+    const idTrim = quickId.trim();
+    const fpTrim = quickFingerprint.trim();
+    setTxnMsg(null);
+    if (!idTrim && !fpTrim) {
+      setTxnMsg('Enter a ledger row ID and/or paste a fingerprint (either is enough).');
+      return;
+    }
+    setTxnBusy(true);
+    const body: Record<string, unknown> = { patch: { excluded_from_calculations } };
+    if (idTrim) {
+      const n = parseInt(idTrim, 10);
+      if (!Number.isFinite(n)) {
+        setTxnBusy(false);
+        setTxnMsg('Row id must be a number.');
+        return;
+      }
+      body.id = n;
+    }
+    if (fpTrim) body.fingerprint = fpTrim;
+
+    const r = await patchJson<Record<string, unknown>>('/api/integrity/ledger-tx', body);
+    setTxnBusy(false);
+    const p = r.data;
+    if (!r.ok || p.ok === false) {
+      setTxnMsg(typeof p.message === 'string' ? p.message : `HTTP ${r.status}`);
+      return;
+    }
+    const rid = typeof p.id === 'number' ? p.id : null;
+    const label = rid != null ? `Row ${rid}` : 'Transaction';
+    setTxnMsg(excluded_from_calculations === 1 ? `${label} excluded from calculations.` : `${label} included again.`);
     void loadAll();
   };
 
@@ -138,7 +201,8 @@ export default function DataIntegrity() {
       <header className="intg-header">
         <h1 className="intg-title">Data integrity</h1>
         <p className="intg-sub">
-          Review ledger anomalies, rename categories, and adjust store static/dynamic mode.{' '}
+          Review ledger anomalies, rename categories, adjust store static/dynamic mode, and soft-exclude rows from all
+          calculations (heatmap, dashboard, categorize queue).{' '}
           <a href="/categorize/">Categorize queue</a>
         </p>
         <div className="intg-toolbar">
@@ -150,6 +214,57 @@ export default function DataIntegrity() {
 
       {err ? <div className="intg-error">{err}</div> : null}
       {!report?.ledger_exists ? <p className="intg-muted">No ledger file found at configured path.</p> : null}
+      {txnMsg ? <p className="intg-msg intg-msg--txn">{txnMsg}</p> : null}
+
+      <section className="intg-card">
+        <h2 className="intg-card-title">Exclude any transaction</h2>
+        <p className="intg-hint">
+          Paste the SQLite <strong>id</strong> (see any check table below, or open <code>ledger.sqlite</code>) and/or the
+          row <strong>fingerprint</strong>. If both are filled, the numeric id is used. The row is kept in the DB but
+          dropped from heatmap, dashboard totals, and categorize.
+        </p>
+        <div className="intg-rename-row">
+          <label className="intg-label">
+            Row id
+            <input
+              className="intg-input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              value={quickId}
+              onChange={(e) => setQuickId(e.target.value)}
+              placeholder="e.g. 1842"
+            />
+          </label>
+          <label className="intg-label">
+            Fingerprint
+            <input
+              className="intg-input"
+              value={quickFingerprint}
+              onChange={(e) => setQuickFingerprint(e.target.value)}
+              placeholder="paste full fingerprint string"
+            />
+          </label>
+        </div>
+        <div className="intg-rename-actions">
+          <button
+            type="button"
+            className="intg-btn"
+            disabled={txnBusy || !report?.ledger_exists}
+            onClick={() => void onQuickExclude(1)}
+          >
+            Exclude from calculations
+          </button>
+          <button
+            type="button"
+            className="intg-btn intg-btn--secondary"
+            disabled={txnBusy || !report?.ledger_exists}
+            onClick={() => void onQuickExclude(0)}
+          >
+            Include again
+          </button>
+        </div>
+      </section>
 
       <section className="intg-card">
         <h2 className="intg-card-title">Rename category</h2>
@@ -231,8 +346,13 @@ export default function DataIntegrity() {
           const sev = severityClass[sec.severity] ?? 'intg-sev--info';
           const cols =
             sec.rows.length > 0
-              ? Array.from(new Set(sec.rows.flatMap((r) => Object.keys(r)))).filter((k) => k !== 'fingerprint' || sec.id === 'null_fingerprint')
+              ? Array.from(new Set(sec.rows.flatMap((r) => Object.keys(r)))).filter(
+                  (k) => k !== 'fingerprint' || sec.id === 'null_fingerprint' || sec.id === 'excluded_transactions',
+                )
               : [];
+          const canPatchRows =
+            sec.rows.length > 0 &&
+            (sec.id === 'excluded_transactions' || sec.rows.some((r) => rowTxnId(r) !== null));
           return (
             <div key={sec.id} className={`intg-check ${sev}`}>
               <button type="button" className="intg-check-hd" onClick={() => toggleSection(sec.id)}>
@@ -249,6 +369,7 @@ export default function DataIntegrity() {
                         {cols.map((c) => (
                           <th key={c}>{c}</th>
                         ))}
+                        {canPatchRows ? <th>Calculations</th> : null}
                         <th> </th>
                       </tr>
                     </thead>
@@ -258,6 +379,29 @@ export default function DataIntegrity() {
                           {cols.map((c) => (
                             <td key={c}>{cellStr(row[c])}</td>
                           ))}
+                          {canPatchRows ? (
+                            <td className="intg-patch">
+                              {sec.id === 'excluded_transactions' && rowTxnId(row) !== null ? (
+                                <button
+                                  type="button"
+                                  className="intg-btn intg-btn--small"
+                                  disabled={txnBusy}
+                                  onClick={() => void onPatchExcluded(rowTxnId(row)!, 0)}
+                                >
+                                  Include
+                                </button>
+                              ) : rowTxnId(row) !== null && sec.id !== 'excluded_transactions' ? (
+                                <button
+                                  type="button"
+                                  className="intg-btn intg-btn--small"
+                                  disabled={txnBusy}
+                                  onClick={() => void onPatchExcluded(rowTxnId(row)!, 1)}
+                                >
+                                  Exclude
+                                </button>
+                              ) : null}
+                            </td>
+                          ) : null}
                           <td className="intg-links">
                             {sec.id === 'rare_categories' && typeof row.category === 'string' ? (
                               <a href={heatmapDetailCategory('expense', row.category)}>Heatmap</a>
