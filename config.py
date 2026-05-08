@@ -88,7 +88,6 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_USER_ID = os.getenv("DISCORD_USER_ID")
 GOOGLE_API_USER = os.getenv("GOOGLE_API_USER")
 GOOGLE_WORKSHEET_ID = os.getenv("GOOGLE_WORKSHEET_ID")
-similar_categories_file = os.path.join(_static_root, "similar_pairs.csv")
 fingerprint_db_file = os.path.join(_static_root, "fingerprint_db.csv")
 _web_root = _w("web")
 web_dir = _web_root + os.sep

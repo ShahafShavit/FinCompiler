@@ -42,7 +42,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 max_v = conn.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0]
-                self.assertEqual(max_v, 12)
+                self.assertEqual(max_v, 13)
 
                 conn.execute(
                     'INSERT INTO ledger_transaction ("fingerprint", ingested_at, "תאריך") '
@@ -124,6 +124,49 @@ class LedgerMigrateTests(unittest.TestCase):
                 ).fetchone()
                 self.assertEqual(row[0], fp_canon)
                 self.assertEqual(row[1], "2024-09-06")
+            finally:
+                conn.close()
+
+    def test_v13_drops_similar_category_pair(self) -> None:
+        import config as config_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                importlib.reload(config_mod)
+
+            from pipeline.ledger import migrate_ledger_db
+
+            db_path = config_mod.ledger_db_file
+            migrate_ledger_db()
+
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    CREATE TABLE similar_category_pair (
+                        p1 TEXT NOT NULL,
+                        p2 TEXT NOT NULL,
+                        PRIMARY KEY (p1, p2)
+                    );
+                    INSERT INTO similar_category_pair (p1, p2) VALUES ('a', 'b');
+                    DELETE FROM schema_migrations WHERE version = 13;
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            migrate_ledger_db()
+
+            conn = sqlite3.connect(db_path)
+            try:
+                gone = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='similar_category_pair'"
+                ).fetchone()
+                self.assertIsNone(gone)
+                max_v = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+                self.assertEqual(max_v, 13)
             finally:
                 conn.close()
 

@@ -27,7 +27,7 @@ You are a **read-only architecture analyst** for the financeCompilerv3.5 codebas
    - `apps/qt_main.py` — push/pull transactions and holdings, sheet name pairs
    - `web_control/server.py` and `web_control/totals_sheet_sync.py` — year tabs vs all-time tab, preview/merge behavior
 
-5. **Categorization** — `categorization/` and how it reads `compiled_file` and static files (`stores_to_categories`, `fingerprint_db`, `similar_pairs`).
+5. **Categorization** — `categorization/` and how it reads `compiled_file` and static files (`stores_to_categories`, `fingerprint_db`).
 
 6. **CLI / automation** — `run_pipeline.py`, `apps/pipeline_cli.py` entrypoints and flags.
 

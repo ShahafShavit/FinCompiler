@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "stores_to_categories_sample.csv"
-_SIMILAR_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "similar_pairs_sample.csv"
 
 
 class StaticStoreImportTests(unittest.TestCase):
@@ -35,17 +34,19 @@ class StaticStoreImportTests(unittest.TestCase):
             report = import_stores_to_ledger(
                 str(_FIXTURE),
                 db,
-                similar_pairs_csv=str(_SIMILAR_FIXTURE),
                 replace=True,
             )
             self.assertTrue(report.get("ok"), msg=str(report))
             self.assertEqual(report.get("stores_inserted"), 3)
             self.assertEqual(report.get("store_category_rows_inserted"), 4)
-            self.assertEqual(report.get("similar_pair_rows_inserted"), 2)
             self.assertEqual(report.get("stores_forced_dynamic"), 1)
 
             conn = sqlite3.connect(db)
             try:
+                sim = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='similar_category_pair'"
+                ).fetchone()
+                self.assertIsNone(sim)
                 dyn = conn.execute(
                     "SELECT is_static FROM store WHERE store_name = ?",
                     ("DynamicMall",),
@@ -61,8 +62,6 @@ class StaticStoreImportTests(unittest.TestCase):
                     ("DynamicMall",),
                 ).fetchone()[0]
                 self.assertEqual(n_sc, 2)
-                n_sim = conn.execute("SELECT COUNT(*) FROM similar_category_pair").fetchone()[0]
-                self.assertEqual(n_sim, 2)
             finally:
                 conn.close()
 

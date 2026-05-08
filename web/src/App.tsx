@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 
 import TopNav from './components/TopNav';
 import Dashboard from './pages/Dashboard';
+import DataIntegrity from './pages/DataIntegrity';
 import Pipeline from './pages/Pipeline';
 import Heatmap from './pages/Heatmap';
 import HeatmapDetail from './pages/HeatmapDetail';
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/heatmap" element={<Heatmap />} />
           <Route path="/heatmap/detail" element={<HeatmapDetail />} />
+          <Route path="/integrity" element={<DataIntegrity />} />
           <Route path="/heatmap/index.html" element={<Navigate to="/heatmap" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

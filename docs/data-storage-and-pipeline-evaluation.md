@@ -210,7 +210,7 @@ The questions below were answered in §9. Kept for traceability.
 
 Default **north star** until implementation changes it:
 
-1. **Canonical store:** SQLite on disk — **one ledger table** (transaction rows keyed by **fingerprint**, with category and other fields on the row) **plus** static mapping tables (e.g. store→category, similar pairs) and holdings — all migrate off **mutable CSV**; see **§13.10**. There is **no** separate “fingerprint metadata” table: legacy **`fingerprint_db.csv`** maps into the ledger at import. **Reference DDL:** `schema/ledger/full_schema.sql`.  
+1. **Canonical store:** SQLite on disk — **one ledger table** (transaction rows keyed by **fingerprint**, with category and other fields on the row) **plus** static mapping tables (e.g. store→category) and holdings — all migrate off **mutable CSV**; see **§13.10**. There is **no** separate “fingerprint metadata” table: legacy **`fingerprint_db.csv`** maps into the ledger at import. **Reference DDL:** `schema/ledger/full_schema.sql`.  
 2. **Editing:** **Web UI** as the primary entry point for everyday use; **PyQt** remains useful for supervised reruns and testing — **not** Sheets for authoritative edits.  
 3. **Analysis:** SQL (saved queries, views, scripts in repo) + UI for common views.  
 4. **Sheets:** **One view** (full ledger), **read-only push** — **access anywhere**, **no pull-based merge** for edits.  
@@ -413,7 +413,7 @@ Optional user **`notes`** (and similar) on the ledger row bump **`data_updated_a
 
 | Today (typical) | Target |
 |-----------------|--------|
-| `compiled.csv`, `fingerprint_db.csv`, `stores_to_categories.csv`, `similar_pairs.csv`, etc. | **Tables** in one SQLite file (`ledger_transaction` + `store` / `store_category` + `similar_category_pair` + `holdings_balance`, etc.), with **migrations** and **constraints** — see **`schema/ledger/full_schema.sql`**. |
+| `compiled.csv`, `fingerprint_db.csv`, `stores_to_categories.csv`, etc. | **Tables** in one SQLite file (`ledger_transaction` + `store` / `store_category` + `holdings_balance`, etc.), with **migrations** and **constraints** — see **`schema/ledger/full_schema.sql`**. |
 | Pipeline **intermediate** outputs (`clean/*.csv`, exports) | May remain **CSV as interchange** between steps; **not** the canonical place for ongoing edits. |
 | Editing mappings | **Web UI** or **SQL** / small tools — not Notepad on a shared CSV as the primary workflow. |
 

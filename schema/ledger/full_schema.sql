@@ -39,6 +39,7 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (9, 'ledger_finge
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (10, 'ledger_single_fingerprint_column_v2_semantics');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (11, 'fingerprint_optional_text_normalize');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (12, 'fingerprint_iso_date_parse_match_compiler');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (13, 'drop_similar_category_pair');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -128,16 +129,6 @@ WHEN NEW.is_static = 1 AND OLD.is_static = 0
 BEGIN
     SELECT RAISE(ABORT, 'cannot set is_static: store has multiple categories — reduce to one first');
 END;
-
--- -----------------------------------------------------------------------------
--- Similar category pairs (replaces data/static/similar_pairs.csv)
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS similar_category_pair (
-    p1  TEXT NOT NULL,
-    p2  TEXT NOT NULL,
-    PRIMARY KEY (p1, p2),
-    CHECK (p1 != p2)
-) STRICT;
 
 -- -----------------------------------------------------------------------------
 -- Holdings (replaces compiled holdings.csv wide layout)

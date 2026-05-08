@@ -23,7 +23,7 @@ from categorization.interactive.http_server import categorization_html
 from pipeline.ledger import migrate_ledger_db
 from logger import attach_sink_log_handlers, detach_sink_log_handlers
 
-from web_control import categorize_queue, control_nav, dashboard_api, heatmap, holdings_page, jobs
+from web_control import categorize_queue, control_nav, dashboard_api, heatmap, holdings_page, integrity_api, jobs
 from web_control.json_safe import json_bytes_strict as _json_bytes_strict
 
 # Forward structured pipeline / Selenium logs to the dashboard SSE (exclude ``pipeline`` — it already uses sink via _notify).
@@ -136,6 +136,8 @@ _SPA_ROUTES: tuple[str, ...] = (
     "/heatmap/index.html",
     "/heatmap/detail",
     "/heatmap/detail/",
+    "/integrity",
+    "/integrity/",
 )
 
 
@@ -370,6 +372,40 @@ def make_handler_class(state: ControlState):
                         "rows": [],
                     }
                 self._send(200, _json_bytes_strict(payload), "application/json; charset=utf-8")
+                return
+
+            if path == "/api/integrity/report":
+                try:
+                    payload = integrity_api.build_integrity_report()
+                    body = _json_bytes_strict(payload)
+                except Exception:  # noqa: BLE001
+                    log.exception("GET /api/integrity/report failed")
+                    body = _json_bytes_strict(
+                        {
+                            "ok": False,
+                            "error": "server_error",
+                            "message": "Integrity report failed (see server log).",
+                            "sections": [],
+                        }
+                    )
+                self._send(200, body, "application/json; charset=utf-8")
+                return
+
+            if path == "/api/integrity/stores":
+                try:
+                    payload = integrity_api.list_stores_aggregated()
+                    body = _json_bytes_strict(payload)
+                except Exception:  # noqa: BLE001
+                    log.exception("GET /api/integrity/stores failed")
+                    body = _json_bytes_strict(
+                        {
+                            "ok": False,
+                            "error": "server_error",
+                            "message": "Stores list failed (see server log).",
+                            "stores": [],
+                        }
+                    )
+                self._send(200, body, "application/json; charset=utf-8")
                 return
 
             if path == "/api/status":
@@ -650,6 +686,25 @@ def make_handler_class(state: ControlState):
                 self._send(code, _json_bytes_strict(out), "application/json; charset=utf-8")
                 return
 
+            if path == "/api/integrity/rename-category":
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                try:
+                    status, payload = integrity_api.rename_category_api(raw)
+                    body = _json_bytes_strict(payload)
+                except Exception:  # noqa: BLE001
+                    log.exception("POST /api/integrity/rename-category failed")
+                    status = 500
+                    body = _json_bytes_strict(
+                        {
+                            "ok": False,
+                            "error": "server_error",
+                            "message": "Rename failed (see server log).",
+                        }
+                    )
+                self._send(status, body, "application/json; charset=utf-8")
+                return
+
             if path == "/api/sheets/push":
                 from web_control import desktop_sheets_api
 
@@ -748,6 +803,25 @@ def make_handler_class(state: ControlState):
                             "ok": False,
                             "error": "server_error",
                             "message": "Patch failed (see server log).",
+                        }
+                    )
+                self._send(status, body, "application/json; charset=utf-8")
+                return
+
+            if path == "/api/integrity/store-static":
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                try:
+                    status, payload = integrity_api.patch_store_static_api(raw)
+                    body = _json_bytes_strict(payload)
+                except Exception:  # noqa: BLE001
+                    log.exception("PATCH /api/integrity/store-static failed")
+                    status = 500
+                    body = _json_bytes_strict(
+                        {
+                            "ok": False,
+                            "error": "server_error",
+                            "message": "Store update failed (see server log).",
                         }
                     )
                 self._send(status, body, "application/json; charset=utf-8")

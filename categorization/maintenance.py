@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 from typing import Any
 
 import difflib
@@ -13,7 +12,6 @@ from numpy import nan
 
 import config
 from categorization.text_display import terminal_bidi as _terminal_bidi
-from config import similar_categories_file
 
 log = logging.getLogger(__name__)
 
@@ -84,19 +82,10 @@ def fix_similar_categories_in_file() -> None:
             load_known_transactions_backup_from_ledger(config.ledger_db_file)
             or pd.DataFrame(columns=["transaction_id", "category"])
         )
-        conn = sqlite3.connect(config.ledger_db_file)
-        try:
-            linked_pairs = pd.read_sql_query(
-                "SELECT p1, p2 FROM similar_category_pair",
-                conn,
-            )
-        finally:
-            conn.close()
     else:
         stores_df = pd.read_csv(config.stores_to_categories_file)
         compiled_df = pd.read_csv(config.compiled_file)
         backup_df = pd.read_csv(config.transaction_category_file)
-        linked_pairs = pd.read_csv(similar_categories_file)
     stores_df["category"] = stores_df["category"].replace(nan, "NULL")
     categories_to_check = set(stores_df["category"].tolist())
     not_to_check: list[Any] = []
@@ -107,9 +96,6 @@ def fix_similar_categories_in_file() -> None:
             if len(ans) > 1:
                 match_ratio = difflib.SequenceMatcher(None, ans[0], ans[1]).ratio()
                 if match_ratio > 0.7:
-                    pair = [ans[0], ans[1]]
-                    if pair in linked_pairs.values.tolist() or list(reversed(pair)) in linked_pairs.values.tolist():
-                        continue
                     log.info("Similar categories check for: %s", _terminal_bidi(category))
                     for i, option in enumerate(ans, 1):
                         log.info("  %s. %s", i, _terminal_bidi(option))
@@ -130,28 +116,13 @@ def fix_similar_categories_in_file() -> None:
                             "קטגוריה",
                         ] = category
                     not_to_check.extend(ans)
-                    if ans_input == "3":
-                        linked_pairs.loc[len(linked_pairs)] = pair
     if os.path.isfile(config.ledger_db_file):
         from pipeline.ledger import sync_stores_to_ledger_from_dataframe
         from pipeline.ledger import upsert_compiled_dataframe_to_ledger
 
         sync_stores_to_ledger_from_dataframe(config.ledger_db_file, stores_df)
         upsert_compiled_dataframe_to_ledger(compiled_df, config.ledger_db_file)
-        conn = sqlite3.connect(config.ledger_db_file)
-        try:
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("DELETE FROM similar_category_pair")
-            if not linked_pairs.empty:
-                conn.executemany(
-                    "INSERT INTO similar_category_pair (p1, p2) VALUES (?, ?)",
-                    [(str(r["p1"]), str(r["p2"])) for _, r in linked_pairs.iterrows()],
-                )
-            conn.commit()
-        finally:
-            conn.close()
     else:
-        linked_pairs.to_csv(config.similar_categories_file, index=False)
         stores_df.to_csv(config.stores_to_categories_file, index=False)
         compiled_df.to_csv(config.compiled_file, index=False)
         backup_df.to_csv(config.transaction_category_file, index=False)

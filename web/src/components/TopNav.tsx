@@ -11,6 +11,8 @@ export default function TopNav() {
       <span className="sep">·</span>
       <NavLink to="/heatmap">Heatmap</NavLink>
       <span className="sep">·</span>
+      <NavLink to="/integrity">Data integrity</NavLink>
+      <span className="sep">·</span>
       <a href="/holdings/">Holdings</a>
       <span className="sep">·</span>
       <a href="/categorize/">Categorize</a>
