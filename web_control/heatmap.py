@@ -8,6 +8,7 @@ pivots, log/symlog normalization, summary stats styling, and per-cell drill-down
 from __future__ import annotations
 
 import html
+import json
 import logging
 import os
 import re
@@ -781,6 +782,27 @@ def _df_to_json_table(df: pd.DataFrame) -> tuple[list[str], list[dict[str, Any]]
     return columns, rows
 
 
+def _df_to_json_detail_table(frame: pd.DataFrame) -> tuple[list[str], list[dict[str, Any]]]:
+    """Serialize a detail slice: each row dict includes ``id`` but ``columns`` omits it."""
+    if frame.empty:
+        return [], []
+    if "id" not in frame.columns:
+        return _df_to_json_table(frame)
+    ids = frame["id"].tolist()
+    display = frame.drop(columns=["id"])
+    cols, rows = _df_to_json_table(display)
+    for i, rid in enumerate(ids):
+        if i >= len(rows):
+            break
+        if rid is None or (isinstance(rid, float) and np.isnan(rid)):
+            rows[i]["id"] = None
+        elif pd.isna(rid):
+            rows[i]["id"] = None
+        else:
+            rows[i]["id"] = int(rid)
+    return cols, rows
+
+
 def _qs_first(qs: dict[str, list[str]], key: str, default: str = "") -> str:
     val = qs.get(key)
     if not val or val[0] is None:
@@ -798,12 +820,29 @@ def _qs_int(qs: dict[str, list[str]], key: str, default: int) -> int:
         return default
 
 
-_COLS_EXP = ["תאריך", "מקור עסקה", "בחובה", "תאור מורחב", "פירוט נוסף"]
-_COLS_IN = ["תאריך", "מקור עסקה", "בזכות", "תאור מורחב", "פירוט נוסף"]
+_DETAIL_EXTRA_COLS = [
+    "notes",
+    "4 ספרות",
+    "statement_month",
+    "ingested_at",
+    "category_updated_at",
+    "data_updated_at",
+]
+_COLS_EXP = ["תאריך", "מקור עסקה", "בחובה", "תאור מורחב", "פירוט נוסף"] + _DETAIL_EXTRA_COLS
+_COLS_IN = ["תאריך", "מקור עסקה", "בזכות", "תאור מורחב", "פירוט נוסף"] + _DETAIL_EXTRA_COLS
+_DETAIL_SOURCE_VISIBLE = (
+    ["תאריך", "מקור עסקה", "קטגוריה", "בחובה", "בזכות", "תאור מורחב", "פירוט נוסף"]
+    + _DETAIL_EXTRA_COLS
+)
 
 
 def _pick_cols(df: pd.DataFrame, cols: list[str]) -> list[str]:
     return [c for c in cols if c in df.columns]
+
+
+def _detail_column_order(df: pd.DataFrame, visible: list[str]) -> list[str]:
+    """Include SQLite ``id`` first when present (internal key; omitted from JSON column headers)."""
+    return _pick_cols(df, ["id"] + visible)
 
 
 def _sort_detail_frame(frame: pd.DataFrame, source_df: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -829,8 +868,8 @@ def _detail_frames_cell(
     bundle: HeatmapBundle, report_type: ReportType, year_month: str, category: str
 ) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
     df = bundle.df
-    cols_show_exp = _pick_cols(df, _COLS_EXP)
-    cols_show_in = _pick_cols(df, _COLS_IN)
+    cols_show_exp = _detail_column_order(df, _COLS_EXP)
+    cols_show_in = _detail_column_order(df, _COLS_IN)
     if report_type == "expense":
         pivot = bundle.expenses_pivot
         if year_month not in pivot.index or category not in pivot.columns:
@@ -870,8 +909,8 @@ def _detail_frames_month(
     df = bundle.df
     if not (df["YearMonth"] == year_month).any():
         return None
-    cols_show_exp = _pick_cols(df, _COLS_EXP)
-    cols_show_in = _pick_cols(df, _COLS_IN)
+    cols_show_exp = _detail_column_order(df, _COLS_EXP)
+    cols_show_in = _detail_column_order(df, _COLS_IN)
     if report_type == "expense":
         mask = (df["YearMonth"] == year_month) & (df["בחובה"] > 0)
         details = _sort_detail_frame(df.loc[mask, cols_show_exp], df)
@@ -903,8 +942,8 @@ def _detail_frames_category(
     work = sub.copy()
     work["__cat__"] = work["קטגוריה"].fillna("").astype(str).str.strip()
     work.loc[work["__cat__"] == "", "__cat__"] = "(uncategorized)"
-    cols_show_exp = _pick_cols(work, _COLS_EXP + ["קטגוריה"])
-    cols_show_in = _pick_cols(work, _COLS_IN + ["קטגוריה"])
+    cols_show_exp = _detail_column_order(work, _COLS_EXP + ["קטגוריה"])
+    cols_show_in = _detail_column_order(work, _COLS_IN + ["קטגוריה"])
     if report_type == "expense":
         mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
         details = _sort_detail_frame(work.loc[mask, cols_show_exp], work)
@@ -942,10 +981,7 @@ def _detail_frames_source(
     mask = work["__src__"] == sk
     if not mask.any():
         return None
-    cols = _pick_cols(
-        work,
-        ["תאריך", "מקור עסקה", "קטגוריה", "בחובה", "בזכות", "תאור מורחב", "פירוט נוסף"],
-    )
+    cols = _detail_column_order(work, _DETAIL_SOURCE_VISIBLE)
     details = _sort_detail_frame(work.loc[mask, cols], work)
     title = f"תנועות — מקור «{sk}» ({months} חודשים)"
     return (title, [(None, details)])
@@ -971,8 +1007,8 @@ def _detail_frames_source_category(
     work.loc[work["__cat__"] == "", "__cat__"] = "(uncategorized)"
     sk = source_key.strip()
     cat = category.strip()
-    cols_show_exp = _pick_cols(df, _COLS_EXP)
-    cols_show_in = _pick_cols(df, _COLS_IN)
+    cols_show_exp = _detail_column_order(work, _COLS_EXP)
+    cols_show_in = _detail_column_order(work, _COLS_IN)
     if report_type == "expense":
         mask = (work["__src__"] == sk) & (work["__cat__"] == cat) & (work["בחובה"] > 0)
         details = _sort_detail_frame(work.loc[mask, cols_show_exp], work)
@@ -1034,7 +1070,8 @@ def detail_page_html_from_qs(bundle: HeatmapBundle, qs: dict[str, list[str]]) ->
         if frame.empty:
             parts.append("<p class='no-data'>אין נתונים</p>")
         else:
-            parts.append(frame.to_html(index=False, classes="styled-table", float_format="%.2f"))
+            html_frame = frame.drop(columns=["id"], errors="ignore")
+            parts.append(html_frame.to_html(index=False, classes="styled-table", float_format="%.2f"))
     return _wrap_detail_document("".join(parts))
 
 
@@ -1053,9 +1090,58 @@ def detail_api_payload(qs: dict[str, list[str]]) -> tuple[int, dict[str, Any]]:
     title, frames = built
     sections: list[dict[str, Any]] = []
     for sub, frame in frames:
-        cols, rows = _df_to_json_table(frame)
+        cols, rows = _df_to_json_detail_table(frame)
         sections.append({"subtitle": sub, "columns": cols, "rows": rows})
     return 200, {"ok": True, "title": title, "sections": sections}
+
+
+def _ledger_patch_http_status(result: dict[str, Any]) -> int:
+    if result.get("ok"):
+        return 200
+    err = result.get("error")
+    if err == "not_found":
+        return 404
+    if err == "fingerprint_conflict":
+        return 409
+    return 400
+
+
+def ledger_transaction_patch_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
+    """Parse JSON body and apply :func:`pipeline.ledger.patch_ledger_transaction_by_id`."""
+    from pipeline.ledger import patch_ledger_transaction_by_id
+
+    try:
+        data = json.loads(raw_body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        return 400, {"ok": False, "error": "invalid_json", "message": "Invalid JSON body."}
+
+    row_id = data.get("id")
+    patch = data.get("patch")
+    if row_id is None or not isinstance(patch, dict):
+        return 400, {
+            "ok": False,
+            "error": "validation_error",
+            "message": "Body must include integer id and patch object.",
+        }
+
+    try:
+        rid = int(row_id)
+    except (TypeError, ValueError):
+        return 400, {"ok": False, "error": "validation_error", "message": "id must be an integer."}
+
+    confirm_change = bool(data.get("confirm_fingerprint_change"))
+    phrase = str(data.get("confirm_fingerprint_phrase") or "")
+
+    result = patch_ledger_transaction_by_id(
+        config.ledger_db_file,
+        rid,
+        patch,
+        confirm_fingerprint_change=confirm_change,
+        confirm_fingerprint_phrase=phrase,
+    )
+    if result.get("ok"):
+        invalidate_bundle_cache()
+    return _ledger_patch_http_status(result), result
 
 
 def _wrap_detail_document(inner_body: str) -> str:

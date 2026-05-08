@@ -1,8 +1,11 @@
 .hm-detail-page {
   direction: rtl;
-  padding: 0.5rem 1rem 2rem;
-  max-width: 56rem;
+  padding: 0.5rem clamp(0.75rem, 2vw, 1.5rem) 2rem;
+  /* Was 56rem (~896px); use nearly full viewport on wide monitors */
+  width: 100%;
+  max-width: min(1680px, calc(100vw - 1.5rem));
   margin: 0 auto;
+  box-sizing: border-box;
 }
 
 .hm-detail-toolbar {
@@ -42,6 +45,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-input);
+  width: 100%;
 }
 
 .hm-detail-table {
@@ -81,4 +85,117 @@
   border: 1px solid #6b2a2a;
   padding: 0.75rem 1rem;
   border-radius: 8px;
+}
+
+.hm-detail-cell-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--fg);
+  font: inherit;
+}
+
+.hm-detail-cell-notes {
+  min-height: 3rem;
+  resize: vertical;
+}
+
+.hm-detail-actions-th,
+.hm-detail-actions-td {
+  width: 5rem;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.hm-detail-rekey {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.45rem;
+}
+
+.hm-detail-row-err-tr .hm-detail-row-err {
+  background: rgba(180, 60, 60, 0.18);
+  color: var(--bad-fg);
+  font-size: 0.82rem;
+}
+
+.hm-detail-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 1.5rem 1rem;
+  overflow: auto;
+}
+
+.hm-detail-modal {
+  max-width: 32rem;
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.15rem 1.25rem;
+  margin-top: 2rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.hm-detail-modal-title {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.hm-detail-modal-warn {
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+  margin: 0 0 0.75rem;
+  line-height: 1.45;
+}
+
+.hm-detail-modal-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-bottom: 0.65rem;
+}
+
+.hm-detail-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.82rem;
+}
+
+.hm-detail-modal-input {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+}
+
+.hm-detail-modal-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  margin: 0.35rem 0 0.65rem;
+}
+
+.hm-detail-modal-err {
+  color: var(--bad-fg);
+  font-size: 0.85rem;
+  margin: 0.35rem 0;
+}
+
+.hm-detail-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
 }

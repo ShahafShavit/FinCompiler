@@ -21,18 +21,21 @@ Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile up
 from __future__ import annotations
 
 import logging
+import math
 import os
+import re
 import sqlite3
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
 import config
 
+from pipeline.compiler import parse_post_ingest_date_scalar
 from pipeline.csv_handler import generate_transaction_fingerprint
 from pipeline.ingested_at_rules import ingested_at_for_new_ledger_row
 
@@ -743,11 +746,256 @@ def update_categories_by_fingerprint_batch(
     return len(params)
 
 
+# --- Transaction patch (heatmap / detail UI) ---------------------------------
+
+LEDGER_TX_PATCH_SAFE_KEYS = frozenset({"notes", "קטגוריה", "4 ספרות", "statement_month"})
+LEDGER_TX_PATCH_FINGERPRINT_KEYS = frozenset(
+    {"תאריך", "בחובה", "בזכות", "מקור עסקה", "פירוט נוסף", "תאור מורחב"}
+)
+LEDGER_FINGERPRINT_CONFIRM_PHRASE = "REKEY"
+
+
+def _ledger_patch_sql_column(name: str) -> str:
+    if name in ("notes", "statement_month", "ingested_at", "fingerprint"):
+        return name
+    return f'"{name}"'
+
+
+def _ledger_normalize_optional_text(val: Any, *, empty_as_none: bool) -> str | None:
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except TypeError:
+        pass
+    s = str(val).strip()
+    if not s:
+        return None if empty_as_none else ""
+    return s
+
+
+def _ledger_normalize_category(val: Any) -> str:
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except TypeError:
+        pass
+    return str(val).strip()
+
+
+def _ledger_normalize_statement_month(val: Any) -> str | None:
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except TypeError:
+        pass
+    s = str(val).strip()
+    if not s:
+        return None
+    if not re.fullmatch(r"\d{4}-\d{2}", s):
+        raise ValueError("statement_month must be YYYY-MM")
+    mo = int(s[5:7])
+    if mo < 1 or mo > 12:
+        raise ValueError("statement_month must be YYYY-MM")
+    return s
+
+
+def _ledger_patch_normalize_date(val: Any) -> str:
+    ts = parse_post_ingest_date_scalar(val)
+    if pd.isna(ts):
+        raise ValueError("תאריך is missing or invalid")
+    out = ts.strftime("%Y-%m-%d")
+    return out
+
+
+def _ledger_patch_coerce_amount(val: Any, *, label: str) -> float:
+    if val is None:
+        raise ValueError(f"{label} is required")
+    try:
+        if pd.isna(val):
+            raise ValueError(f"{label} is required")
+    except TypeError:
+        pass
+    try:
+        x = float(val)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"{label} must be a number") from e
+    if not math.isfinite(x):
+        raise ValueError(f"{label} must be a finite number")
+    return x
+
+
+def _ledger_row_fp_basis(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "תאריך": row["תאריך"],
+        "בחובה": float(row["בחובה"] or 0),
+        "בזכות": float(row["בזכות"] or 0),
+        "מקור עסקה": row["מקור עסקה"],
+        "פירוט נוסף": row["פירוט נוסף"],
+        "תאור מורחב": row["תאור מורחב"],
+    }
+
+
+def patch_ledger_transaction_by_id(
+    db_path: str,
+    row_id: int,
+    patch: Mapping[str, Any],
+    *,
+    confirm_fingerprint_change: bool = False,
+    confirm_fingerprint_phrase: str = "",
+) -> dict[str, Any]:
+    """
+    Apply a partial update to ``ledger_transaction`` by primary key.
+
+    * Safe keys (do not affect fingerprint inputs): ``notes``, ``קטגוריה``, ``4 ספרות``, ``statement_month``.
+    * Fingerprint keys: Hebrew date/amount/source/description columns — require
+      ``confirm_fingerprint_change`` and phrase :data:`LEDGER_FINGERPRINT_CONFIRM_PHRASE`.
+
+    Returns ``{"ok": True}`` or ``{"ok": False, "error": "...", "message": "..."}``.
+    """
+    migrate_ledger_db(db_path)
+    if not patch:
+        return {"ok": False, "error": "validation_error", "message": "patch object is empty"}
+
+    patch_keys = frozenset(patch.keys())
+    allowed = LEDGER_TX_PATCH_SAFE_KEYS | LEDGER_TX_PATCH_FINGERPRINT_KEYS
+    unknown = patch_keys - allowed
+    if unknown:
+        return {
+            "ok": False,
+            "error": "validation_error",
+            "message": f"unknown patch keys: {', '.join(sorted(unknown))}",
+        }
+
+    fp_keys = patch_keys & LEDGER_TX_PATCH_FINGERPRINT_KEYS
+    if fp_keys:
+        if not confirm_fingerprint_change:
+            return {
+                "ok": False,
+                "error": "fingerprint_confirmation_required",
+                "message": "Changing fingerprint-driving fields requires confirm_fingerprint_change and phrase.",
+            }
+        if str(confirm_fingerprint_phrase).strip() != LEDGER_FINGERPRINT_CONFIRM_PHRASE:
+            return {
+                "ok": False,
+                "error": "fingerprint_phrase_required",
+                "message": f"Type the phrase {LEDGER_FINGERPRINT_CONFIRM_PHRASE!r} to confirm.",
+            }
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM ledger_transaction WHERE id = ?", (int(row_id),)).fetchone()
+        if row is None:
+            return {"ok": False, "error": "not_found", "message": "No ledger row with this id"}
+
+        sql_updates: dict[str, Any] = {}
+        basis = _ledger_row_fp_basis(row)
+
+        try:
+            for k in patch_keys & LEDGER_TX_PATCH_SAFE_KEYS:
+                raw = patch[k]
+                if k == "notes":
+                    sql_updates[k] = _ledger_normalize_optional_text(raw, empty_as_none=True)
+                elif k == "קטגוריה":
+                    sql_updates[k] = _ledger_normalize_category(raw)
+                elif k == "4 ספרות":
+                    sql_updates[k] = _ledger_normalize_optional_text(raw, empty_as_none=True)
+                elif k == "statement_month":
+                    sql_updates[k] = _ledger_normalize_statement_month(raw)
+        except ValueError as e:
+            return {"ok": False, "error": "validation_error", "message": str(e)}
+
+        new_fp: str | None = None
+        if fp_keys:
+            try:
+                for k in fp_keys:
+                    raw = patch[k]
+                    if k == "תאריך":
+                        basis[k] = _ledger_patch_normalize_date(raw)
+                    elif k in ("בחובה", "בזכות"):
+                        basis[k] = _ledger_patch_coerce_amount(raw, label=k)
+                    elif k in ("מקור עסקה", "פירוט נוסף", "תאור מורחב"):
+                        t = _ledger_normalize_optional_text(raw, empty_as_none=False)
+                        basis[k] = "" if t is None else t
+            except ValueError as e:
+                return {"ok": False, "error": "validation_error", "message": str(e)}
+            fp_series = pd.Series(basis)
+            computed = generate_transaction_fingerprint(fp_series)
+            if computed is None or not str(computed).strip():
+                return {
+                    "ok": False,
+                    "error": "validation_error",
+                    "message": "Cannot compute fingerprint from updated fields (check תאריך and amounts).",
+                }
+            new_fp = str(computed).strip()
+
+            conflict = conn.execute(
+                """
+                SELECT id FROM ledger_transaction
+                WHERE fingerprint IS NOT NULL AND TRIM(fingerprint) = ?
+                  AND id != ?
+                """,
+                (new_fp, int(row_id)),
+            ).fetchone()
+            if conflict is not None:
+                return {
+                    "ok": False,
+                    "error": "fingerprint_conflict",
+                    "message": "Another row already has this fingerprint.",
+                    "conflicting_id": int(conflict["id"]),
+                }
+
+            sql_updates.update(
+                {
+                    "תאריך": basis["תאריך"],
+                    "בחובה": basis["בחובה"],
+                    "בזכות": basis["בזכות"],
+                    "מקור עסקה": basis["מקור עסקה"],
+                    "פירוט נוסף": basis["פירוט נוסף"],
+                    "תאור מורחב": basis["תאור מורחב"],
+                    "fingerprint": new_fp,
+                }
+            )
+
+        if not sql_updates:
+            return {"ok": False, "error": "validation_error", "message": "No valid fields to update"}
+
+        assignments = [f"{_ledger_patch_sql_column(k)} = ?" for k in sql_updates]
+        values = list(sql_updates.values())
+        values.append(int(row_id))
+        sql = f"UPDATE ledger_transaction SET {', '.join(assignments)} WHERE id = ?"
+        try:
+            conn.execute(sql, values)
+            conn.commit()
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            return {
+                "ok": False,
+                "error": "fingerprint_conflict",
+                "message": str(e) or "UNIQUE fingerprint violation",
+            }
+
+        out: dict[str, Any] = {"ok": True}
+        if new_fp is not None:
+            out["fingerprint"] = new_fp
+        return out
+    finally:
+        conn.close()
+
+
 # --- DataFrame load/export (ex-ledger_dataframe) ---
 
 # DB columns only (no ``מזהה עסקה`` / ``תאריך עדכון`` — dedupe and ingestion use ``fingerprint`` + ``ingested_at``).
 _LEDGER_TX_READ_SQL = f"""
 SELECT
+    id,
     "תאריך",
     "בחובה",
     "בזכות",
@@ -759,7 +1007,9 @@ SELECT
     "קטגוריה",
     notes,
     statement_month,
-    ingested_at
+    ingested_at,
+    category_updated_at,
+    data_updated_at
 FROM ledger_transaction
 ORDER BY ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}), id
 """
@@ -774,6 +1024,8 @@ def read_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
         conn.close()
 
     if not df.empty:
+        if "id" in df.columns:
+            df["id"] = pd.to_numeric(df["id"], errors="coerce").astype("Int64")
         if "קטגוריה" in df.columns:
             df["קטגוריה"] = df["קטגוריה"].map(lambda x: "" if pd.isna(x) else str(x)).astype(object)
         if "fingerprint" in df.columns:

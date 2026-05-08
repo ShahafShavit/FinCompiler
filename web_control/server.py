@@ -730,6 +730,31 @@ def make_handler_class(state: ControlState):
                 "application/json; charset=utf-8",
             )
 
+        def do_PATCH(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            path = _normalize_http_path(parsed.path)
+
+            if path == "/heatmap/api/transaction":
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                try:
+                    status, payload = heatmap.ledger_transaction_patch_api(raw)
+                    body = _json_bytes_strict(payload)
+                except Exception:  # noqa: BLE001
+                    log.exception("PATCH /heatmap/api/transaction failed")
+                    status = 500
+                    body = _json_bytes_strict(
+                        {
+                            "ok": False,
+                            "error": "server_error",
+                            "message": "Patch failed (see server log).",
+                        }
+                    )
+                self._send(status, body, "application/json; charset=utf-8")
+                return
+
+            self._send(404, b"Not Found", "text/plain")
+
     return Handler
 
 

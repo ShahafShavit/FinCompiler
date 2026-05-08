@@ -37,6 +37,17 @@ export async function postJson<T = unknown>(
   });
 }
 
+export async function patchJson<T = unknown>(
+  url: string,
+  body: unknown = {},
+): Promise<ApiResult<T>> {
+  return fetchJson<T>(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 export function formatMoney(v: number | null | undefined, suffix = '₪'): string {
   if (v == null || !Number.isFinite(v)) return '—';
   const abs = Math.abs(v);
