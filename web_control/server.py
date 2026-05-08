@@ -13,13 +13,13 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import config
 from categorization.interactive.http_server import categorization_html
 from logger import attach_sink_log_handlers, detach_sink_log_handlers
 
-from web_control import categorize_queue, control_nav, heatmap, jobs
+from web_control import categorize_queue, control_nav, heatmap, holdings_page, jobs
 from web_control.json_safe import json_bytes_strict as _json_bytes_strict
 
 # Forward structured pipeline / Selenium logs to the dashboard SSE (exclude ``pipeline`` — it already uses sink via _notify).
@@ -581,6 +581,18 @@ def make_handler_class(state: ControlState):
                 self._send(200, heatmap.heatmap_shell_html().encode("utf-8"), "text/html; charset=utf-8")
                 return
 
+            if path == "/holdings":
+                self.send_response(302)
+                self.send_header("Location", "/holdings/")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            if path in ("/holdings/", "/holdings/index.html"):
+                self._send(200, holdings_page.holdings_shell_html().encode("utf-8"), "text/html; charset=utf-8")
+                return
+
             if path == "/heatmap/heatmap_page_script.js":
                 js_path = heatmap.heatmap_page_script_path()
                 if not js_path.is_file():
@@ -661,6 +673,40 @@ def make_handler_class(state: ControlState):
                     }
                 )
                 self._send(200, body, "application/json; charset=utf-8")
+                return
+
+            if path == "/api/holdings/meta":
+                from pipeline.holdings_csv_import import get_holdings_meta
+
+                body = _json_bytes_strict(get_holdings_meta(config.ledger_db_file))
+                self._send(200, body, "application/json; charset=utf-8")
+                return
+
+            if path == "/api/holdings/timeline":
+                from pipeline.holdings_csv_import import query_holdings_timeline
+
+                qs = parse_qs(parsed.query, keep_blank_values=False)
+                from_date = (qs.get("from") or [None])[0]
+                to_date = (qs.get("to") or [None])[0]
+                activities = [str(x) for x in (qs.get("activity") or []) if str(x).strip()]
+                try:
+                    df = query_holdings_timeline(
+                        config.ledger_db_file,
+                        start_date=str(from_date).strip() if from_date else None,
+                        end_date=str(to_date).strip() if to_date else None,
+                        activity_types=activities,
+                    )
+                    payload = {
+                        "ok": True,
+                        "rows": df.to_dict(orient="records"),
+                    }
+                    self._send(200, _json_bytes_strict(payload), "application/json; charset=utf-8")
+                except Exception as e:  # noqa: BLE001
+                    self._send(
+                        400,
+                        _json_bytes_strict({"ok": False, "error": "invalid_request", "message": str(e)}),
+                        "application/json; charset=utf-8",
+                    )
                 return
 
             if path == "/api/sheets/status":
@@ -753,6 +799,85 @@ def make_handler_class(state: ControlState):
                     self._send(503, _json_bytes_strict(snap), "application/json; charset=utf-8")
                     return
                 self._send(200, _json_bytes_strict(snap), "application/json; charset=utf-8")
+                return
+
+            if path == "/api/holdings/parse-paste-grid":
+                from pipeline.holdings_csv_import import parse_holdings_paste_grid
+
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError:
+                    self._send(
+                        400,
+                        _json_bytes_strict({"ok": False, "error": "invalid_json", "message": "invalid JSON body"}),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+                text = str((data or {}).get("text") or "")
+                out = parse_holdings_paste_grid(text)
+                self._send(200, _json_bytes_strict(out), "application/json; charset=utf-8")
+                return
+
+            if path == "/api/holdings/check-conflicts":
+                from pipeline.holdings_csv_import import get_holdings_conflicts
+
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError:
+                    self._send(
+                        400,
+                        _json_bytes_strict({"ok": False, "error": "invalid_json", "message": "invalid JSON body"}),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+                rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+                try:
+                    conflicts = get_holdings_conflicts(rows, config.ledger_db_file)
+                except Exception as e:  # noqa: BLE001
+                    self._send(
+                        400,
+                        _json_bytes_strict({"ok": False, "error": "invalid_rows", "message": str(e)}),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+                self._send(
+                    200,
+                    _json_bytes_strict({"ok": True, "conflicts": conflicts, "conflict_count": len(conflicts)}),
+                    "application/json; charset=utf-8",
+                )
+                return
+
+            if path == "/api/holdings/manual-upsert-batch":
+                from pipeline.holdings_csv_import import upsert_holdings_rows
+
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError:
+                    self._send(
+                        400,
+                        _json_bytes_strict({"ok": False, "error": "invalid_json", "message": "invalid JSON body"}),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+                rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+                overwrite = bool(data.get("overwrite_conflicts"))
+                try:
+                    out = upsert_holdings_rows(rows, config.ledger_db_file, overwrite_conflicts=overwrite)
+                except Exception as e:  # noqa: BLE001
+                    self._send(
+                        400,
+                        _json_bytes_strict({"ok": False, "error": "invalid_rows", "message": str(e)}),
+                        "application/json; charset=utf-8",
+                    )
+                    return
+                code = 200 if out.get("ok") else 409
+                self._send(code, _json_bytes_strict(out), "application/json; charset=utf-8")
                 return
 
             if path == "/api/sheets/push":

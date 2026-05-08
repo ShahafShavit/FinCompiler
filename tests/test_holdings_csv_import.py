@@ -56,6 +56,62 @@ class HoldingsCsvImportTests(unittest.TestCase):
             (long_a["balance_ils"] - long_b["balance_ils"]).abs().max() < 0.01,
         )
 
+    def test_get_meta_and_timeline_and_conflicts(self) -> None:
+        import config as config_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                importlib.reload(config_mod)
+
+            from pipeline.holdings_csv_import import (
+                get_holdings_conflicts,
+                get_holdings_meta,
+                query_holdings_timeline,
+                upsert_holdings_rows,
+            )
+
+            rows = [
+                {"as_of_date": "2026-05-01", "activity_type": "עובר ושב", "balance_ils": 1000},
+                {"as_of_date": "2026-05-01", "activity_type": "ניירות ערך", "balance_ils": 3500},
+                {"as_of_date": "2026-05-02", "activity_type": "עובר ושב", "balance_ils": 1200},
+            ]
+            out = upsert_holdings_rows(rows, config_mod.ledger_db_file, overwrite_conflicts=True)
+            self.assertTrue(out.get("ok"), msg=str(out))
+
+            meta = get_holdings_meta(config_mod.ledger_db_file)
+            self.assertEqual(meta.get("row_count"), 3)
+            self.assertIn("עובר ושב", meta.get("activity_types", []))
+
+            tdf = query_holdings_timeline(
+                config_mod.ledger_db_file,
+                start_date="2026-05-01",
+                end_date="2026-05-01",
+                activity_types=["עובר ושב"],
+            )
+            self.assertEqual(len(tdf), 1)
+            self.assertEqual(str(tdf.iloc[0]["as_of_date"]), "2026-05-01")
+
+            conflicts = get_holdings_conflicts(
+                [{"as_of_date": "2026-05-01", "activity_type": "עובר ושב", "balance_ils": 999}],
+                config_mod.ledger_db_file,
+            )
+            self.assertEqual(len(conflicts), 1)
+            self.assertEqual(conflicts[0]["incoming_balance_ils"], 999.0)
+
+    def test_parse_holdings_paste_grid(self) -> None:
+        from pipeline.holdings_csv_import import parse_holdings_paste_grid
+
+        text = (
+            "תאריך\tעובר ושב\tניירות ערך\n"
+            "2026-05-01\t100\t200\n"
+            "2026-05-02\tabc\t300\n"
+        )
+        out = parse_holdings_paste_grid(text)
+        self.assertTrue(out.get("ok"))
+        self.assertEqual(len(out.get("rows", [])), 3)
+        self.assertEqual(len(out.get("invalid_cells", [])), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-"""Shared top navigation for control dashboard pages (Dashboard · Heatmap · Categorize).
+"""Shared top navigation for control dashboard pages (Dashboard · Heatmap · Holdings · Categorize).
 
 Links use root-absolute paths (``/``, ``/heatmap/``, ``/categorize/``) so they work even when
 a page sets ``<base href="...">`` (e.g. categorization UI under ``/categorize/``).
@@ -24,6 +24,8 @@ def control_topnav_html() -> str:
         '<a href="/">Dashboard</a>'
         '<span class="sep">·</span>'
         '<a href="/heatmap/">Heatmap</a>'
+        '<span class="sep">·</span>'
+        '<a href="/holdings/">Holdings</a>'
         '<span class="sep">·</span>'
         '<a href="/categorize/">Categorize</a>'
         "</nav>"

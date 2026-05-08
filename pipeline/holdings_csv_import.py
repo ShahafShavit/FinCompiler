@@ -35,6 +35,18 @@ def _canonical_activity(name: str) -> str:
     return s
 
 
+def _norm_date(v: Any) -> str:
+    if hasattr(v, "strftime"):
+        return v.strftime("%Y-%m-%d")
+    s = str(v).strip()
+    ts = pd.to_datetime(s, errors="coerce", format="%Y-%m-%d")
+    if pd.isna(ts):
+        ts = pd.to_datetime(s, errors="coerce", dayfirst=True)
+    if pd.isna(ts):
+        raise ValueError(f"invalid as_of_date: {v!r}")
+    return ts.strftime("%Y-%m-%d")
+
+
 def wide_holdings_to_long(df: pd.DataFrame) -> pd.DataFrame:
     if "תאריך" not in df.columns:
         raise ValueError('holdings CSV must include a "תאריך" column')
@@ -55,17 +67,6 @@ def wide_holdings_to_long(df: pd.DataFrame) -> pd.DataFrame:
         .sum()
         .rename(columns={"תאריך": "as_of_date"})
     )
-
-    def _norm_date(v: Any) -> str:
-        if hasattr(v, "strftime"):
-            return v.strftime("%Y-%m-%d")
-        s = str(v).strip()
-        ts = pd.to_datetime(s, errors="coerce", format="%Y-%m-%d")
-        if pd.isna(ts):
-            ts = pd.to_datetime(s, errors="coerce", dayfirst=True)
-        if pd.isna(ts):
-            raise ValueError(f"invalid as_of_date: {v!r}")
-        return ts.strftime("%Y-%m-%d")
 
     long_df["as_of_date"] = long_df["as_of_date"].map(_norm_date)
     long_df["balance_ils"] = pd.to_numeric(long_df["balance_ils"], errors="coerce").fillna(0.0)
@@ -90,6 +91,299 @@ def load_holdings_long_dataframe(db_path: str) -> pd.DataFrame:
     finally:
         conn.close()
     return df
+
+
+def list_holdings_activity_types(db_path: str | None = None) -> list[str]:
+    """Distinct activity types in holdings_balance, sorted by name."""
+    db = db_path if db_path is not None else config.ledger_db_file
+    migrate_ledger_db(db)
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT activity_type
+            FROM holdings_balance
+            WHERE activity_type IS NOT NULL AND TRIM(activity_type) != ''
+            ORDER BY activity_type COLLATE NOCASE
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return [str(r[0]) for r in rows]
+
+
+def get_holdings_meta(db_path: str | None = None) -> dict[str, Any]:
+    """Metadata snapshot for holdings page filters and stats."""
+    db = db_path if db_path is not None else config.ledger_db_file
+    migrate_ledger_db(db)
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS row_count,
+                COUNT(DISTINCT as_of_date) AS date_count,
+                MIN(as_of_date) AS min_date,
+                MAX(as_of_date) AS max_date
+            FROM holdings_balance
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    return {
+        "db_path": db,
+        "row_count": int(row[0] or 0),
+        "date_count": int(row[1] or 0),
+        "min_date": row[2],
+        "max_date": row[3],
+        "activity_types": list_holdings_activity_types(db),
+    }
+
+
+def query_holdings_timeline(
+    db_path: str | None = None,
+    *,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    activity_types: list[str] | None = None,
+) -> pd.DataFrame:
+    """Timeline rows from holdings_balance with optional date/activity filters."""
+    db = db_path if db_path is not None else config.ledger_db_file
+    migrate_ledger_db(db)
+
+    where_parts: list[str] = []
+    params: list[Any] = []
+    if start_date:
+        where_parts.append("as_of_date >= ?")
+        params.append(_norm_date(start_date))
+    if end_date:
+        where_parts.append("as_of_date <= ?")
+        params.append(_norm_date(end_date))
+    normalized_activities = []
+    if activity_types:
+        for name in activity_types:
+            n = _canonical_activity(str(name).strip())
+            if n:
+                normalized_activities.append(n)
+    if normalized_activities:
+        placeholders = ",".join("?" for _ in normalized_activities)
+        where_parts.append(f"activity_type IN ({placeholders})")
+        params.extend(normalized_activities)
+    where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+    conn = sqlite3.connect(db)
+    try:
+        df = pd.read_sql_query(
+            f"""
+            SELECT as_of_date, activity_type, balance_ils
+            FROM holdings_balance
+            {where_sql}
+            ORDER BY as_of_date ASC, activity_type ASC
+            """,
+            conn,
+            params=params,
+        )
+    finally:
+        conn.close()
+    return df
+
+
+def normalize_holdings_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one candidate holdings row from API payload."""
+    if not isinstance(row, dict):
+        raise ValueError("row must be an object")
+    as_of_raw = row.get("as_of_date")
+    activity_raw = row.get("activity_type")
+    balance_raw = row.get("balance_ils")
+    as_of_date = _norm_date(as_of_raw)
+    activity_type = _canonical_activity(str(activity_raw or "").strip())
+    if not activity_type:
+        raise ValueError("activity_type is required")
+    bal = pd.to_numeric(balance_raw, errors="coerce")
+    if pd.isna(bal):
+        raise ValueError("balance_ils must be numeric")
+    return {
+        "as_of_date": as_of_date,
+        "activity_type": activity_type,
+        "balance_ils": float(bal),
+    }
+
+
+def normalize_holdings_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    """Normalize API payload rows and dedupe by (as_of_date, activity_type)."""
+    if not isinstance(rows, list) or not rows:
+        return pd.DataFrame(columns=["as_of_date", "activity_type", "balance_ils"])
+    normalized = [normalize_holdings_row(r) for r in rows]
+    df = pd.DataFrame(normalized)
+    return df.drop_duplicates(subset=["as_of_date", "activity_type"], keep="last").reset_index(drop=True)
+
+
+def get_holdings_conflicts(
+    rows: list[dict[str, Any]],
+    db_path: str | None = None,
+) -> list[dict[str, Any]]:
+    """Existing rows that would be overwritten by the given payload rows."""
+    db = db_path if db_path is not None else config.ledger_db_file
+    migrate_ledger_db(db)
+    work = normalize_holdings_rows(rows)
+    if work.empty:
+        return []
+
+    keys = list(zip(work["as_of_date"], work["activity_type"]))
+    placeholders = ",".join("(?,?)" for _ in keys)
+    params: list[Any] = []
+    for d, a in keys:
+        params.extend([d, a])
+
+    conn = sqlite3.connect(db)
+    try:
+        existing = pd.read_sql_query(
+            f"""
+            SELECT as_of_date, activity_type, balance_ils
+            FROM holdings_balance
+            WHERE (as_of_date, activity_type) IN ({placeholders})
+            """,
+            conn,
+            params=params,
+        )
+    finally:
+        conn.close()
+    if existing.empty:
+        return []
+    merged = existing.merge(
+        work,
+        on=["as_of_date", "activity_type"],
+        how="inner",
+        suffixes=("_existing", "_incoming"),
+    )
+    merged = merged[merged["balance_ils_existing"] != merged["balance_ils_incoming"]]
+    out: list[dict[str, Any]] = []
+    for _, r in merged.iterrows():
+        out.append(
+            {
+                "as_of_date": str(r["as_of_date"]),
+                "activity_type": str(r["activity_type"]),
+                "existing_balance_ils": float(r["balance_ils_existing"]),
+                "incoming_balance_ils": float(r["balance_ils_incoming"]),
+            }
+        )
+    return sorted(out, key=lambda x: (x["as_of_date"], x["activity_type"]))
+
+
+def upsert_holdings_rows(
+    rows: list[dict[str, Any]],
+    db_path: str | None = None,
+    *,
+    overwrite_conflicts: bool = False,
+) -> dict[str, Any]:
+    """Batch upsert normalized holdings rows with optional conflict guard."""
+    db = db_path if db_path is not None else config.ledger_db_file
+    work = normalize_holdings_rows(rows)
+    conflicts = get_holdings_conflicts(work.to_dict(orient="records"), db)
+    if conflicts and not overwrite_conflicts:
+        return {
+            "ok": False,
+            "error": "conflicts_detected",
+            "message": "Existing rows would be overwritten; set overwrite_conflicts=true to continue.",
+            "conflicts": conflicts,
+            "rows_received": int(len(work)),
+            "rows_upserted": 0,
+        }
+    report = upsert_holdings_long(work, db)
+    return {
+        "ok": True,
+        "error": None,
+        "message": "holdings rows upserted",
+        "conflicts": conflicts,
+        "rows_received": int(len(work)),
+        "rows_upserted": int(report.get("rows_upserted", 0)),
+        "holdings_table_count": int(report.get("holdings_table_count", 0)),
+        "db_path": db,
+    }
+
+
+def parse_holdings_paste_grid(text: str) -> dict[str, Any]:
+    """
+    Parse tab-separated holdings grid text:
+      header: תאריך + activity columns
+      rows: one date per line, activity balances in cells.
+    """
+    raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln for ln in raw.split("\n") if ln.strip()]
+    if not lines:
+        return {
+            "ok": False,
+            "error": "empty_input",
+            "message": "No data pasted.",
+            "rows": [],
+            "invalid_cells": [],
+            "activity_types": [],
+        }
+    header = [c.strip() for c in lines[0].split("\t")]
+    if len(header) < 2:
+        return {
+            "ok": False,
+            "error": "invalid_header",
+            "message": "Header must include date column plus at least one activity column.",
+            "rows": [],
+            "invalid_cells": [],
+            "activity_types": [],
+        }
+    date_col = header[0]
+    if date_col not in ("תאריך", "as_of_date", "date"):
+        return {
+            "ok": False,
+            "error": "invalid_header",
+            "message": "First column must be תאריך/date.",
+            "rows": [],
+            "invalid_cells": [],
+            "activity_types": [],
+        }
+
+    activities = [_canonical_activity(c) for c in header[1:] if str(c).strip()]
+    parsed_rows: list[dict[str, Any]] = []
+    invalid_cells: list[dict[str, Any]] = []
+    for line_idx, ln in enumerate(lines[1:], start=2):
+        cols = [c.strip() for c in ln.split("\t")]
+        if not any(cols):
+            continue
+        try:
+            as_of_date = _norm_date(cols[0] if cols else "")
+        except Exception:
+            invalid_cells.append({"line": line_idx, "column": date_col, "value": cols[0] if cols else "", "error": "invalid_date"})
+            continue
+        for col_idx, activity in enumerate(activities, start=1):
+            val = cols[col_idx] if col_idx < len(cols) else ""
+            if val == "":
+                continue
+            num = pd.to_numeric(val, errors="coerce")
+            if pd.isna(num):
+                invalid_cells.append(
+                    {
+                        "line": line_idx,
+                        "column": header[col_idx] if col_idx < len(header) else activity,
+                        "value": val,
+                        "error": "invalid_number",
+                    }
+                )
+                continue
+            parsed_rows.append(
+                {
+                    "as_of_date": as_of_date,
+                    "activity_type": activity,
+                    "balance_ils": float(num),
+                }
+            )
+    normalized = normalize_holdings_rows(parsed_rows)
+    return {
+        "ok": True,
+        "error": None,
+        "message": f"Parsed {len(normalized)} holdings rows.",
+        "rows": normalized.to_dict(orient="records"),
+        "invalid_cells": invalid_cells,
+        "activity_types": sorted({str(x) for x in normalized["activity_type"].tolist()}) if not normalized.empty else [],
+        "source_line_count": len(lines),
+    }
 
 
 def holdings_long_to_wide(long_df: pd.DataFrame) -> pd.DataFrame:
