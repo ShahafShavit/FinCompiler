@@ -12,7 +12,6 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from datetime import date, datetime
 from typing import Any, Literal
 from urllib.parse import parse_qs
@@ -37,11 +36,6 @@ def invalidate_bundle_cache() -> None:
     _bundle_cache["path"] = ""
     _bundle_cache["mtime"] = 0.0
     _bundle_cache["bundle"] = None
-
-
-def heatmap_page_script_path() -> Path:
-    """On-disk path to the heatmap UI script (also served as a static asset by the control server)."""
-    return Path(__file__).resolve().parent / "heatmap_page_script.js"
 
 
 # Heatmap-only: normalize mixed sheet/CSV date strings for bucketing (ISO YYYY-MM-DD first,
@@ -952,49 +946,6 @@ def _heatmap_shared_css() -> str:
       }
       .heatmap-toolbar #refresh-status { font-size: 0.82rem; opacity: 0.8; max-width: 42rem; }
     </style>
-"""
-    )
-
-
-def heatmap_shell_html() -> str:
-    return (
-        f"""<!DOCTYPE html>
-<html lang="he">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>מפת חום — Heatmap</title>
-  {_heatmap_shared_css()}
-</head>
-<body>
-  {control_nav.control_topnav_html()}
-  <h1>מפת חום — הוצאות / הכנסות / נטו</h1>
-  <p class="subtle">מקור אמת: מסד ה־SQLite (<code>ledger.sqlite</code>) — אותן תנועות כמו בקטלוג ובדחיפה ל־Google Sheets. לחיצה על תא פותחת פירוט תנועות. <strong>רענון</strong> מנקה מטמון וטוען מחדש מהמסד.</p>
-  <div class="heatmap-toolbar">
-    <button type="button" id="btn-refresh">Reload from ledger</button>
-    <span id="refresh-status"></span>
-  </div>
-  <div id="err" class="err-banner" style="display:none"></div>
-  <div class="tabs" id="tabs">
-    <button type="button" data-view="expense">הוצאות</button>
-    <button type="button" data-view="income">הכנסות</button>
-    <button type="button" data-view="net">נטו</button>
-  </div>
-  <div id="heatmap-title" class="heatmap-title"></div>
-  <div class="heatmap-wrap"><div id="grid"></div></div>
-  <div class="stats-container">
-    <div class="stats-table-container">
-      <h2>סיכום לפי קטגוריה</h2>
-      <div id="stats-cat"></div>
-    </div>
-    <div class="stats-table-container">
-      <h2>סיכום לפי חודש</h2>
-      <div id="stats-month"></div>
-    </div>
-  </div>
-  <script src="/heatmap/heatmap_page_script.js" defer></script>
-</body>
-</html>
 """
     )
 

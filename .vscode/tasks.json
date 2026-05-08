@@ -1,0 +1,193 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Tests: all (unittest discover)",
+      "type": "shell",
+      "command": ".venv/bin/python -m unittest discover -s tests -p \"test_*.py\" -v || python3 -m unittest discover -s tests -p \"test_*.py\" -v",
+      "windows": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        },
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m unittest discover -s tests -p \"test_*.py\" -v) else (python -m unittest discover -s tests -p \"test_*.py\" -v)"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {}
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+
+    // ----- Python control server -----
+    {
+      "label": "Web (Python): control server (start / restart)",
+      "detail": "Free port 8780 if held, then run `python -m web_control` (serves /api, /heatmap/api, /holdings, /categorize, and the built SPA at /).",
+      "type": "shell",
+      "command": ".venv/bin/python scripts/web_control_restart.py || python3 scripts/web_control_restart.py",
+      "windows": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        },
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe scripts\\web_control_restart.py) else (python scripts\\web_control_restart.py)"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {}
+      },
+      "group": "none",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false,
+        "group": "web-dev"
+      },
+      "problemMatcher": {
+        "owner": "web-control",
+        "pattern": [
+          { "regexp": "^(.*)$", "file": 1, "location": 1, "message": 1 }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "freeing port|Using Python:",
+          "endsPattern": "Listening on http://"
+        }
+      }
+    },
+
+    // ----- SPA tasks (web/) -----
+    {
+      "label": "Web (SPA): npm install",
+      "detail": "Install or update web/ frontend deps. Run after package.json changes.",
+      "type": "shell",
+      "command": "npm install --no-fund --no-audit",
+      "options": {
+        "cwd": "${workspaceFolder}/web"
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Web (SPA): build",
+      "detail": "TypeScript check + Vite production build into web/dist (served by python -m web_control at /).",
+      "type": "shell",
+      "command": "npm run build",
+      "options": {
+        "cwd": "${workspaceFolder}/web"
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "Web (SPA): dev (Vite, http://127.0.0.1:5173)",
+      "detail": "Start Vite dev server with HMR. Proxies /api, /heatmap/api, /heatmap/detail, /categorize, /holdings to the Python control server on :8780. Long-running; use the kill task or VS Code's terminal stop to end it.",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/web"
+      },
+      "isBackground": true,
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false,
+        "group": "web-dev"
+      },
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": [
+          { "regexp": "^(.*)$", "file": 1, "location": 1, "message": 1 }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "VITE v|building for|optimized dependencies",
+          "endsPattern": "ready in \\d+\\s?m?s|Local:\\s+http"
+        }
+      }
+    },
+
+    // ----- Helpers: free both dev ports in one shot -----
+    {
+      "label": "Web: kill dev ports (8780 + 5173)",
+      "detail": "Stop any process listening on 8780 (Python control) and 5173 (Vite). Cross-platform; a no-op when the ports are already free.",
+      "type": "shell",
+      "command": "for p in 8780 5173; do lsof -ti :$p 2>/dev/null | xargs -r kill -9 2>/dev/null || true; done; echo 'Freed ports 8780 + 5173'",
+      "windows": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "powershell.exe",
+            "args": ["-NoProfile", "-NonInteractive", "-Command"]
+          }
+        },
+        "command": "foreach ($p in @(8780, 5173)) { $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue; if ($null -ne $c) { $c | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } } }; Write-Host 'Freed ports 8780 + 5173'"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "close": true
+      },
+      "problemMatcher": []
+    },
+
+    // ----- One-button dev: Python + Vite in parallel -----
+    {
+      "label": "Web: full dev (start Python + Vite)",
+      "detail": "Start the Python control server and Vite dev server side-by-side. Open http://127.0.0.1:5173/ for HMR.",
+      "dependsOn": [
+        "Web (Python): control server (start / restart)",
+        "Web (SPA): dev (Vite, http://127.0.0.1:5173)"
+      ],
+      "dependsOrder": "parallel",
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared",
+        "group": "web-dev"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Web: full dev (restart all)",
+      "detail": "Free 8780 + 5173, then start the Python control server and Vite dev server. Use this to recover from stuck servers.",
+      "dependsOn": [
+        "Web: kill dev ports (8780 + 5173)",
+        "Web: full dev (start Python + Vite)"
+      ],
+      "dependsOrder": "sequence",
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared",
+        "group": "web-dev"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

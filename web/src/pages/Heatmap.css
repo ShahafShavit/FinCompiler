@@ -1,0 +1,380 @@
+/* Heatmap page styles. Ported 1:1 from web_control.heatmap._heatmap_shared_css and
+   scoped to `.heatmap-page` so RTL + table styles don't leak to other SPA routes. */
+
+.heatmap-page {
+  direction: rtl;
+  padding: 0.5rem 1rem 2rem;
+  max-width: 100%;
+}
+
+.heatmap-page h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem 0;
+  color: #f1f1f4;
+}
+
+.heatmap-page h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem 0;
+  color: #c8cad4;
+  border-bottom: 1px solid #2b2c33;
+  padding-bottom: 0.35rem;
+}
+
+.heatmap-page .subtle {
+  font-size: 0.82rem;
+  opacity: 0.65;
+  margin-bottom: 0.35rem;
+}
+
+.heatmap-page .err-banner {
+  background: #3a1f1f;
+  border: 1px solid #6b2a2a;
+  color: #ffb4b4;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin: 0.5rem 0 1rem;
+}
+
+.heatmap-page .heatmap-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.85rem;
+}
+
+.heatmap-page .heatmap-toolbar button.btn-refresh {
+  font: inherit;
+  cursor: pointer;
+  padding: 0.45rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid #4c6ef5;
+  background: #4c6ef5;
+  color: #fff;
+}
+
+.heatmap-page .heatmap-toolbar button.btn-refresh:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.heatmap-page .heatmap-toolbar .refresh-status {
+  font-size: 0.82rem;
+  opacity: 0.8;
+  max-width: 42rem;
+}
+
+.heatmap-page .tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.heatmap-page .tabs button {
+  font: inherit;
+  cursor: pointer;
+  padding: 0.4rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #3a3b44;
+  background: #1c1d22;
+  color: #c8cad4;
+}
+
+.heatmap-page .tabs button.active {
+  border-color: #4c6ef5;
+  background: #2a2f4a;
+  color: #e8e8ec;
+}
+
+.heatmap-page .heatmap-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.heatmap-page .heatmap-wrap {
+  overflow: auto;
+  max-width: 100%;
+  margin-bottom: 1.5rem;
+  max-height: 78vh;
+  border: 1px solid #2b2c33;
+  border-radius: 8px;
+  background: #0b0c0f;
+}
+
+.heatmap-page .stats-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin-top: 0.5rem;
+}
+
+.heatmap-page .stats-table-container {
+  flex: 1;
+  min-width: min(100%, 22rem);
+  overflow-x: auto;
+}
+
+.heatmap-page .no-data {
+  text-align: center;
+  color: #888;
+  margin: 0.75rem 0;
+}
+
+/* Stats tables (pre-rendered colored HTML from pandas Styler) injected via dangerouslySetInnerHTML */
+.heatmap-page table.styled-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75rem 0;
+  font-size: 0.88rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.heatmap-page .styled-table th,
+.heatmap-page .styled-table td {
+  padding: 8px 10px;
+  text-align: right;
+  border: 1px solid #2b2c33;
+}
+
+.heatmap-page .stats-table-container .styled-table td {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: right;
+}
+
+.heatmap-page .styled-table thead th {
+  background: #2d4a2f;
+  color: #e8f5e9;
+}
+
+.heatmap-page .stats-table-container .styled-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.heatmap-page .styled-table tbody tr:hover {
+  background: #1e1f24 !important;
+}
+
+/* Heatmap grid (verbatim port — sticky multi-column layout) */
+.heatmap-page table.hm-grid {
+  border-collapse: separate;
+  border-spacing: 1px;
+  font-size: 0.74rem;
+  margin: 0;
+  table-layout: auto;
+  width: max-content;
+  --hm-month-col-w: 7.3rem;
+  --hm-metric-col-w: 4.6rem;
+}
+
+.heatmap-page table.hm-grid th,
+.heatmap-page table.hm-grid td {
+  min-width: 4.15rem;
+  padding: 5px 7px;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.heatmap-page table.hm-grid th {
+  background: #1c1d22;
+  color: #aeb4c0;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.heatmap-page table.hm-grid th.row-h {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background: #16171c;
+  min-width: var(--hm-month-col-w);
+  text-align: right;
+  padding-inline: 0.55rem;
+}
+
+.heatmap-page table.hm-grid th.corner {
+  z-index: 4;
+  right: 0;
+  top: 0;
+  background: #14151a;
+}
+
+.heatmap-page table.hm-grid thead th.hm-colsum {
+  top: 0;
+  z-index: 3;
+  background: #25262e;
+  color: #dce0ea;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border-bottom: 1px solid #3a3b44;
+}
+
+.heatmap-page table.hm-grid thead th.hm-colsum .colsum-wrap {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 0.15rem;
+}
+
+.heatmap-page table.hm-grid thead th.hm-colsum .colsum-wrap > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.heatmap-page table.hm-grid thead th.hm-colsum .metric-label {
+  color: #aeb4c0;
+  font-size: 0.64rem;
+  letter-spacing: 0.02em;
+}
+
+.heatmap-page table.hm-grid thead th.hm-colsum .metric-val {
+  color: #e6e9f0;
+  font-size: 0.7rem;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.heatmap-page table.hm-grid thead tr:nth-child(2) th {
+  top: 2.35rem;
+  z-index: 2;
+  background: #1c1d22;
+}
+
+.heatmap-page table.hm-grid thead th.hm-metric-h {
+  top: 0;
+  z-index: 5;
+  background: #1a1b20;
+  color: #c4c8d4;
+  min-width: var(--hm-metric-col-w);
+  vertical-align: middle;
+  line-height: 1.2;
+}
+
+.heatmap-page table.hm-grid th.hm-rowsum-h,
+.heatmap-page table.hm-grid td.hm-rowtot {
+  right: var(--hm-month-col-w);
+}
+
+.heatmap-page table.hm-grid th.hm-rowavg-h,
+.heatmap-page table.hm-grid td.hm-rowavg {
+  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 1));
+}
+
+.heatmap-page table.hm-grid th.hm-ytdsum-h,
+.heatmap-page table.hm-grid td.hm-ytdsum {
+  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 2));
+}
+
+.heatmap-page table.hm-grid th.hm-ytdavg-h,
+.heatmap-page table.hm-grid td.hm-ytdavg {
+  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 3));
+}
+
+.heatmap-page table.hm-grid th.hm-l12sum-h,
+.heatmap-page table.hm-grid td.hm-l12sum {
+  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 4));
+}
+
+.heatmap-page table.hm-grid th.hm-l12avg-h,
+.heatmap-page table.hm-grid td.hm-l12avg {
+  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 5));
+}
+
+.heatmap-page table.hm-grid tbody td.hm-rowtot {
+  position: sticky;
+  z-index: 3;
+  background: #1a1b20;
+  color: #dce0ea;
+  font-weight: 600;
+  font-size: 0.7rem;
+  border: 1px solid #2b2c33;
+}
+
+.heatmap-page table.hm-grid tbody td.hm-rowmetric {
+  position: sticky;
+  z-index: 3;
+  background: #191a1f;
+  color: #dce0ea;
+  font-weight: 600;
+  font-size: 0.69rem;
+  border: 1px solid #2b2c33;
+}
+
+.heatmap-page table.hm-grid tbody tr:nth-child(even) th.row-h {
+  background: #1a1b22;
+}
+
+.heatmap-page table.hm-grid tbody tr:nth-child(even) td.hm-rowmetric {
+  background: #1c1d24;
+}
+
+.heatmap-page table.hm-grid tbody tr:nth-child(even) td.cell {
+  box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.025);
+}
+
+.heatmap-page table.hm-grid tbody tr.year-start th.row-h {
+  border-top: 2px solid #5d7cff;
+}
+
+.heatmap-page table.hm-grid tbody tr.group-boundary th.row-h {
+  border-top: 2px dashed #4a4d57;
+}
+
+.heatmap-page table.hm-grid th.row-h .l12-chip {
+  font-size: 0.61rem;
+  color: #9da3b7;
+  background: #262a33;
+  border: 1px dashed #4a4d57;
+  border-radius: 999px;
+  padding: 0.06rem 0.3rem;
+}
+
+.heatmap-page table.hm-grid th.row-h .month-markers {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.22rem;
+  margin-left: 0.35rem;
+}
+
+.heatmap-page table.hm-grid th.row-h .month-label {
+  color: #d9deea;
+}
+
+.heatmap-page table.hm-grid tbody th.row-h {
+  z-index: 4;
+}
+
+.heatmap-page table.hm-grid td.cell {
+  cursor: default;
+  color: #f4f6fb;
+  font-weight: 600;
+  text-shadow: none;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.heatmap-page table.hm-grid td.hm-rowtot,
+.heatmap-page table.hm-grid th.hm-colsum {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.heatmap-page table.hm-grid td.cell.clickable {
+  cursor: pointer;
+}
+
+.heatmap-page table.hm-grid td.cell.clickable:hover {
+  filter: brightness(1.12);
+  outline: 1px solid #fff8;
+}

@@ -1,7 +1,13 @@
-"""Shared top navigation for control dashboard pages (Dashboard · Heatmap · Holdings · Categorize).
+"""Shared top navigation for Python-rendered control pages (heatmap detail, holdings, categorize).
 
-Links use root-absolute paths (``/``, ``/heatmap/``, ``/categorize/``) so they work even when
-a page sets ``<base href="...">`` (e.g. categorization UI under ``/categorize/``).
+The React SPA at ``/`` ships its own top nav (``web/src/components/TopNav.tsx``) that
+mirrors these links. This module is still used by the Python-rendered pages:
+- ``/holdings/`` (``web_control/holdings_page.py``)
+- ``/heatmap/detail`` (``web_control/heatmap.py:_wrap_detail_document``)
+
+Links use root-absolute paths so they work regardless of any ``<base href>`` on the page.
+The Heatmap and Pipeline links target the SPA routes (no trailing slash); React Router
+takes over once the SPA is loaded.
 """
 
 
@@ -23,7 +29,9 @@ def control_topnav_html() -> str:
         '<nav class="topnav" aria-label="Main">'
         '<a href="/">Dashboard</a>'
         '<span class="sep">·</span>'
-        '<a href="/heatmap/">Heatmap</a>'
+        '<a href="/pipeline">Pipeline</a>'
+        '<span class="sep">·</span>'
+        '<a href="/heatmap">Heatmap</a>'
         '<span class="sep">·</span>'
         '<a href="/holdings/">Holdings</a>'
         '<span class="sep">·</span>'

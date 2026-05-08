@@ -1,0 +1,78 @@
+.pipe-page {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 0.6rem 1rem 3rem;
+}
+
+.pipe-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.7rem;
+  align-items: center;
+}
+
+.pipe-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0;
+  cursor: pointer;
+}
+
+.pipe-row.combo-row {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.pipe-indent {
+  margin: 0.35rem 0 0.5rem 1rem;
+  padding: 0.35rem 0 0.35rem 0.75rem;
+  border-left: 2px solid var(--border);
+}
+
+.pipe-grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .pipe-grid2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pipe-input-text {
+  width: 100%;
+  max-width: 14rem;
+}
+
+.pipe-combo {
+  max-width: 11rem;
+}
+
+.pipe-log,
+.pipe-sheets-out {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 22rem;
+  overflow: auto;
+  background: var(--bg-input);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+}
+
+.pipe-sheets-out {
+  max-height: 18rem;
+  margin-top: 0.65rem;
+}
+
+.pipe-status {
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0;
+  opacity: 0.9;
+}

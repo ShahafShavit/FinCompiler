@@ -5,6 +5,8 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import mimetypes
+import os
 import queue
 import re
 import socket
@@ -12,6 +14,7 @@ import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -19,7 +22,7 @@ import config
 from categorization.interactive.http_server import categorization_html
 from logger import attach_sink_log_handlers, detach_sink_log_handlers
 
-from web_control import categorize_queue, control_nav, heatmap, holdings_page, jobs
+from web_control import categorize_queue, control_nav, dashboard_api, heatmap, holdings_page, jobs
 from web_control.json_safe import json_bytes_strict as _json_bytes_strict
 
 # Forward structured pipeline / Selenium logs to the dashboard SSE (exclude ``pipeline`` — it already uses sink via _notify).
@@ -34,410 +37,104 @@ _JOB_SSE_LOGGERS = [
 
 log = logging.getLogger(__name__)
 
-_DASHBOARD_HTML = (
+
+# --- SPA static serving (web/dist) ---------------------------------------
+# Built by Vite (`npm --prefix web run build`). When `dist/` is missing (typical in dev
+# while Vite serves on :5173 directly), backend returns a clear placeholder so the user
+# sees what to do without a confusing blank page.
+
+_SPA_DIST_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
+_SPA_INDEX_FILE = _SPA_DIST_DIR / "index.html"
+_SPA_ASSETS_DIR = _SPA_DIST_DIR / "assets"
+
+_SPA_DEV_FALLBACK = (
     """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Finance pipeline control</title>
+  <title>finance compiler control — SPA build missing</title>
   <style>
-"""
-    + control_nav.control_topnav_css()
-    + """
-    :root {
-      font-family: system-ui, Segoe UI, Roboto, sans-serif;
-      background: #121316;
-      color: #e8e8ec;
-      line-height: 1.45;
-    }
-    body { max-width: 52rem; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
-    h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 0.25rem 0; }
-    .sub { opacity: 0.75; font-size: 0.9rem; margin-bottom: 1.25rem; }
-    .card {
-      background: #1c1d22;
-      border: 1px solid #2b2c33;
-      border-radius: 10px;
-      padding: 1rem 1.15rem;
-      margin: 1rem 0;
-    }
-    h2 { font-size: 1rem; font-weight: 600; margin: 0 0 0.65rem 0; }
-    label.row { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0; cursor: pointer; }
-    input[type="text"] {
-      font: inherit;
-      padding: 0.4rem 0.55rem;
-      border-radius: 6px;
-      border: 1px solid #3a3b44;
-      background: #121316;
-      color: inherit;
-      width: 100%;
-      max-width: 14rem;
-      box-sizing: border-box;
-    }
-    select {
-      font: inherit;
-      padding: 0.4rem 0.55rem;
-      border-radius: 6px;
-      border: 1px solid #3a3b44;
-      background: #121316;
-      color: inherit;
-    }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-    @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
-    button {
-      font: inherit;
-      cursor: pointer;
-      padding: 0.5rem 0.85rem;
-      border-radius: 8px;
-      border: 1px solid #4c6ef5;
-      background: #4c6ef5;
-      color: #fff;
-      margin: 0.25rem 0.35rem 0.25rem 0;
-    }
-    button.secondary {
-      background: transparent;
-      color: #adb5bd;
-      border-color: #495057;
-    }
-    button:disabled { opacity: 0.45; cursor: not-allowed; }
-    #log, #sheets_out {
-      font-family: ui-monospace, Consolas, monospace;
-      font-size: 0.8rem;
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-height: 22rem;
-      overflow: auto;
-      background: #0b0c0f;
-      border-radius: 8px;
-      padding: 0.65rem 0.75rem;
-      border: 1px solid #2b2c33;
-    }
-    #sheets_out { max-height: 18rem; margin-top: 0.65rem; }
-    #status { font-size: 0.9rem; margin: 0.5rem 0 0 0; opacity: 0.9; }
-    .hint { font-size: 0.82rem; opacity: 0.7; margin-top: 0.5rem; }
-    .pill {
-      display: inline-block;
-      font-size: 0.75rem;
-      padding: 0.15rem 0.45rem;
-      border-radius: 999px;
-      background: #2b2c33;
-      margin-left: 0.35rem;
-    }
-    .pill.run { background: #2f4a1f; color: #c7f0a8; }
-    .pill.err { background: #4a1f1f; color: #ffb4b4; }
-    .indent { margin: 0.35rem 0 0.5rem 1rem; padding: 0.35rem 0 0.35rem 0.75rem; border-left: 2px solid #2b2c33; }
-    input.combo { max-width: 11rem; }
-    label.row.combo-row { align-items: flex-start; flex-direction: column; gap: 0.35rem; }
+    body { font-family: system-ui, Segoe UI, Roboto, sans-serif; background:#121316; color:#e8e8ec;
+           max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem; line-height: 1.5; }
+    code { background:#1c1d22; border:1px solid #2b2c33; padding:0.1rem 0.35rem; border-radius:6px; }
+    a { color:#a5b4fc; }
+    h1 { font-size: 1.2rem; }
+    .card { background:#1c1d22; border:1px solid #2b2c33; border-radius:10px; padding:1rem 1.15rem; margin:1rem 0; }
   </style>
 </head>
 <body>
-"""
-    + control_nav.control_topnav_html()
-    + """
-  <h1>Finance pipeline control</h1>
-  <p class="sub">Local dashboard for fetches, routing, compile, and categorization.
-    <a href="/categorize/">Categorization</a>
-    <span id="queue_hint" class="pill"></span>
-    <span id="conn" class="pill">SSE …</span>
-    <span id="busy" class="pill"></span>
-  </p>
-
+  <h1>SPA bundle not built</h1>
+  <p>The control server expected <code>web/dist/index.html</code> but it is missing.</p>
   <div class="card">
-    <h2>Pipeline</h2>
-    <p class="hint">Check what this run should do, then click <strong>Run pipeline</strong>. Order is always: optional downloads → optional route → compile holdings (if checked) → compile transactions (if checked).</p>
-
-    <label class="row"><input type="checkbox" id="p_dl"/> <strong>Browser download</strong> — Chrome/Selenium saves exports into <code>data/input/</code></label>
-    <div class="indent">
-      <label class="row"><input type="checkbox" id="p_dl_h" disabled/> Bank holdings</label>
-      <label class="row"><input type="checkbox" id="p_dl_m" disabled/> Max + Isracard</label>
-      <label class="row"><input type="checkbox" id="p_dl_bc" disabled/> Leumi credit export</label>
-      <label class="row"><input type="checkbox" id="p_dl_osh" disabled/> Leumi account (osh)</label>
-      <div class="grid2" style="margin-top:0.5rem">
-        <div>
-          <label for="from_d">Osh from (DD.MM.YY)</label><br/>
-          <input type="text" id="from_d" placeholder="optional" disabled/>
-        </div>
-        <div>
-          <label for="to_d">Osh to (DD.MM.YY)</label><br/>
-          <input type="text" id="to_d" placeholder="optional" disabled/>
-        </div>
-      </div>
-    </div>
-
-    <label class="row" style="margin-top:0.75rem"><input type="checkbox" id="p_route" checked/> <strong>Route inbox</strong> — move <code>data/input/*.xls*</code> into pipeline holdings / transactions folders</label>
-    <p class="hint">Automatically stays on when you compile (so new downloads reach the right pipeline folders).</p>
-
-    <label class="row"><input type="checkbox" id="p_hold"/> <strong>Compile holdings</strong> → <code>data/export/compiled/holdings.csv</code></label>
-    <label class="row"><input type="checkbox" id="p_tx"/> <strong>Compile transactions</strong> → <code>data/ledger.sqlite</code> (transactions ledger)</label>
-    <label class="row"><input type="checkbox" id="p_backup" disabled/> <strong>Backup snapshot first</strong> — copy compiled, static, and <code>web/data</code> into <code>data/_backups/&lt;timestamp&gt;/</code> before compile steps</label>
-    <label class="row"><input type="checkbox" id="p_auto" disabled/> <strong>Auto-categorize</strong> after transactions compile (rows still missing a category → <a href="/categorize/">/categorize/</a>)</label>
-
-    <label class="row combo-row" style="margin-top:0.65rem">Transaction column-drop profile (type or pick)
-      <input type="text" class="combo" id="drop_prof" list="drop_prof_list" value="full" autocomplete="off" title="full = same drops as desktop app; batch = smaller legacy set"/>
-      <datalist id="drop_prof_list">
-        <option value="full"></option>
-        <option value="batch"></option>
-      </datalist>
-    </label>
-
-    <div style="margin-top:0.85rem">
-      <button type="button" id="btn_pipeline">Run pipeline</button>
-    </div>
-    <p class="hint">Manual categories: <code id="cat_url"></code></p>
+    <strong>Dev:</strong> run the Vite dev server in a second terminal and open
+    <a href="http://127.0.0.1:5173/">http://127.0.0.1:5173/</a>:
+    <pre><code>cd web
+npm install
+npm run dev</code></pre>
+    Vite proxies <code>/api</code>, <code>/heatmap/api</code>, <code>/heatmap/detail</code>,
+    <code>/categorize</code>, and <code>/holdings</code> back to this server on port 8780.
   </div>
-
   <div class="card">
-    <h2>Categorization only</h2>
-    <p class="hint">Runs an auto pass on the SQLite ledger. Open <a href="/categorize/">/categorize/</a> any time to answer whatever is still missing a category (no separate &quot;session&quot;).</p>
-    <button type="button" id="btn_cat">Run auto-categorize</button>
+    <strong>Prod:</strong> build once and reload this page:
+    <pre><code>cd web
+npm install
+npm run build</code></pre>
   </div>
-
-  <div class="card">
-    <h2>Google Sheets (push only)</h2>
-    <p class="hint"><strong>Preview</strong> compares each worksheet to local data (holdings CSV + SQLite ledger export for Totals when <code>ledger.sqlite</code> exists). <strong>Push</strong> updates the cloud; there is no pull. Use <strong>Force</strong> to push even when preview reports differences. Heatmap reads from the ledger — <a href="/heatmap/">/heatmap/</a>.</p>
-    <p id="sheets_status" class="hint"></p>
-    <label class="row"><input type="checkbox" id="sheets_force"/> <strong>Force</strong> — push even when preview reports problems</label>
-    <div style="margin-top:0.65rem">
-      <button type="button" id="btn_sheets_preview" class="secondary">Preview sync</button>
-      <button type="button" id="btn_sheets_push">Push to Sheets</button>
-    </div>
-    <pre id="sheets_out" aria-live="polite"></pre>
-  </div>
-
-  <div class="card">
-    <h2>Live log</h2>
-    <div id="log"></div>
-    <p id="status"></p>
-  </div>
-
-  <script>
-  const logEl = document.getElementById('log');
-  const statusEl = document.getElementById('status');
-  const connEl = document.getElementById('conn');
-  const busyEl = document.getElementById('busy');
-  const catUrlEl = document.getElementById('cat_url');
-
-  function normalizeDropProfile() {
-    const raw = (document.getElementById('drop_prof').value || '').trim().toLowerCase();
-    if (raw === 'batch' || raw.indexOf('batch') === 0) return 'batch';
-    return 'full';
-  }
-
-  function syncPipelineDeps() {
-    const dl = document.getElementById('p_dl').checked;
-    ['p_dl_h', 'p_dl_m', 'p_dl_bc', 'p_dl_osh', 'from_d', 'to_d'].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = !dl;
-    });
-    const procT = document.getElementById('p_tx').checked;
-    const procH = document.getElementById('p_hold').checked;
-    const backupEl = document.getElementById('p_backup');
-    if (backupEl) {
-      backupEl.disabled = !(procT || procH);
-      if (backupEl.disabled) backupEl.checked = false;
-    }
-    const auto = document.getElementById('p_auto');
-    auto.disabled = !procT;
-    if (!procT) auto.checked = false;
-    const route = document.getElementById('p_route');
-    if (procH || procT) {
-      route.checked = true;
-      route.disabled = true;
-      route.title = 'Required when compiling so files are sorted into pipeline inboxes first.';
-    } else {
-      route.disabled = false;
-      route.title = '';
-    }
-  }
-
-  document.getElementById('p_dl').addEventListener('change', function () {
-    if (this.checked && !this.dataset.primed) {
-      this.dataset.primed = '1';
-      ['p_dl_h', 'p_dl_m', 'p_dl_bc', 'p_dl_osh'].forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) el.checked = true;
-      });
-    }
-    syncPipelineDeps();
-  });
-  ['p_hold', 'p_tx', 'p_route'].forEach((id) => {
-    document.getElementById(id).addEventListener('change', syncPipelineDeps);
-  });
-  syncPipelineDeps();
-
-  function setBusy(b, job) {
-    busyEl.textContent = b ? ('running: ' + (job || 'job')) : '';
-    busyEl.className = 'pill' + (b ? ' run' : '');
-    document.querySelectorAll('button').forEach((btn) => {
-      if (btn.id === 'btn_pipeline' || btn.id === 'btn_cat') btn.disabled = b;
-    });
-  }
-
-  function setSheetsBusy(b) {
-    ['btn_sheets_preview', 'btn_sheets_push'].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = b;
-    });
-  }
-
-  const sheetsOut = document.getElementById('sheets_out');
-  const sheetsStatus = document.getElementById('sheets_status');
-
-  async function refreshSheetsStatus() {
-    try {
-      const r = await fetch('/api/sheets/status', { cache: 'no-store' });
-      const j = await r.json();
-      if (!j.configured) {
-        sheetsStatus.textContent = 'Google Sheets: not configured (set GOOGLE_API_USER and GOOGLE_WORKSHEET_ID).';
-        return;
-      }
-      sheetsStatus.textContent = 'Targets: ' + j.pairs.map((p) => p.sheet + ' → ' + p.local_path).join(' · ');
-    } catch (_) {
-      sheetsStatus.textContent = '';
-    }
-  }
-  refreshSheetsStatus();
-
-  function sheetsForce() {
-    const el = document.getElementById('sheets_force');
-    return !!(el && el.checked);
-  }
-
-  document.getElementById('btn_sheets_preview').onclick = async () => {
-    sheetsOut.textContent = 'Loading…';
-    try {
-      const r = await fetch('/api/sheets/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      });
-      const j = await r.json().catch(() => ({}));
-      sheetsOut.textContent = JSON.stringify(j, null, 2);
-    } catch (e) {
-      sheetsOut.textContent = 'Error: ' + e;
-    }
-  };
-
-  async function postSheets(action) {
-    sheetsOut.textContent = 'Running…';
-    setSheetsBusy(true);
-    try {
-      const r = await fetch('/api/sheets/' + action, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: sheetsForce() }),
-      });
-      const j = await r.json().catch(() => ({}));
-      sheetsOut.textContent = JSON.stringify(j, null, 2);
-      if (r.ok && j.ok) refreshSheetsStatus();
-    } catch (e) {
-      sheetsOut.textContent = 'Error: ' + e;
-    } finally {
-      setSheetsBusy(false);
-    }
-  }
-  document.getElementById('btn_sheets_push').onclick = () => postSheets('push');
-
-  async function postJob(action, options) {
-    statusEl.textContent = '';
-    const body = { action, options: options || {} };
-    try {
-      const r = await fetch('/api/jobs/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || r.statusText);
-      setBusy(true, j.job_id || action);
-      statusEl.textContent = 'Started: ' + (j.job_id || action);
-    } catch (e) {
-      statusEl.textContent = 'Error: ' + e;
-    }
-  }
-
-  document.getElementById('btn_pipeline').onclick = () => {
-    const dl = document.getElementById('p_dl').checked;
-    const route = document.getElementById('p_route').checked;
-    const procH = document.getElementById('p_hold').checked;
-    const procT = document.getElementById('p_tx').checked;
-    if (!dl && !route && !procH && !procT) {
-      statusEl.textContent = 'Choose at least one step (download, route, or a compile option).';
-      return;
-    }
-    postJob('pipeline', {
-      download_enabled: dl,
-      fetch_holdings: document.getElementById('p_dl_h').checked,
-      fetch_max_isracard: document.getElementById('p_dl_m').checked,
-      fetch_bank_credit: document.getElementById('p_dl_bc').checked,
-      fetch_bank_osh: document.getElementById('p_dl_osh').checked,
-      from_date: document.getElementById('from_d').value.trim() || null,
-      to_date: document.getElementById('to_d').value.trim() || null,
-      route_inbox: route,
-      process_holdings: procH,
-      process_transactions: procT,
-      backup_first: !!(document.getElementById('p_backup') && document.getElementById('p_backup').checked),
-      auto_categorize: document.getElementById('p_auto').checked,
-      drop_profile: normalizeDropProfile(),
-    });
-  };
-  document.getElementById('btn_cat').onclick = () => postJob('categorize', {});
-
-  async function pollStatus() {
-    try {
-      const r = await fetch('/api/status', { cache: 'no-store' });
-      const j = await r.json();
-      setBusy(!!j.running, j.current_job);
-      if (j.error) {
-        busyEl.className = 'pill err';
-        busyEl.textContent = 'error: ' + j.error;
-      }
-    } catch (_) { /* ignore */ }
-  }
-  setInterval(pollStatus, 2000);
-  pollStatus();
-
-  async function pollQueue() {
-    try {
-      const r = await fetch('/categorize/api/summary', { cache: 'no-store' });
-      const j = await r.json();
-      const el = document.getElementById('queue_hint');
-      if (!el) return;
-      if (!j.compiled_exists) { el.textContent = 'no ledger DB'; el.className = 'pill'; return; }
-      el.textContent = j.open_count ? (j.open_count + ' need category') : 'queue empty';
-      el.className = 'pill' + (j.open_count ? '' : ' run');
-    } catch (_) { /* ignore */ }
-  }
-  setInterval(pollQueue, 4000);
-  pollQueue();
-
-  const es = new EventSource('/api/events');
-  es.onopen = () => { connEl.textContent = 'SSE connected'; connEl.className = 'pill run'; };
-  es.onerror = () => { connEl.textContent = 'SSE disconnected'; connEl.className = 'pill err'; };
-  es.addEventListener('log', (ev) => {
-    try {
-      const d = JSON.parse(ev.data);
-      const line = d.message || '';
-      logEl.textContent += line + '\\n';
-      logEl.scrollTop = logEl.scrollHeight;
-    } catch (_) { }
-  });
-  es.addEventListener('state', (ev) => {
-    try {
-      const d = JSON.parse(ev.data);
-      setBusy(!!d.running, d.job);
-      if (d.error) statusEl.textContent = 'Job error: ' + d.error;
-    } catch (_) { }
-  });
-
-  fetch('/api/config').then((r) => r.json()).then((c) => {
-    catUrlEl.textContent = c.categorize_url_hint || '';
-  }).catch(() => {});
-  </script>
+  <p>Backend pages still work: <a href="/holdings/">/holdings/</a> · <a href="/categorize/">/categorize/</a>.</p>
 </body>
 </html>
 """
 )
+
+
+def _spa_index_bytes() -> bytes:
+    if _SPA_INDEX_FILE.is_file():
+        return _SPA_INDEX_FILE.read_bytes()
+    return _SPA_DEV_FALLBACK.encode("utf-8")
+
+
+def _safe_subpath(root: Path, rel: str) -> Path | None:
+    """Resolve ``root / rel`` and confirm it stays inside ``root``. Returns None on traversal."""
+    if not rel:
+        return None
+    candidate = (root / rel.lstrip("/")).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
+def _content_type_for(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".js":
+        return "application/javascript; charset=utf-8"
+    if suffix == ".mjs":
+        return "application/javascript; charset=utf-8"
+    if suffix == ".css":
+        return "text/css; charset=utf-8"
+    if suffix == ".map":
+        return "application/json; charset=utf-8"
+    if suffix == ".svg":
+        return "image/svg+xml"
+    if suffix == ".json":
+        return "application/json; charset=utf-8"
+    ct, _ = mimetypes.guess_type(str(path))
+    return ct or "application/octet-stream"
+
+
+# Anything matching this is a SPA route — serve index.html so React Router can take over.
+_SPA_ROUTES: tuple[str, ...] = (
+    "/",
+    "/index.html",
+    "/pipeline",
+    "/pipeline/",
+    "/heatmap",
+    "/heatmap/",
+    "/heatmap/index.html",
+)
+
 
 class EventHub:
     def __init__(self) -> None:
@@ -568,19 +265,6 @@ def make_handler_class(state: ControlState):
                 self.end_headers()
                 return
 
-            # Heatmap before ``/categorize/*`` so paths never interact.
-            if path == "/heatmap":
-                self.send_response(302)
-                self.send_header("Location", "/heatmap/")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-
-            if path in ("/heatmap/", "/heatmap/index.html"):
-                self._send(200, heatmap.heatmap_shell_html().encode("utf-8"), "text/html; charset=utf-8")
-                return
-
             if path == "/holdings":
                 self.send_response(302)
                 self.send_header("Location", "/holdings/")
@@ -593,19 +277,7 @@ def make_handler_class(state: ControlState):
                 self._send(200, holdings_page.holdings_shell_html().encode("utf-8"), "text/html; charset=utf-8")
                 return
 
-            if path == "/heatmap/heatmap_page_script.js":
-                js_path = heatmap.heatmap_page_script_path()
-                if not js_path.is_file():
-                    log.error("heatmap script missing at %s", js_path)
-                    self._send(
-                        404,
-                        b"// heatmap_page_script.js not found on server\n",
-                        "text/plain; charset=utf-8",
-                    )
-                    return
-                self._send(200, js_path.read_bytes(), "application/javascript; charset=utf-8")
-                return
-
+            # Heatmap APIs (must precede SPA fallback since `/heatmap` itself is a SPA route).
             if path == "/heatmap/api/data":
                 try:
                     snap = heatmap.api_snapshot()
@@ -644,8 +316,42 @@ def make_handler_class(state: ControlState):
                 self._send(404, b"Not Found", "text/plain")
                 return
 
-            if path in ("/", "/index.html"):
-                self._send(200, _DASHBOARD_HTML.encode("utf-8"), "text/html; charset=utf-8")
+            if path in _SPA_ROUTES:
+                body = _spa_index_bytes()
+                self._send(200, body, "text/html; charset=utf-8")
+                return
+
+            if path.startswith("/assets/"):
+                rel = path[len("/assets/") :]
+                target = _safe_subpath(_SPA_ASSETS_DIR, rel)
+                if target is None or not target.is_file():
+                    self._send(404, b"Not Found", "text/plain; charset=utf-8")
+                    return
+                self._send(200, target.read_bytes(), _content_type_for(target))
+                return
+
+            if path == "/vite.svg" or path == "/favicon.ico":
+                target = _SPA_DIST_DIR / path.lstrip("/")
+                if target.is_file():
+                    self._send(200, target.read_bytes(), _content_type_for(target))
+                    return
+                self._send(404, b"", "image/x-icon")
+                return
+
+            if path.startswith("/api/dashboard/"):
+                name = path[len("/api/dashboard/") :].strip("/")
+                qs = parse_qs(parsed.query, keep_blank_values=False)
+                try:
+                    payload = dashboard_api.handle_dashboard_request(name, qs)
+                except Exception:  # noqa: BLE001
+                    log.exception("GET /api/dashboard/%s failed", name)
+                    payload = {
+                        "ok": False,
+                        "error": "server_error",
+                        "message": f"dashboard {name!r} failed (see server log)",
+                        "rows": [],
+                    }
+                self._send(200, _json_bytes_strict(payload), "application/json; charset=utf-8")
                 return
 
             if path == "/api/status":
@@ -743,9 +449,20 @@ def make_handler_class(state: ControlState):
                     state.hub.unsubscribe(q)
                 return
 
-            if "/heatmap" in path or "/heatmap" in self.path:
-                log.warning("control HTTP 404 GET heatmap-like raw=%r path=%r", self.path, path)
-            self._send(404, b"Not Found", "text/plain")
+            # API / asset misses → 404 (clients expect a real error). Anything else falls
+            # through to the SPA so React Router can handle deep links and unknown paths.
+            if (
+                path.startswith("/api/")
+                or path.startswith("/heatmap/api/")
+                or path.startswith("/assets/")
+                or path.startswith("/holdings/")
+                or path.startswith("/categorize/")
+            ):
+                if "/heatmap" in path or "/heatmap" in self.path:
+                    log.warning("control HTTP 404 GET heatmap-like raw=%r path=%r", self.path, path)
+                self._send(404, b"Not Found", "text/plain")
+                return
+            self._send(200, _spa_index_bytes(), "text/html; charset=utf-8")
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)

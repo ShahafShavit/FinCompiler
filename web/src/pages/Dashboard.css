@@ -1,0 +1,133 @@
+.dash-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.65rem;
+  margin: 0.25rem 0 1rem;
+}
+
+.dash-kpi {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.dash-kpi__label {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+}
+
+.dash-kpi__value {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.1;
+}
+
+.dash-kpi__sub {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.dash-kpi__delta--up {
+  color: #c7f0a8;
+}
+
+.dash-kpi__delta--down {
+  color: #ffb4b4;
+}
+
+.dash-kpi__cta {
+  font-size: 0.78rem;
+  margin-top: 0.2rem;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(28rem, 1fr));
+  gap: 1rem;
+}
+
+.dash-grid--two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 900px) {
+  .dash-grid--two {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dash-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.85rem 1rem 1.1rem;
+}
+
+.dash-card__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.65rem 0;
+  color: var(--fg);
+}
+
+.dash-card__sub {
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  margin: -0.4rem 0 0.6rem;
+}
+
+.dash-empty {
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+  padding: 0.4rem 0 0.6rem;
+}
+
+.dash-source-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.dash-source-table th,
+.dash-source-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.4rem 0.55rem;
+  text-align: right;
+}
+
+.dash-source-table th {
+  text-align: right;
+  color: var(--fg-muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+.dash-source-table th:first-child,
+.dash-source-table td:first-child {
+  text-align: left;
+}
+
+.dash-tooltip {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.8rem;
+  color: var(--fg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.dash-tooltip__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
