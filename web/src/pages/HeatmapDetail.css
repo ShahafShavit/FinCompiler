@@ -1,0 +1,84 @@
+.hm-detail-page {
+  direction: rtl;
+  padding: 0.5rem 1rem 2rem;
+  max-width: 56rem;
+  margin: 0 auto;
+}
+
+.hm-detail-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.hm-detail-back {
+  font-size: 0.85rem;
+}
+
+.hm-detail-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 0.85rem 0;
+  color: var(--fg);
+}
+
+.hm-detail-sub {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.15rem 0 0.5rem 0;
+  color: var(--fg-subtle);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.35rem;
+}
+
+.hm-detail-section {
+  margin-bottom: 0.5rem;
+}
+
+.hm-detail-table-wrap {
+  overflow: auto;
+  max-height: min(70vh, 48rem);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+
+.hm-detail-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.88rem;
+}
+
+.hm-detail-table th,
+.hm-detail-table td {
+  padding: 8px 10px;
+  text-align: right;
+  border: 1px solid var(--border);
+}
+
+.hm-detail-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--good);
+  color: var(--good-fg);
+  font-weight: 600;
+}
+
+.hm-detail-table tbody tr:hover {
+  background: var(--bg-card);
+}
+
+.hm-detail-empty {
+  color: var(--fg-muted);
+  margin: 0.5rem 0;
+}
+
+.hm-detail-error {
+  color: var(--bad-fg);
+  background: var(--bad);
+  border: 1px solid #6b2a2a;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+}

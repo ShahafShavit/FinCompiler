@@ -5,6 +5,7 @@ import TopNav from './components/TopNav';
 import Dashboard from './pages/Dashboard';
 import Pipeline from './pages/Pipeline';
 import Heatmap from './pages/Heatmap';
+import HeatmapDetail from './pages/HeatmapDetail';
 
 type EBState = { error: Error | null };
 class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/heatmap" element={<Heatmap />} />
+          <Route path="/heatmap/detail" element={<HeatmapDetail />} />
           <Route path="/heatmap/index.html" element={<Navigate to="/heatmap" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

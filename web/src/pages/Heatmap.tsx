@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { fetchJson } from '../lib/api';
 
@@ -42,19 +43,21 @@ const VIEW_TABS: Array<{ key: ReportType; label: string }> = [
   { key: 'net', label: 'נטו' },
 ];
 
-function detailUrl(type: ReportType, ym: string, cat: string): string {
-  const p = new URLSearchParams();
-  p.set('type', type);
-  p.set('ym', ym);
-  p.set('cat', cat);
-  return '/heatmap/detail?' + p.toString();
-}
-
 function HeatmapGrid({ view }: { view: HeatmapView }) {
+  const navigate = useNavigate();
   const months = view.months;
   const cats = view.categories;
   const onCellClick = (ym: string, cat: string) => {
-    window.open(detailUrl(view.reportType, ym, cat), '_blank');
+    navigate({
+      pathname: '/heatmap/detail',
+      search:
+        '?' +
+        new URLSearchParams({
+          type: view.reportType,
+          ym,
+          cat,
+        }).toString(),
+    });
   };
   return (
     <table className="hm-grid">

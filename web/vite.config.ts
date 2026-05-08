@@ -11,7 +11,7 @@ export default defineConfig({
     proxy: {
       '/api': PY_BACKEND,
       '/heatmap/api': PY_BACKEND,
-      '/heatmap/detail': PY_BACKEND,
+      '/heatmap/legacy-detail': PY_BACKEND,
       '/heatmap/heatmap_page_script.js': PY_BACKEND,
       '/categorize': PY_BACKEND,
       '/holdings': PY_BACKEND,

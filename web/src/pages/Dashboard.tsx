@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Area,
   AreaChart,
@@ -18,6 +19,7 @@ import {
 } from 'recharts';
 
 import { formatMoney, formatPct, getJson } from '../lib/api';
+import { heatmapDetailCategory, heatmapDetailMonth, heatmapDetailSource } from '../lib/drilldown';
 import type {
   AllocationRow,
   AllocationTimelineRow,
@@ -141,6 +143,7 @@ function NetWorthCard() {
     <div className="dash-card">
       <h3 className="dash-card__title">Net worth over time</h3>
       <p className="dash-card__sub">Sum of holdings_balance per as-of date.</p>
+      {/* Holdings snapshot data: chart click-through deferred (no transaction rows). */}
       {loading ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
@@ -190,6 +193,7 @@ function AllocationDonutCard() {
       <h3 className="dash-card__title">
         Allocation now {data?.as_of_date ? <span className="dash-card__sub" style={{ marginInlineStart: '0.5rem' }}>({data.as_of_date})</span> : null}
       </h3>
+      {/* Holdings snapshot data: chart click-through deferred. */}
       {loading ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
@@ -249,6 +253,7 @@ function AllocationTimelineCard() {
     <div className="dash-card">
       <h3 className="dash-card__title">Allocation over time</h3>
       <p className="dash-card__sub">Stacked balances per activity type.</p>
+      {/* Holdings snapshot data: chart click-through deferred. */}
       {loading ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
@@ -283,6 +288,7 @@ function AllocationTimelineCard() {
 }
 
 function CashflowCard() {
+  const navigate = useNavigate();
   const { data, error, loading } = useFetch<RowsResponse<CashflowRow>>('/api/dashboard/cashflow-monthly?months=24');
   const rows = useMemo(
     () =>
@@ -293,9 +299,11 @@ function CashflowCard() {
     [data?.rows],
   );
   return (
-    <div className="dash-card">
+    <div className="dash-card dash-card--chart-click">
       <h3 className="dash-card__title">Monthly cash flow</h3>
-      <p className="dash-card__sub">Last 24 months · income (positive), expense (negative), net line.</p>
+      <p className="dash-card__sub">
+        Last 24 months · income (positive), expense (negative), net line. Click a bar or net point for transactions.
+      </p>
       {loading ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
@@ -310,9 +318,54 @@ function CashflowCard() {
             <YAxis stroke="#aeb4c0" fontSize={11} tickFormatter={(v) => formatMoney(v as number, '')} />
             <Tooltip content={<MoneyTooltip />} />
             <Legend wrapperStyle={{ fontSize: '0.78rem' }} />
-            <Bar dataKey="income" name="Income" fill="#37b24d" stackId="cf" />
-            <Bar dataKey="expenseNeg" name="Expense" fill="#fa5252" stackId="cf" />
-            <Line type="monotone" dataKey="net" name="Net" stroke="#a5b4fc" strokeWidth={2} dot={false} />
+            <Bar
+              dataKey="income"
+              name="Income"
+              fill="#37b24d"
+              stackId="cf"
+              cursor="pointer"
+              onClick={(d: unknown) => {
+                const m = (d as CashflowRow)?.month;
+                if (m) navigate(heatmapDetailMonth('income', m));
+              }}
+            />
+            <Bar
+              dataKey="expenseNeg"
+              name="Expense"
+              fill="#fa5252"
+              stackId="cf"
+              cursor="pointer"
+              onClick={(d: unknown) => {
+                const m = (d as CashflowRow)?.month;
+                if (m) navigate(heatmapDetailMonth('expense', m));
+              }}
+            />
+            <Line
+              type="monotone"
+              dataKey="net"
+              name="Net"
+              stroke="#a5b4fc"
+              strokeWidth={2}
+              isAnimationActive={false}
+              dot={(dotProps: { cx?: number; cy?: number; payload?: CashflowRow }) => {
+                const { cx, cy, payload } = dotProps;
+                if (cx == null || cy == null) return null;
+                return (
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={4}
+                    fill="#a5b4fc"
+                    stroke="#121316"
+                    strokeWidth={1}
+                    cursor="pointer"
+                    onClick={() => {
+                      if (payload?.month) navigate(heatmapDetailMonth('net', payload.month));
+                    }}
+                  />
+                );
+              }}
+            />
           </ComposedChart>
         </ResponsiveContainer>
       )}
@@ -321,13 +374,14 @@ function CashflowCard() {
 }
 
 function TopCategoriesCard() {
+  const navigate = useNavigate();
   const { data, error, loading } = useFetch<RowsResponse<TopCategoryRow>>(
     '/api/dashboard/top-categories?period=12m&type=expense&limit=10',
   );
   return (
-    <div className="dash-card">
+    <div className="dash-card dash-card--chart-click">
       <h3 className="dash-card__title">Top expense categories</h3>
-      <p className="dash-card__sub">Last 12 months · top 10 by total spend.</p>
+      <p className="dash-card__sub">Last 12 months · top 10 by total spend. Click a bar for transactions.</p>
       {loading ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
@@ -341,7 +395,16 @@ function TopCategoriesCard() {
             <XAxis type="number" stroke="#aeb4c0" fontSize={11} tickFormatter={(v) => formatMoney(v as number, '')} />
             <YAxis dataKey="category" type="category" stroke="#aeb4c0" fontSize={11} width={120} />
             <Tooltip content={<MoneyTooltip />} />
-            <Bar dataKey="amount" name="Spend" fill="#fa5252" />
+            <Bar
+              dataKey="amount"
+              name="Spend"
+              fill="#fa5252"
+              cursor="pointer"
+              onClick={(d: unknown) => {
+                const cat = (d as TopCategoryRow)?.category;
+                if (cat) navigate(heatmapDetailCategory('expense', cat, '12m'));
+              }}
+            />
           </BarChart>
         </ResponsiveContainer>
       )}
@@ -350,11 +413,12 @@ function TopCategoriesCard() {
 }
 
 function SourcesCard() {
+  const navigate = useNavigate();
   const { data, error, loading } = useFetch<RowsResponse<SourceRow>>('/api/dashboard/sources?months=12');
   return (
     <div className="dash-card">
       <h3 className="dash-card__title">Source mix</h3>
-      <p className="dash-card__sub">Last 12 months · grouped by מקור עסקה.</p>
+      <p className="dash-card__sub">Last 12 months · grouped by מקור עסקה. Click a row for all transactions from that source.</p>
       {loading ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
@@ -373,7 +437,19 @@ function SourcesCard() {
           </thead>
           <tbody>
             {data.rows.slice(0, 12).map((r) => (
-              <tr key={r.source}>
+              <tr
+                key={r.source}
+                className="dash-source-row-click"
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(heatmapDetailSource(r.source, 12))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate(heatmapDetailSource(r.source, 12));
+                  }
+                }}
+              >
                 <td>{r.source}</td>
                 <td>{r.count}</td>
                 <td>{formatMoney(r.expense)}</td>

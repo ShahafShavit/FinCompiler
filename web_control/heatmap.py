@@ -695,73 +695,288 @@ def api_snapshot() -> dict[str, Any]:
     }
 
 
-def detail_page_html(bundle: HeatmapBundle, report_type: ReportType, year_month: str, category: str) -> str | None:
-    """Return HTML body content or None if no matching slice."""
-    cols_show_exp = ["תאריך", "מקור עסקה", "בחובה", "תאור מורחב", "פירוט נוסף"]
-    cols_show_in = ["תאריך", "מקור עסקה", "בזכות", "תאור מורחב", "פירוט נוסף"]
+def _filter_recent_months_heatmap(df: pd.DataFrame, months: int) -> pd.DataFrame:
+    """Last ``months`` distinct YearMonth buckets (matching dashboard semantics)."""
+    if df.empty or months <= 0:
+        return df
+    valid = df.dropna(subset=["YearMonth"])
+    if valid.empty:
+        return valid.iloc[0:0]
+    months_sorted = sorted(valid["YearMonth"].unique(), reverse=True)
+    keep = set(months_sorted[:months])
+    return valid[valid["YearMonth"].isin(keep)]
+
+
+_PERIOD_TO_MONTHS_HM = {"30d": 1, "ytd": -1, "12m": 12, "3m": 3, "6m": 6}
+
+
+def _period_filter_transactions(df: pd.DataFrame, period: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+    p = (period or "12m").lower().strip()
+    if p == "30d":
+        ta = pd.to_datetime(df["תאריך"], errors="coerce")
+        max_d = ta.max()
+        if pd.isna(max_d):
+            return df.iloc[0:0]
+        cutoff = max_d - pd.Timedelta(days=30)
+        return df.loc[ta > cutoff]
+    if p == "ytd":
+        ta = pd.to_datetime(df["תאריך"], errors="coerce")
+        max_d = ta.max()
+        if pd.isna(max_d):
+            return df.iloc[0:0]
+        year = int(max_d.year)
+        ym_prefix = f"{year}-"
+        return df[df["YearMonth"].fillna("").astype(str).str.startswith(ym_prefix)]
+    n = _PERIOD_TO_MONTHS_HM.get(p, 12)
+    if n is None or n <= 0:
+        n = 12
+    return _filter_recent_months_heatmap(df, n)
+
+
+def _df_to_json_table(df: pd.DataFrame) -> tuple[list[str], list[dict[str, Any]]]:
+    columns = [str(c) for c in df.columns]
+    rows: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        rec: dict[str, Any] = {}
+        for c in df.columns:
+            v = row[c]
+            if pd.isna(v):
+                rec[str(c)] = None
+            elif isinstance(v, pd.Timestamp):
+                rec[str(c)] = v.strftime("%Y-%m-%d")
+            elif isinstance(v, (datetime, date)):
+                rec[str(c)] = v.isoformat()[:10]
+            elif isinstance(v, (np.integer, np.floating)):
+                rec[str(c)] = float(v) if isinstance(v, np.floating) else int(v)
+            elif isinstance(v, (int, float)):
+                rec[str(c)] = v
+            elif isinstance(v, (np.bool_, bool)):
+                rec[str(c)] = bool(v)
+            else:
+                rec[str(c)] = str(v)
+        rows.append(rec)
+    return columns, rows
+
+
+def _qs_first(qs: dict[str, list[str]], key: str, default: str = "") -> str:
+    val = qs.get(key)
+    if not val or val[0] is None:
+        return default
+    return str(val[0])
+
+
+def _qs_int(qs: dict[str, list[str]], key: str, default: int) -> int:
+    raw = _qs_first(qs, key, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+_COLS_EXP = ["תאריך", "מקור עסקה", "בחובה", "תאור מורחב", "פירוט נוסף"]
+_COLS_IN = ["תאריך", "מקור עסקה", "בזכות", "תאור מורחב", "פירוט נוסף"]
+
+
+def _pick_cols(df: pd.DataFrame, cols: list[str]) -> list[str]:
+    return [c for c in cols if c in df.columns]
+
+
+def _sort_detail_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "תאריך" not in frame.columns:
+        return frame
+    return frame.sort_values("תאריך", ascending=False)
+
+
+def _detail_frames_cell(
+    bundle: HeatmapBundle, report_type: ReportType, year_month: str, category: str
+) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
     df = bundle.df
+    cols_show_exp = _pick_cols(df, _COLS_EXP)
+    cols_show_in = _pick_cols(df, _COLS_IN)
     if report_type == "expense":
         pivot = bundle.expenses_pivot
         if year_month not in pivot.index or category not in pivot.columns:
             return None
-        if pivot.loc[year_month, category] <= 0:
+        if float(pivot.loc[year_month, category]) <= 0:
             return None
-        mask = (
-            (df["YearMonth"] == year_month)
-            & (df["קטגוריה"] == category)
-            & (df["בחובה"] > 0)
-        )
-        details = df.loc[mask, cols_show_exp]
-        title = f"פירוט הוצאות עבור {html.escape(category)} ב-{html.escape(year_month)}"
-        table = details.to_html(index=False, classes="styled-table", float_format="%.2f")
-        inner = f"<h1>{title}</h1>{table}"
-    elif report_type == "income":
+        mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בחובה"] > 0)
+        details = _sort_detail_frame(df.loc[mask, cols_show_exp])
+        title = f"פירוט הוצאות עבור {category} ב-{year_month}"
+        return (title, [(None, details)])
+    if report_type == "income":
         pivot = bundle.income_pivot
         if year_month not in pivot.index or category not in pivot.columns:
             return None
-        if pivot.loc[year_month, category] <= 0:
+        if float(pivot.loc[year_month, category]) <= 0:
             return None
-        mask = (
-            (df["YearMonth"] == year_month)
-            & (df["קטגוריה"] == category)
-            & (df["בזכות"] > 0)
-        )
-        details = df.loc[mask, cols_show_in]
-        title = f"פירוט הכנסות עבור {html.escape(category)} ב-{html.escape(year_month)}"
-        table = details.to_html(index=False, classes="styled-table", float_format="%.2f")
-        inner = f"<h1>{title}</h1>{table}"
-    else:
-        pivot = bundle.net_pivot
-        if year_month not in pivot.index or category not in pivot.columns:
-            return None
-        if pivot.loc[year_month, category] == 0:
-            return None
-        income_mask = (
-            (df["YearMonth"] == year_month)
-            & (df["קטגוריה"] == category)
-            & (df["בזכות"] > 0)
-        )
-        expense_mask = (
-            (df["YearMonth"] == year_month)
-            & (df["קטגוריה"] == category)
-            & (df["בחובה"] > 0)
-        )
-        income_df = df.loc[income_mask, cols_show_in]
-        expense_df = df.loc[expense_mask, cols_show_exp]
-        income_html = (
-            income_df.to_html(index=False, classes="styled-table", float_format="%.2f")
-            if not income_df.empty
-            else "<p class='no-data'>אין הכנסות רשומות</p>"
-        )
-        expense_html = (
-            expense_df.to_html(index=False, classes="styled-table", float_format="%.2f")
-            if not expense_df.empty
-            else "<p class='no-data'>אין הוצאות רשומות</p>"
-        )
-        title = f"פירוט תנועות עבור {html.escape(category)} ב-{html.escape(year_month)}"
-        inner = f"<h1>{title}</h1><h2>הכנסות</h2>{income_html}<h2>הוצאות</h2>{expense_html}"
+        mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בזכות"] > 0)
+        details = _sort_detail_frame(df.loc[mask, cols_show_in])
+        title = f"פירוט הכנסות עבור {category} ב-{year_month}"
+        return (title, [(None, details)])
+    pivot = bundle.net_pivot
+    if year_month not in pivot.index or category not in pivot.columns:
+        return None
+    if float(pivot.loc[year_month, category]) == 0:
+        return None
+    income_mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בזכות"] > 0)
+    expense_mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בחובה"] > 0)
+    income_df = _sort_detail_frame(df.loc[income_mask, cols_show_in])
+    expense_df = _sort_detail_frame(df.loc[expense_mask, cols_show_exp])
+    title = f"פירוט תנועות עבור {category} ב-{year_month}"
+    return (title, [("הכנסות", income_df), ("הוצאות", expense_df)])
 
-    return _wrap_detail_document(inner)
+
+def _detail_frames_month(
+    bundle: HeatmapBundle, report_type: ReportType, year_month: str
+) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
+    df = bundle.df
+    if not (df["YearMonth"] == year_month).any():
+        return None
+    cols_show_exp = _pick_cols(df, _COLS_EXP)
+    cols_show_in = _pick_cols(df, _COLS_IN)
+    if report_type == "expense":
+        mask = (df["YearMonth"] == year_month) & (df["בחובה"] > 0)
+        details = _sort_detail_frame(df.loc[mask, cols_show_exp])
+        if details.empty:
+            return None
+        return (f"כל ההוצאות ב-{year_month}", [(None, details)])
+    if report_type == "income":
+        mask = (df["YearMonth"] == year_month) & (df["בזכות"] > 0)
+        details = _sort_detail_frame(df.loc[mask, cols_show_in])
+        if details.empty:
+            return None
+        return (f"כל ההכנסות ב-{year_month}", [(None, details)])
+    income_mask = (df["YearMonth"] == year_month) & (df["בזכות"] > 0)
+    expense_mask = (df["YearMonth"] == year_month) & (df["בחובה"] > 0)
+    income_df = _sort_detail_frame(df.loc[income_mask, cols_show_in])
+    expense_df = _sort_detail_frame(df.loc[expense_mask, cols_show_exp])
+    if income_df.empty and expense_df.empty:
+        return None
+    return (f"כל התנועות ב-{year_month}", [("הכנסות", income_df), ("הוצאות", expense_df)])
+
+
+def _detail_frames_category(
+    bundle: HeatmapBundle, report_type: ReportType, category: str, period: str
+) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
+    df = bundle.df
+    sub = _period_filter_transactions(df, period)
+    if sub.empty:
+        return None
+    work = sub.copy()
+    work["__cat__"] = work["קטגוריה"].fillna("").astype(str).str.strip()
+    work.loc[work["__cat__"] == "", "__cat__"] = "(uncategorized)"
+    cols_show_exp = _pick_cols(work, _COLS_EXP + ["קטגוריה"])
+    cols_show_in = _pick_cols(work, _COLS_IN + ["קטגוריה"])
+    if report_type == "expense":
+        mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
+        details = _sort_detail_frame(work.loc[mask, cols_show_exp])
+        if details.empty:
+            return None
+        return (f"הוצאות — {category} ({period})", [(None, details)])
+    if report_type == "income":
+        mask = (work["__cat__"] == category) & (work["בזכות"] > 0)
+        details = _sort_detail_frame(work.loc[mask, cols_show_in])
+        if details.empty:
+            return None
+        return (f"הכנסות — {category} ({period})", [(None, details)])
+    income_mask = (work["__cat__"] == category) & (work["בזכות"] > 0)
+    expense_mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
+    income_df = _sort_detail_frame(work.loc[income_mask, cols_show_in])
+    expense_df = _sort_detail_frame(work.loc[expense_mask, cols_show_exp])
+    if income_df.empty and expense_df.empty:
+        return None
+    return (f"נטו — {category} ({period})", [("הכנסות", income_df), ("הוצאות", expense_df)])
+
+
+def _detail_frames_source(
+    bundle: HeatmapBundle, source_key: str, months: int
+) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
+    df = bundle.df
+    if "מקור עסקה" not in df.columns:
+        return None
+    sub = _filter_recent_months_heatmap(df, months)
+    if sub.empty:
+        return None
+    work = sub.copy()
+    work["__src__"] = work["מקור עסקה"].fillna("").astype(str).str.strip()
+    work.loc[work["__src__"] == "", "__src__"] = "(unknown)"
+    sk = source_key.strip()
+    mask = work["__src__"] == sk
+    if not mask.any():
+        return None
+    cols = _pick_cols(
+        work,
+        ["תאריך", "מקור עסקה", "קטגוריה", "בחובה", "בזכות", "תאור מורחב", "פירוט נוסף"],
+    )
+    details = _sort_detail_frame(work.loc[mask, cols])
+    title = f"תנועות — מקור «{sk}» ({months} חודשים)"
+    return (title, [(None, details)])
+
+
+def build_detail_frames_from_qs(
+    bundle: HeatmapBundle, qs: dict[str, list[str]]
+) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
+    """Resolve drill-down: ``src``/``source``, or ``ym``+``cat`` (cell), ``ym`` only (month), ``cat`` only+period."""
+    src = _qs_first(qs, "src", "").strip() or _qs_first(qs, "source", "").strip()
+    ym = _qs_first(qs, "ym", "").strip()
+    cat = _qs_first(qs, "cat", "").strip()
+    rt_raw = _qs_first(qs, "type", "expense").strip().lower()
+    rt: ReportType = "expense"
+    if rt_raw in ("expense", "income", "net"):
+        rt = rt_raw  # type: ignore[assignment]
+    period = _qs_first(qs, "period", "12m").strip().lower()
+    months = max(1, _qs_int(qs, "months", 12))
+
+    if src:
+        return _detail_frames_source(bundle, src, months)
+    if ym and cat:
+        return _detail_frames_cell(bundle, rt, ym, cat)
+    if ym and not cat:
+        return _detail_frames_month(bundle, rt, ym)
+    if cat and not ym:
+        return _detail_frames_category(bundle, rt, cat, period)
+    return None
+
+
+def detail_page_html_from_qs(bundle: HeatmapBundle, qs: dict[str, list[str]]) -> str | None:
+    """Full HTML document for legacy browser loads."""
+    built = build_detail_frames_from_qs(bundle, qs)
+    if built is None:
+        return None
+    title, frames = built
+    parts = [f"<h1>{html.escape(title)}</h1>"]
+    for sub, frame in frames:
+        if sub:
+            parts.append(f"<h2>{html.escape(sub)}</h2>")
+        if frame.empty:
+            parts.append("<p class='no-data'>אין נתונים</p>")
+        else:
+            parts.append(frame.to_html(index=False, classes="styled-table", float_format="%.2f"))
+    return _wrap_detail_document("".join(parts))
+
+
+def detail_api_payload(qs: dict[str, list[str]]) -> tuple[int, dict[str, Any]]:
+    """JSON body and suggested HTTP status for ``GET /heatmap/api/detail``."""
+    bundle = get_bundle()
+    if bundle is None:
+        return 503, {
+            "ok": False,
+            "error": "unavailable",
+            "message": "Ledger data not available.",
+        }
+    built = build_detail_frames_from_qs(bundle, qs)
+    if built is None:
+        return 404, {"ok": False, "error": "not_found", "message": "No matching rows."}
+    title, frames = built
+    sections: list[dict[str, Any]] = []
+    for sub, frame in frames:
+        cols, rows = _df_to_json_table(frame)
+        sections.append({"subtitle": sub, "columns": cols, "rows": rows})
+    return 200, {"ok": True, "title": title, "sections": sections}
 
 
 def _wrap_detail_document(inner_body: str) -> str:
@@ -951,18 +1166,12 @@ def _heatmap_shared_css() -> str:
 
 
 def handle_detail_query(query: str) -> tuple[int, bytes, str]:
+    """Legacy full-page HTML drill-down (see ``/heatmap/legacy-detail``)."""
     qs = parse_qs(query, keep_blank_values=True)
-    rt = (qs.get("type") or ["expense"])[0].strip().lower()
-    if rt not in ("expense", "income", "net"):
-        return 400, b"Invalid type", "text/plain; charset=utf-8"
-    ym = (qs.get("ym") or [""])[0].strip()
-    cat = (qs.get("cat") or [""])[0]
-    if not ym or not cat:
-        return 400, b"ym and cat required", "text/plain; charset=utf-8"
     bundle = get_bundle()
     if bundle is None:
         return 503, b"Data not available", "text/plain; charset=utf-8"
-    page = detail_page_html(bundle, rt, ym, cat)  # type: ignore[arg-type]
+    page = detail_page_html_from_qs(bundle, qs)
     if page is None:
         return 404, b"Not found", "text/plain; charset=utf-8"
     return 200, page.encode("utf-8"), "text/html; charset=utf-8"

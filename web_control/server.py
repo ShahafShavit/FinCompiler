@@ -72,7 +72,7 @@ _SPA_DEV_FALLBACK = (
     <pre><code>cd web
 npm install
 npm run dev</code></pre>
-    Vite proxies <code>/api</code>, <code>/heatmap/api</code>, <code>/heatmap/detail</code>,
+    Vite proxies <code>/api</code>, <code>/heatmap/api</code>, <code>/heatmap/legacy-detail</code>,
     <code>/categorize</code>, and <code>/holdings</code> back to this server on port 8780.
   </div>
   <div class="card">
@@ -133,6 +133,8 @@ _SPA_ROUTES: tuple[str, ...] = (
     "/heatmap",
     "/heatmap/",
     "/heatmap/index.html",
+    "/heatmap/detail",
+    "/heatmap/detail/",
 )
 
 
@@ -296,7 +298,22 @@ def make_handler_class(state: ControlState):
                 self._send(200, body, "application/json; charset=utf-8")
                 return
 
-            if path == "/heatmap/detail":
+            if path == "/heatmap/api/detail":
+                try:
+                    status, payload = heatmap.detail_api_payload(
+                        parse_qs(parsed.query, keep_blank_values=True)
+                    )
+                    body = _json_bytes_strict(payload)
+                except Exception:  # noqa: BLE001
+                    log.exception("GET /heatmap/api/detail failed")
+                    body = _json_bytes_strict(
+                        {"ok": False, "error": "server_error", "message": "Detail request failed."}
+                    )
+                    status = 500
+                self._send(status, body, "application/json; charset=utf-8")
+                return
+
+            if path == "/heatmap/legacy-detail":
                 code, body, ct = heatmap.handle_detail_query(parsed.query)
                 self._send(code, body, ct)
                 return

@@ -116,6 +116,18 @@
   text-align: left;
 }
 
+.dash-source-row-click {
+  cursor: pointer;
+}
+
+.dash-source-row-click:hover {
+  background: var(--bg-input);
+}
+
+.dash-card--chart-click .recharts-bar-rectangle {
+  cursor: pointer;
+}
+
 .dash-tooltip {
   background: var(--bg-card);
   border: 1px solid var(--border);
