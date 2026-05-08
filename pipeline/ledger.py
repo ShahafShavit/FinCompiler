@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +37,10 @@ from pipeline.csv_handler import generate_transaction_fingerprint
 from pipeline.ingested_at_rules import ingested_at_for_new_ledger_row
 
 log = logging.getLogger(__name__)
+
+# Serialize ``migrate_ledger_db`` — ThreadingHTTPServer + parallel dashboard requests can
+# otherwise interleave DROP/CREATE TRIGGER and hit "already exists" (see tr_ledger_transaction_*).
+_migrate_ledger_lock = threading.RLock()
 
 # --- Constraint audit (read-time; ex-ledger_constraint_audit) ---
 
@@ -604,51 +609,82 @@ def migrate_ledger_db(db_path: str | None = None) -> None:
     if not sql_file.is_file():
         raise FileNotFoundError(f"Ledger schema SQL not found: {sql_file}")
 
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        current = _current_schema_version(conn)
+    with _migrate_ledger_lock:
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            current = _current_schema_version(conn)
 
-        if _ledger_is_pre_v8_legacy_shape(conn) or (0 < current < 8):
-            raise RuntimeError(
-                "Ledger database is older than schema v8 (nullable fingerprint / legacy columns). "
-                f"Delete the file and recreate: {os.path.abspath(path)} — then re-run imports."
+            if _ledger_is_pre_v8_legacy_shape(conn) or (0 < current < 8):
+                raise RuntimeError(
+                    "Ledger database is older than schema v8 (nullable fingerprint / legacy columns). "
+                    f"Delete the file and recreate: {os.path.abspath(path)} — then re-run imports."
+                )
+
+            if current == 0:
+                ddl = sql_file.read_text(encoding="utf-8")
+                conn.executescript(ddl)
+                conn.commit()
+                return
+
+            # Existing v8+ file: v9 (add fingerprint_v2) if needed, then v10 (single fingerprint column).
+            _drop_abandoned_v9_columns_if_present(conn)
+            ver = _current_schema_version(conn)
+            if ver < 9 and not _table_has_fingerprint_v2(conn):
+                _migrate_ledger_transaction_to_v9(conn)
+            _migrate_ledger_transaction_to_v10(conn)
+            _ensure_ledger_triggers_v10(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (9, 'ledger_fingerprint_v2_unique_drop_fingerprint_unique')"
             )
-
-        if current == 0:
-            ddl = sql_file.read_text(encoding="utf-8")
-            conn.executescript(ddl)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (10, 'ledger_single_fingerprint_column_v2_semantics')"
+            )
+            ver = _current_schema_version(conn)
+            if ver < 11:
+                _migrate_fingerprint_optional_text_normalize(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (11, 'fingerprint_optional_text_normalize')"
+            )
+            ver = _current_schema_version(conn)
+            if ver < 12:
+                _migrate_fingerprint_iso_date_parse(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (12, 'fingerprint_iso_date_parse_match_compiler')"
+            )
             conn.commit()
-            return
+        finally:
+            conn.close()
 
-        # Existing v8+ file: v9 (add fingerprint_v2) if needed, then v10 (single fingerprint column).
-        _drop_abandoned_v9_columns_if_present(conn)
-        ver = _current_schema_version(conn)
-        if ver < 9 and not _table_has_fingerprint_v2(conn):
-            _migrate_ledger_transaction_to_v9(conn)
-        _migrate_ledger_transaction_to_v10(conn)
-        _ensure_ledger_triggers_v10(conn)
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (9, 'ledger_fingerprint_v2_unique_drop_fingerprint_unique')"
-        )
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (10, 'ledger_single_fingerprint_column_v2_semantics')"
-        )
-        ver = _current_schema_version(conn)
-        if ver < 11:
-            _migrate_fingerprint_optional_text_normalize(conn)
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (11, 'fingerprint_optional_text_normalize')"
-        )
-        ver = _current_schema_version(conn)
-        if ver < 12:
-            _migrate_fingerprint_iso_date_parse(conn)
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (12, 'fingerprint_iso_date_parse_match_compiler')"
-        )
-        conn.commit()
-    finally:
-        conn.close()
+
+def ledger_connect_readonly(db_path: str) -> sqlite3.Connection:
+    """Open the ledger database read-only (URI ``mode=ro``)."""
+    uri = Path(db_path).resolve().as_uri() + "?mode=ro"
+    return sqlite3.connect(uri, uri=True)
+
+
+# SQL fragment: effective calendar month for dashboard / reports — valid ``statement_month`` (YYYY-MM)
+# per schema CHECK, otherwise the month of ``תאריך``. Same rules as legacy pandas ``YearMonth``.
+LEDGER_SQL_EFFECTIVE_YM_EXPR = """
+CASE
+  WHEN statement_month IS NOT NULL
+   AND TRIM(COALESCE(statement_month, '')) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'
+   AND LENGTH(TRIM(COALESCE(statement_month, ''))) = 7
+  THEN TRIM(statement_month)
+  ELSE strftime('%Y-%m', date("תאריך"))
+END
+""".strip()
+
+# Calendar day for 30d/YTD anchoring: first day of valid ``statement_month``, else ``תאריך``.
+LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR = """
+CASE
+  WHEN statement_month IS NOT NULL
+   AND TRIM(COALESCE(statement_month, '')) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'
+   AND LENGTH(TRIM(COALESCE(statement_month, ''))) = 7
+  THEN date(TRIM(statement_month) || '-01')
+  ELSE date("תאריך")
+END
+""".strip()
 
 
 # --- Category updates (ex-ledger_category) ---
@@ -710,7 +746,7 @@ def update_categories_by_fingerprint_batch(
 # --- DataFrame load/export (ex-ledger_dataframe) ---
 
 # DB columns only (no ``מזהה עסקה`` / ``תאריך עדכון`` — dedupe and ingestion use ``fingerprint`` + ``ingested_at``).
-_LEDGER_TX_READ_SQL = """
+_LEDGER_TX_READ_SQL = f"""
 SELECT
     "תאריך",
     "בחובה",
@@ -725,13 +761,12 @@ SELECT
     statement_month,
     ingested_at
 FROM ledger_transaction
-ORDER BY "תאריך", id
+ORDER BY ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}), id
 """
 
 
-def load_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
-    """Return all ledger rows as a DataFrame (empty table → empty frame with expected columns)."""
-    migrate_ledger_db(db_path)
+def read_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
+    """Read all ledger rows without running migrations (schema must already match)."""
     conn = sqlite3.connect(db_path)
     try:
         df = pd.read_sql_query(_LEDGER_TX_READ_SQL, conn)
@@ -744,6 +779,12 @@ def load_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
         if "fingerprint" in df.columns:
             df["fingerprint"] = df["fingerprint"].map(lambda x: "" if pd.isna(x) else str(x)).astype(object)
     return df
+
+
+def load_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
+    """Return all ledger rows as a DataFrame (empty table → empty frame with expected columns)."""
+    migrate_ledger_db(db_path)
+    return read_transactions_dataframe_from_ledger(db_path)
 
 
 _SQL_NEEDS_MANUAL_CATEGORY = """(

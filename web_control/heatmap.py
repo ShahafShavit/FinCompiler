@@ -118,6 +118,20 @@ def _heatmap_effective_year_month(df: pd.DataFrame) -> pd.Series:
     return out
 
 
+def _heatmap_effective_tx_date(df: pd.DataFrame) -> pd.Series:
+    """Calendar day for period filters / detail sort: first of valid ``statement_month``, else ``תאריך``."""
+    ta = df["תאריך"]
+    out = ta.copy()
+    if "statement_month" not in df.columns:
+        return out
+    sm = df["statement_month"]
+    sm_str = sm.map(lambda x: "" if pd.isna(x) else str(x).strip())
+    valid_sm = sm_str.str.fullmatch(r"\d{4}-\d{2}", na=False)
+    first_days = pd.to_datetime(sm_str + "-01", format="%Y-%m-%d", errors="coerce")
+    out.loc[valid_sm] = first_days.loc[valid_sm]
+    return out
+
+
 # Category column "average": mean over up to this many most recent *active* months (non-zero cells),
 # scanning from newest month downward — avoids dilution from long runs of zero-activity months.
 _HEATMAP_CATEGORY_MEAN_ACTIVE_MONTHS = 12
@@ -413,6 +427,7 @@ class HeatmapBundle:
 def _build_bundle_from_dataframe(df: pd.DataFrame, source_label: str) -> HeatmapBundle:
     df = df.copy()
     df["תאריך"] = _heatmap_parse_dates(df["תאריך"])
+    df["effective_tx_date"] = _heatmap_effective_tx_date(df)
     df["YearMonth"] = _heatmap_effective_year_month(df)
 
     expenses_df = df[df["בחובה"] > 0]
@@ -498,7 +513,13 @@ def _ledger_heatmap_status() -> dict[str, Any]:
 
 
 def get_bundle() -> HeatmapBundle | None:
-    """Load pivot data from the SQLite ledger (canonical)."""
+    """Load pivot data from the SQLite ledger (canonical).
+
+    Phase: pandas pivots and normalization only — no SQL-side matrix yet. Uses
+    :func:`load_transactions_dataframe_from_ledger` (migrate + full read). Control server
+    startup also runs :func:`pipeline.ledger.migrate_ledger_db` so DDL stays off hot paths
+    where possible. A later phase could swap to SQL/materialized slices and ``read_*`` only.
+    """
     db = config.ledger_db_file
     if not os.path.isfile(db):
         log.warning("heatmap: ledger database missing at %s", db)
@@ -715,15 +736,15 @@ def _period_filter_transactions(df: pd.DataFrame, period: str) -> pd.DataFrame:
         return df
     p = (period or "12m").lower().strip()
     if p == "30d":
-        ta = pd.to_datetime(df["תאריך"], errors="coerce")
-        max_d = ta.max()
+        et = df["effective_tx_date"]
+        max_d = pd.Timestamp(et.max()) if et.notna().any() else pd.NaT
         if pd.isna(max_d):
             return df.iloc[0:0]
         cutoff = max_d - pd.Timedelta(days=30)
-        return df.loc[ta > cutoff]
+        return df.loc[et > cutoff]
     if p == "ytd":
-        ta = pd.to_datetime(df["תאריך"], errors="coerce")
-        max_d = ta.max()
+        et = df["effective_tx_date"]
+        max_d = pd.Timestamp(et.max()) if et.notna().any() else pd.NaT
         if pd.isna(max_d):
             return df.iloc[0:0]
         year = int(max_d.year)
@@ -785,10 +806,23 @@ def _pick_cols(df: pd.DataFrame, cols: list[str]) -> list[str]:
     return [c for c in cols if c in df.columns]
 
 
-def _sort_detail_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty or "תאריך" not in frame.columns:
+def _sort_detail_frame(frame: pd.DataFrame, source_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    if frame.empty:
         return frame
-    return frame.sort_values("תאריך", ascending=False)
+    eff: pd.Series | None = None
+    if source_df is not None and "effective_tx_date" in source_df.columns:
+        eff = source_df["effective_tx_date"].reindex(frame.index)
+    elif "effective_tx_date" in frame.columns:
+        eff = frame["effective_tx_date"]
+    if eff is not None and bool(eff.notna().any()):
+        return (
+            frame.assign(__eff=eff)
+            .sort_values("__eff", ascending=False, na_position="last")
+            .drop(columns=["__eff"])
+        )
+    if "תאריך" in frame.columns:
+        return frame.sort_values("תאריך", ascending=False)
+    return frame
 
 
 def _detail_frames_cell(
@@ -804,7 +838,7 @@ def _detail_frames_cell(
         if float(pivot.loc[year_month, category]) <= 0:
             return None
         mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בחובה"] > 0)
-        details = _sort_detail_frame(df.loc[mask, cols_show_exp])
+        details = _sort_detail_frame(df.loc[mask, cols_show_exp], df)
         title = f"פירוט הוצאות עבור {category} ב-{year_month}"
         return (title, [(None, details)])
     if report_type == "income":
@@ -814,7 +848,7 @@ def _detail_frames_cell(
         if float(pivot.loc[year_month, category]) <= 0:
             return None
         mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בזכות"] > 0)
-        details = _sort_detail_frame(df.loc[mask, cols_show_in])
+        details = _sort_detail_frame(df.loc[mask, cols_show_in], df)
         title = f"פירוט הכנסות עבור {category} ב-{year_month}"
         return (title, [(None, details)])
     pivot = bundle.net_pivot
@@ -824,8 +858,8 @@ def _detail_frames_cell(
         return None
     income_mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בזכות"] > 0)
     expense_mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בחובה"] > 0)
-    income_df = _sort_detail_frame(df.loc[income_mask, cols_show_in])
-    expense_df = _sort_detail_frame(df.loc[expense_mask, cols_show_exp])
+    income_df = _sort_detail_frame(df.loc[income_mask, cols_show_in], df)
+    expense_df = _sort_detail_frame(df.loc[expense_mask, cols_show_exp], df)
     title = f"פירוט תנועות עבור {category} ב-{year_month}"
     return (title, [("הכנסות", income_df), ("הוצאות", expense_df)])
 
@@ -840,20 +874,20 @@ def _detail_frames_month(
     cols_show_in = _pick_cols(df, _COLS_IN)
     if report_type == "expense":
         mask = (df["YearMonth"] == year_month) & (df["בחובה"] > 0)
-        details = _sort_detail_frame(df.loc[mask, cols_show_exp])
+        details = _sort_detail_frame(df.loc[mask, cols_show_exp], df)
         if details.empty:
             return None
         return (f"כל ההוצאות ב-{year_month}", [(None, details)])
     if report_type == "income":
         mask = (df["YearMonth"] == year_month) & (df["בזכות"] > 0)
-        details = _sort_detail_frame(df.loc[mask, cols_show_in])
+        details = _sort_detail_frame(df.loc[mask, cols_show_in], df)
         if details.empty:
             return None
         return (f"כל ההכנסות ב-{year_month}", [(None, details)])
     income_mask = (df["YearMonth"] == year_month) & (df["בזכות"] > 0)
     expense_mask = (df["YearMonth"] == year_month) & (df["בחובה"] > 0)
-    income_df = _sort_detail_frame(df.loc[income_mask, cols_show_in])
-    expense_df = _sort_detail_frame(df.loc[expense_mask, cols_show_exp])
+    income_df = _sort_detail_frame(df.loc[income_mask, cols_show_in], df)
+    expense_df = _sort_detail_frame(df.loc[expense_mask, cols_show_exp], df)
     if income_df.empty and expense_df.empty:
         return None
     return (f"כל התנועות ב-{year_month}", [("הכנסות", income_df), ("הוצאות", expense_df)])
@@ -873,20 +907,20 @@ def _detail_frames_category(
     cols_show_in = _pick_cols(work, _COLS_IN + ["קטגוריה"])
     if report_type == "expense":
         mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
-        details = _sort_detail_frame(work.loc[mask, cols_show_exp])
+        details = _sort_detail_frame(work.loc[mask, cols_show_exp], work)
         if details.empty:
             return None
         return (f"הוצאות — {category} ({period})", [(None, details)])
     if report_type == "income":
         mask = (work["__cat__"] == category) & (work["בזכות"] > 0)
-        details = _sort_detail_frame(work.loc[mask, cols_show_in])
+        details = _sort_detail_frame(work.loc[mask, cols_show_in], work)
         if details.empty:
             return None
         return (f"הכנסות — {category} ({period})", [(None, details)])
     income_mask = (work["__cat__"] == category) & (work["בזכות"] > 0)
     expense_mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
-    income_df = _sort_detail_frame(work.loc[income_mask, cols_show_in])
-    expense_df = _sort_detail_frame(work.loc[expense_mask, cols_show_exp])
+    income_df = _sort_detail_frame(work.loc[income_mask, cols_show_in], work)
+    expense_df = _sort_detail_frame(work.loc[expense_mask, cols_show_exp], work)
     if income_df.empty and expense_df.empty:
         return None
     return (f"נטו — {category} ({period})", [("הכנסות", income_df), ("הוצאות", expense_df)])
@@ -912,15 +946,58 @@ def _detail_frames_source(
         work,
         ["תאריך", "מקור עסקה", "קטגוריה", "בחובה", "בזכות", "תאור מורחב", "פירוט נוסף"],
     )
-    details = _sort_detail_frame(work.loc[mask, cols])
+    details = _sort_detail_frame(work.loc[mask, cols], work)
     title = f"תנועות — מקור «{sk}» ({months} חודשים)"
     return (title, [(None, details)])
+
+
+def _detail_frames_source_category(
+    bundle: HeatmapBundle,
+    report_type: ReportType,
+    source_key: str,
+    category: str,
+    months: int,
+) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
+    df = bundle.df
+    if "מקור עסקה" not in df.columns:
+        return None
+    sub = _filter_recent_months_heatmap(df, months)
+    if sub.empty:
+        return None
+    work = sub.copy()
+    work["__src__"] = work["מקור עסקה"].fillna("").astype(str).str.strip()
+    work.loc[work["__src__"] == "", "__src__"] = "(unknown)"
+    work["__cat__"] = work["קטגוריה"].fillna("").astype(str).str.strip()
+    work.loc[work["__cat__"] == "", "__cat__"] = "(uncategorized)"
+    sk = source_key.strip()
+    cat = category.strip()
+    cols_show_exp = _pick_cols(df, _COLS_EXP)
+    cols_show_in = _pick_cols(df, _COLS_IN)
+    if report_type == "expense":
+        mask = (work["__src__"] == sk) & (work["__cat__"] == cat) & (work["בחובה"] > 0)
+        details = _sort_detail_frame(work.loc[mask, cols_show_exp], work)
+        if details.empty:
+            return None
+        return (f"הוצאות — מקור «{sk}» · {cat}", [(None, details)])
+    if report_type == "income":
+        mask = (work["__src__"] == sk) & (work["__cat__"] == cat) & (work["בזכות"] > 0)
+        details = _sort_detail_frame(work.loc[mask, cols_show_in], work)
+        if details.empty:
+            return None
+        return (f"הכנסות — מקור «{sk}» · {cat}", [(None, details)])
+    income_mask = (work["__src__"] == sk) & (work["__cat__"] == cat) & (work["בזכות"] > 0)
+    expense_mask = (work["__src__"] == sk) & (work["__cat__"] == cat) & (work["בחובה"] > 0)
+    income_df = _sort_detail_frame(work.loc[income_mask, cols_show_in], work)
+    expense_df = _sort_detail_frame(work.loc[expense_mask, cols_show_exp], work)
+    if income_df.empty and expense_df.empty:
+        return None
+    return (f"נטו — מקור «{sk}» · {cat}", [("הכנסות", income_df), ("הוצאות", expense_df)])
 
 
 def build_detail_frames_from_qs(
     bundle: HeatmapBundle, qs: dict[str, list[str]]
 ) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
-    """Resolve drill-down: ``src``/``source``, or ``ym``+``cat`` (cell), ``ym`` only (month), ``cat`` only+period."""
+    """Resolve drill-down: ``src``+``cat`` (source×category), ``src`` alone, ``ym``+``cat`` (cell), etc."""
     src = _qs_first(qs, "src", "").strip() or _qs_first(qs, "source", "").strip()
     ym = _qs_first(qs, "ym", "").strip()
     cat = _qs_first(qs, "cat", "").strip()
@@ -931,6 +1008,8 @@ def build_detail_frames_from_qs(
     period = _qs_first(qs, "period", "12m").strip().lower()
     months = max(1, _qs_int(qs, "months", 12))
 
+    if src and cat:
+        return _detail_frames_source_category(bundle, rt, src, cat, months)
     if src:
         return _detail_frames_source(bundle, src, months)
     if ym and cat:

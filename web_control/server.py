@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import config
 from categorization.interactive.http_server import categorization_html
+from pipeline.ledger import migrate_ledger_db
 from logger import attach_sink_log_handlers, detach_sink_log_handlers
 
 from web_control import categorize_queue, control_nav, dashboard_api, heatmap, holdings_page, jobs
@@ -777,6 +778,10 @@ def serve_forever() -> None:
     host = getattr(config, "control_http_host", "127.0.0.1")
     port = int(getattr(config, "control_http_port", 8780))
     _assert_control_port_available(host, port)
+    try:
+        migrate_ledger_db(config.ledger_db_file)
+    except Exception:  # noqa: BLE001
+        log.exception("Ledger migrate at control server startup failed; serving anyway")
     state = ControlState()
     handler = make_handler_class(state)
     try:

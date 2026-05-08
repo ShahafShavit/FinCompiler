@@ -17,7 +17,6 @@ export type DashboardSummary = {
   };
 };
 
-export type NetWorthRow = { as_of_date: string; total_ils: number };
 export type AllocationRow = { activity_type: string; balance_ils: number };
 export type AllocationTimelineRow = {
   as_of_date: string;
@@ -29,8 +28,41 @@ export type CashflowRow = {
   income: number;
   expense: number;
   net: number;
+  expenseNeg?: number;
+  savingsRate?: number | null;
 };
-export type TopCategoryRow = { category: string; amount: number };
+export type CategoryPeriodStatRow = {
+  category: string;
+  income: number;
+  expense: number;
+  net: number;
+  txn_count: number;
+  pct_of_period_income: number;
+  pct_of_period_expense: number;
+};
+export type CategoryPeriodStatsResponse = {
+  ok: boolean;
+  ledger_exists: boolean;
+  period: string;
+  limit: number;
+  period_income_total: number;
+  period_expense_total: number;
+  rows: CategoryPeriodStatRow[];
+};
+export type SourceCategoryMatrixResponse = {
+  ok: boolean;
+  ledger_exists: boolean;
+  months: number;
+  direction: string;
+  top_sources: number;
+  top_categories: number;
+  sources: string[];
+  categories: string[];
+  cells: number[][];
+  row_totals: number[];
+  col_totals: number[];
+  grand_total: number;
+};
 export type SourceRow = {
   source: string;
   count: number;

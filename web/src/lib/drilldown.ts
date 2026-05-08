@@ -29,3 +29,17 @@ export function heatmapDetailSource(source: string, months = 12): string {
   p.set('months', String(months));
   return `/heatmap/detail?${p.toString()}`;
 }
+
+export function heatmapDetailSourceCategory(
+  type: HeatmapReportType,
+  source: string,
+  category: string,
+  months = 12,
+): string {
+  const p = new URLSearchParams();
+  p.set('type', type);
+  p.set('src', source);
+  p.set('cat', category);
+  p.set('months', String(months));
+  return `/heatmap/detail?${p.toString()}`;
+}

@@ -2,7 +2,7 @@
 Aggregations for the React dashboard at ``/`` (served via ``/api/dashboard/*``).
 
 All functions read from the canonical SQLite ledger (``config.ledger_db_file``):
-- transactions: ``ledger_transaction`` via ``pipeline.ledger.load_transactions_dataframe_from_ledger``
+- transactions: ``ledger_transaction`` via SQLite aggregates (``dashboard_tx_sql``)
 - holdings: ``holdings_balance`` via direct SQL
 
 Every function returns a JSON-safe dict. When the ledger DB is missing or empty, each
@@ -18,10 +18,10 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Any
 
-import pandas as pd
-
 import config
-from pipeline.ledger import load_transactions_dataframe_from_ledger
+from pipeline.ledger import LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR, ledger_connect_readonly
+
+from . import dashboard_tx_sql
 
 log = logging.getLogger(__name__)
 
@@ -44,50 +44,14 @@ def _empty_payload(extra: dict[str, Any] | None = None) -> dict[str, Any]:
     return base
 
 
-def _parse_date_series(s: pd.Series) -> pd.Series:
-    """ISO-first parse (matches ledger storage); pandas fallback for any legacy strays."""
-    iso = pd.to_datetime(s, format="%Y-%m-%d", errors="coerce")
-    fallback_mask = iso.isna() & s.notna()
-    if fallback_mask.any():
-        fallback = pd.to_datetime(s[fallback_mask], errors="coerce")
-        iso = iso.copy()
-        iso.loc[fallback_mask] = fallback
-    return iso
-
-
-def _effective_year_month(df: pd.DataFrame) -> pd.Series:
-    """Month bucket: prefer ``statement_month`` (YYYY-MM) when valid; else month-of-``תאריך``."""
-    ta = _parse_date_series(df["תאריך"])
-    ym = pd.Series(pd.NA, index=df.index, dtype="string")
-    has_t = ta.notna()
-    ym.loc[has_t] = ta.loc[has_t].dt.strftime("%Y-%m")
-
-    if "statement_month" not in df.columns:
-        return ym
-
-    sm_str = df["statement_month"].map(lambda x: "" if pd.isna(x) else str(x).strip())
-    valid_sm = sm_str.str.fullmatch(r"\d{4}-\d{2}", na=False)
-    out = ym.copy()
-    out.loc[valid_sm] = sm_str.loc[valid_sm]
-    return out
-
-
-def _load_tx_df() -> pd.DataFrame | None:
+def _tx_conn() -> sqlite3.Connection | None:
     if not _ledger_exists():
         return None
     try:
-        df = load_transactions_dataframe_from_ledger(_ledger_path())
+        return ledger_connect_readonly(_ledger_path())
     except Exception:  # noqa: BLE001
-        log.exception("dashboard: failed to load ledger transactions")
+        log.exception("dashboard: failed to open ledger read-only")
         return None
-    if df.empty:
-        return df
-    df = df.copy()
-    df["בחובה"] = pd.to_numeric(df.get("בחובה"), errors="coerce").fillna(0.0)
-    df["בזכות"] = pd.to_numeric(df.get("בזכות"), errors="coerce").fillna(0.0)
-    df["תאריך_parsed"] = _parse_date_series(df["תאריך"])
-    df["YearMonth"] = _effective_year_month(df)
-    return df
 
 
 def _holdings_conn() -> sqlite3.Connection | None:
@@ -165,10 +129,11 @@ def summary() -> dict[str, Any]:
         ).fetchone()
         kpis["uncategorized_count"] = int(uncat_row[0] or 0) if uncat_row else 0
 
-        # 30-day window: anchor at MAX(תאריך), include 30 calendar days.
-        max_date_row = conn.execute(
-            'SELECT MAX(date("תאריך")) FROM ledger_transaction'
-        ).fetchone()
+        # 30-day window: anchor at MAX(effective tx date per statement_month / תאריך), 30 calendar days.
+        sql_max_eff = (
+            f"SELECT MAX(({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR})) FROM ledger_transaction"
+        )
+        max_date_row = conn.execute(sql_max_eff).fetchone()
         max_date_iso = max_date_row[0] if max_date_row else None
         if max_date_iso:
             try:
@@ -178,9 +143,17 @@ def summary() -> dict[str, Any]:
             if anchor:
                 start = (anchor - timedelta(days=30)).strftime("%Y-%m-%d")
                 row = conn.execute(
-                    'SELECT COALESCE(SUM("בזכות"), 0), COALESCE(SUM("בחובה"), 0) '
-                    'FROM ledger_transaction '
-                    'WHERE "תאריך" IS NOT NULL AND "תאריך" > ? AND "תאריך" <= ?',
+                    f"""
+                    WITH t AS (
+                      SELECT COALESCE(CAST("בזכות" AS REAL), 0.0) AS zc,
+                             COALESCE(CAST("בחובה" AS REAL), 0.0) AS bh,
+                             ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}) AS eff_d
+                      FROM ledger_transaction
+                    )
+                    SELECT COALESCE(SUM(zc), 0), COALESCE(SUM(bh), 0)
+                    FROM t
+                    WHERE eff_d IS NOT NULL AND eff_d > ? AND eff_d <= ?
+                    """,
                     (start, max_date_iso),
                 ).fetchone()
                 income = float(row[0] or 0.0)
@@ -197,29 +170,7 @@ def summary() -> dict[str, Any]:
     return out
 
 
-# --- 2. holdings: net worth timeline + allocation ---------------------------
-
-
-def networth_timeline() -> dict[str, Any]:
-    """``[{as_of_date, total_ils}]`` summed across activity_type."""
-    conn = _holdings_conn()
-    if conn is None:
-        return _empty_payload()
-    try:
-        rows = conn.execute(
-            """
-            SELECT as_of_date, SUM(balance_ils) AS total_ils
-            FROM holdings_balance
-            GROUP BY as_of_date
-            ORDER BY as_of_date ASC
-            """
-        ).fetchall()
-    finally:
-        conn.close()
-    out_rows = [
-        {"as_of_date": str(d), "total_ils": float(t or 0.0)} for d, t in rows
-    ]
-    return {"ok": True, "ledger_exists": True, "rows": out_rows}
+# --- 2. holdings: allocation -------------------------------------------------
 
 
 def allocation_latest() -> dict[str, Any]:
@@ -295,138 +246,147 @@ def allocation_timeline() -> dict[str, Any]:
 # --- 3. transactions: cash flow / categories / sources ----------------------
 
 
-def _filter_recent_months(df: pd.DataFrame, months: int) -> pd.DataFrame:
-    if df.empty or months <= 0:
-        return df
-    valid = df.dropna(subset=["YearMonth"]).copy()
-    if valid.empty:
-        return valid
-    months_sorted = sorted(valid["YearMonth"].unique(), reverse=True)
-    keep = set(months_sorted[:months])
-    return valid[valid["YearMonth"].isin(keep)]
-
-
 def cashflow_monthly(months: int = 24) -> dict[str, Any]:
     """``[{month, income, expense, net}]`` for last N months (effective month)."""
-    df = _load_tx_df()
-    if df is None or df.empty:
+    conn = _tx_conn()
+    if conn is None:
         return _empty_payload({"months": months})
-    sub = _filter_recent_months(df, months).copy()
-    if sub.empty:
+    try:
+        out_rows = dashboard_tx_sql.cashflow_monthly(conn, months)
+    except Exception:  # noqa: BLE001
+        log.exception("dashboard: cashflow_monthly failed")
         return _empty_payload({"months": months})
-    grouped = sub.groupby("YearMonth", sort=True).agg(
-        income=("בזכות", "sum"),
-        expense=("בחובה", "sum"),
-    )
-    grouped["net"] = grouped["income"] - grouped["expense"]
-    out_rows = [
-        {
-            "month": str(idx),
-            "income": float(row["income"]),
-            "expense": float(row["expense"]),
-            "net": float(row["net"]),
-        }
-        for idx, row in grouped.iterrows()
-    ]
+    finally:
+        conn.close()
+    if not out_rows:
+        return _empty_payload({"months": months})
     return {"ok": True, "ledger_exists": True, "rows": out_rows, "months": months}
-
-
-_PERIOD_TO_MONTHS = {"30d": 1, "ytd": -1, "12m": 12, "3m": 3, "6m": 6}
-
-
-def _period_filter(df: pd.DataFrame, period: str) -> pd.DataFrame:
-    """Filter df by period token:
-    - ``30d``: last 30 days of ``תאריך_parsed``
-    - ``ytd``: current calendar year (anchored at MAX(תאריך))
-    - ``12m`` / ``6m`` / ``3m``: last N months by YearMonth
-    Default → 12 months.
-    """
-    if df.empty:
-        return df
-    p = (period or "12m").lower().strip()
-    if p == "30d":
-        max_d = df["תאריך_parsed"].max()
-        if pd.isna(max_d):
-            return df.iloc[0:0]
-        cutoff = (max_d - pd.Timedelta(days=30))
-        return df[df["תאריך_parsed"] > cutoff]
-    if p == "ytd":
-        max_d = df["תאריך_parsed"].max()
-        if pd.isna(max_d):
-            return df.iloc[0:0]
-        year = max_d.year
-        ym_prefix = f"{year}-"
-        return df[df["YearMonth"].fillna("").str.startswith(ym_prefix)]
-    n = _PERIOD_TO_MONTHS.get(p, 12)
-    if n is None or n <= 0:
-        n = 12
-    return _filter_recent_months(df, n)
 
 
 def top_categories(
     period: str = "12m", report_type: str = "expense", limit: int = 10
 ) -> dict[str, Any]:
-    """``[{category, amount}]`` ranked desc."""
-    df = _load_tx_df()
-    if df is None or df.empty:
-        return _empty_payload({"period": period, "type": report_type, "limit": int(limit)})
-    sub = _period_filter(df, period)
-    if sub.empty:
-        return _empty_payload({"period": period, "type": report_type, "limit": int(limit)})
-    if report_type == "income":
-        col = "בזכות"
-    else:
-        col = "בחובה"
-        report_type = "expense"
-    work = sub.copy()
-    work["__cat__"] = work["קטגוריה"].fillna("").astype(str).str.strip()
-    work.loc[work["__cat__"] == "", "__cat__"] = "(uncategorized)"
-    work = work[work[col] > 0]
-    if work.empty:
-        return _empty_payload({"period": period, "type": report_type, "limit": int(limit)})
-    grouped = (
-        work.groupby("__cat__")[col]
-        .sum()
-        .sort_values(ascending=False)
-        .head(int(limit))
-    )
-    out_rows = [{"category": str(k), "amount": float(v)} for k, v in grouped.items()]
+    """``[{category, amount, pct_of_expense?, pct_of_income?}]`` ranked desc."""
+    meta: dict[str, Any] = {"period": period, "type": report_type, "limit": int(limit)}
+    conn = _tx_conn()
+    if conn is None:
+        return _empty_payload({**meta, "period_income_total": 0.0, "period_expense_total": 0.0})
+    try:
+        period_income_total, period_expense_total, ranked = (
+            dashboard_tx_sql.top_categories_totals_and_rows(
+                conn, period, report_type, int(limit)
+            )
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("dashboard: top_categories failed")
+        return _empty_payload({**meta, "period_income_total": 0.0, "period_expense_total": 0.0})
+    finally:
+        conn.close()
+    meta["period_income_total"] = period_income_total
+    meta["period_expense_total"] = period_expense_total
+    meta["type"] = "income" if (report_type or "").lower().strip() == "income" else "expense"
+    if not ranked:
+        return _empty_payload(meta)
+    out_rows: list[dict[str, Any]] = []
+    for k, v in ranked:
+        amt = float(v)
+        row: dict[str, Any] = {"category": str(k), "amount": amt}
+        if period_expense_total > 0:
+            row["pct_of_expense"] = amt / period_expense_total
+        if period_income_total > 0:
+            row["pct_of_income"] = amt / period_income_total
+        out_rows.append(row)
     return {
         "ok": True,
         "ledger_exists": True,
-        "period": period,
-        "type": report_type,
-        "limit": int(limit),
+        **meta,
         "rows": out_rows,
+    }
+
+
+def category_period_stats(period: str = "12m", limit: int = 35) -> dict[str, Any]:
+    """Per category for the period: income, expense, net, txn counts, % of period totals."""
+    meta: dict[str, Any] = {"period": period, "limit": int(limit)}
+    conn = _tx_conn()
+    if conn is None:
+        return _empty_payload({**meta, "period_income_total": 0.0, "period_expense_total": 0.0})
+    try:
+        period_income_total, period_expense_total, out_rows = (
+            dashboard_tx_sql.category_period_stats(conn, period, int(limit))
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("dashboard: category_period_stats failed")
+        return _empty_payload({**meta, "period_income_total": 0.0, "period_expense_total": 0.0})
+    finally:
+        conn.close()
+    meta["period_income_total"] = period_income_total
+    meta["period_expense_total"] = period_expense_total
+    if not out_rows:
+        return _empty_payload(meta)
+    return {
+        "ok": True,
+        "ledger_exists": True,
+        **meta,
+        "rows": out_rows,
+    }
+
+
+def source_category_matrix(
+    months: int = 12,
+    direction: str = "expense",
+    top_sources: int = 10,
+    top_categories: int = 12,
+) -> dict[str, Any]:
+    """Sparse pivot: sources × categories for expense or income in the last ``months`` buckets."""
+    dir_ = (direction or "expense").lower().strip()
+    if dir_ not in ("expense", "income"):
+        dir_ = "expense"
+    meta: dict[str, Any] = {
+        "months": int(months),
+        "direction": dir_,
+        "top_sources": int(top_sources),
+        "top_categories": int(top_categories),
+    }
+    conn = _tx_conn()
+    if conn is None:
+        return _empty_payload(meta)
+    try:
+        body = dashboard_tx_sql.source_category_matrix(
+            conn,
+            int(months),
+            dir_,
+            int(top_sources),
+            int(top_categories),
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("dashboard: source_category_matrix failed")
+        return _empty_payload(meta)
+    finally:
+        conn.close()
+    if not body.get("sources"):
+        return _empty_payload(meta)
+    return {
+        "ok": True,
+        "ledger_exists": True,
+        **meta,
+        **body,
     }
 
 
 def sources(months: int = 12) -> dict[str, Any]:
     """``[{source, count, expense, income}]`` over the last N months."""
-    df = _load_tx_df()
-    if df is None or df.empty:
+    conn = _tx_conn()
+    if conn is None:
         return _empty_payload({"months": int(months)})
-    sub = _filter_recent_months(df, int(months))
-    if sub.empty:
+    try:
+        out_rows = dashboard_tx_sql.sources(conn, int(months))
+    except Exception:  # noqa: BLE001
+        log.exception("dashboard: sources failed")
         return _empty_payload({"months": int(months)})
-    work = sub.copy()
-    work["__src__"] = work["מקור עסקה"].fillna("").astype(str).str.strip()
-    work.loc[work["__src__"] == "", "__src__"] = "(unknown)"
-    grouped = work.groupby("__src__").agg(
-        count=("__src__", "size"),
-        expense=("בחובה", "sum"),
-        income=("בזכות", "sum"),
-    )
-    grouped = grouped.sort_values("expense", ascending=False)
-    out_rows = [
-        {
-            "source": str(idx),
-            "count": int(row["count"]),
-            "expense": float(row["expense"]),
-            "income": float(row["income"]),
-        }
-        for idx, row in grouped.iterrows()
-    ]
+    finally:
+        conn.close()
+    if not out_rows:
+        return _empty_payload({"months": int(months)})
     return {
         "ok": True,
         "ledger_exists": True,
@@ -463,8 +423,6 @@ def handle_dashboard_request(name: str, qs: dict[str, list[str]]) -> dict[str, A
     """Dispatch by name. Unknown name → ``ok: False``."""
     if name == "summary":
         return summary()
-    if name == "networth-timeline":
-        return networth_timeline()
     if name == "allocation":
         return allocation_latest()
     if name == "allocation-timeline":
@@ -477,19 +435,35 @@ def handle_dashboard_request(name: str, qs: dict[str, list[str]]) -> dict[str, A
         report_type = _qs_first(qs, "type", "expense") or "expense"
         limit = _qs_int(qs, "limit", 10)
         return top_categories(period=period, report_type=report_type, limit=limit)
+    if name == "category-period-stats":
+        period = _qs_first(qs, "period", "12m") or "12m"
+        limit = _qs_int(qs, "limit", 35)
+        return category_period_stats(period=period, limit=limit)
     if name == "sources":
         months = _qs_int(qs, "months", 12)
         return sources(months=months)
+    if name == "source-category-matrix":
+        months = _qs_int(qs, "months", 12)
+        direction = _qs_first(qs, "direction", "expense") or "expense"
+        top_sources = _qs_int(qs, "top_sources", 10)
+        top_categories = _qs_int(qs, "top_categories", 12)
+        return source_category_matrix(
+            months=months,
+            direction=direction,
+            top_sources=top_sources,
+            top_categories=top_categories,
+        )
     return {"ok": False, "error": "unknown_endpoint", "message": f"unknown dashboard endpoint: {name}"}
 
 
 __all__ = [
     "summary",
-    "networth_timeline",
     "allocation_latest",
     "allocation_timeline",
     "cashflow_monthly",
     "top_categories",
+    "category_period_stats",
+    "source_category_matrix",
     "sources",
     "handle_dashboard_request",
 ]
