@@ -1,8 +1,15 @@
-<h1 align="center">Finance Compiler</h1>
+<!-- Hero uses the same HTML shape GitHub renders for Ghostty-style READMEs: one <h1> wrapping a centered <p>. -->
+
+<h1>
+<p align="center">
+  Finance Compiler
+</p>
+</h1>
 
 <p align="center">
-  <strong>Web-first personal finance</strong> — turn exports and balances into a <strong>local SQLite ledger</strong>, then explore it through a dashboard, heatmaps, categorization, and holdings.<br/>
-  Automate the same pipelines from the CLI when you want cron or batch runs.
+  Web-first personal finance: bank exports and balances compile into a <strong>local SQLite ledger</strong>.
+  <br>
+  Explore it in a dashboard, heatmaps, categorization, and holdings—or run the same pipelines from the CLI.
 </p>
 
 <p align="center">
@@ -22,45 +29,45 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+" />
-  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 20+" />
-  <img src="https://img.shields.io/badge/React-Vite-646CFF?style=flat-square&logo=vite&logoColor=white" alt="React + Vite" />
-  <img src="https://img.shields.io/badge/Data-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
+  <strong>Python 3.11+</strong>
+  ·
+  <strong>Node 20+</strong>
+  ·
+  <strong>React / Vite / TypeScript</strong>
+  ·
+  <strong>SQLite</strong>
 </p>
-
-<br/>
 
 ## Overview
 
-| | |
-| :--- | :--- |
-| **What it is** | A React SPA plus a Python **`web_control`** server: dashboard, pipeline runner (SSE logs), heatmap, categorize queue, holdings. |
-| **Where data lands** | Canonical store **`data/ledger.sqlite`**; staging under **`data/pipeline/`** — see [`app/backend/config.py`](app/backend/config.py). |
-| **Automation** | Same flows via **`python run_pipeline.py`** from the repo root (`cron`, Task Scheduler, headless). |
-| **Integrations** | Portal fetch and related behavior via **`config`** / **`pipeline`** (credentials in **`.env`**); Google client libs where Sheets-related flows apply. |
+Finance Compiler is a small **Python backend** plus **React SPA**: ingest spreadsheets, route them through **`data/pipeline/`**, and keep the canonical picture in **`data/ledger.sqlite`** (see [`app/backend/config.py`](app/backend/config.py)).
 
-**Layout**
+**What you get**
+
+- **Dashboard** — KPIs and charts when the ledger exists.
+- **Pipeline runner** — Run steps from the browser with a live **SSE** log.
+- **Heatmap / categorize / holdings** — Drill-down and manual flows without leaving the app.
+- **CLI** — `python run_pipeline.py` from the repo root for **cron**, Task Scheduler, or headless runs.
+
+**Repository layout**
 
 - **`app/backend`** — `pipeline`, `categorization`, `web_control`, [`config.py`](app/backend/config.py), [`logger.py`](app/backend/logger.py), [`schema`](app/backend/schema), [`scripts`](app/backend/scripts).
 - **`app/frontend`** — Vite + React + TypeScript ([frontend README](app/frontend/README.md)).
 
+Optional portal fetch and Sheets-related flows use **`config`** / **`pipeline`** and secrets in **`.env`**.
+
 ## Architecture
 
-```mermaid
-flowchart LR
-  subgraph ui [Browser]
-    SPA[React_SPA_Vite]
-  end
-  subgraph py [Python_repo_root]
-    WC[web_control_server]
-    PL[pipeline_and_jobs]
-    DB[(ledger.sqlite)]
-    DP[data_pipeline_dirs]
-  end
-  SPA -->|HTTP_API_SSE_static| WC
-  WC --> PL
-  PL --> DB
-  PL --> DP
+```text
+┌─────────────┐     HTTP / API / SSE      ┌────────────────┐
+│  Browser    │ ◄────────────────────────► │  web_control   │
+│  React SPA  │         static `dist/`    │  (Python)      │
+└─────────────┘                            └────────┬───────┘
+                                                    │
+                     ┌──────────────────────────────┼──────────────────────────────┐
+                     ▼                              ▼                              ▼
+              pipeline jobs                  data/pipeline/                  ledger.sqlite
+           (ingest, compile, …)             (inboxes, staging)                (canonical)
 ```
 
 ## Quick start
@@ -76,7 +83,7 @@ cd <cloned-directory>
 
 ### 2. Python dependencies
 
-**Recommended:** from the repo root
+From the repo root, fastest path:
 
 - **macOS / Linux / Git Bash:** `./install.sh`
 - **Windows PowerShell:** `.\install.ps1`
@@ -111,7 +118,7 @@ npm run build
 cd ../..
 ```
 
-Output: **`app/frontend/dist/`** (re-run **`npm run build`** after frontend changes for production-style serving).
+Output: **`app/frontend/dist/`**. Re-run **`npm run build`** after frontend changes when serving via Python.
 
 ### 4. Configure
 
@@ -119,18 +126,17 @@ Create **`.env`** in the project root with portal credentials as required by **`
 
 ### 5. Run
 
-From the **repository root**, with **`PYTHONPATH`** including **`app/backend`** ([details](#python-path-and-working-directory)):
+From the **repository root**, with **`PYTHONPATH`** including **`app/backend`** ([below](#python-path-and-working-directory)):
 
 ```bash
 python -m web_control
 ```
 
-Open the [dashboard](http://127.0.0.1:8780/) (default port **8780**).
+Open [http://127.0.0.1:8780/](http://127.0.0.1:8780/) (default port **8780**).
 
 ## Python path and working directory
 
-> [!IMPORTANT]
-> Use the **repository root** as cwd when running the server or CLI so **`data/`** and **`.env`** resolve correctly. Add **`app/backend`** to **`PYTHONPATH`** so imports like **`web_control`**, **`pipeline`**, and **`config`** work.
+Use the **repository root** as your current working directory whenever you run the server or CLI so **`data/`** and **`.env`** resolve. Add **`app/backend`** to **`PYTHONPATH`** so **`web_control`**, **`pipeline`**, and **`config`** import cleanly.
 
 **POSIX**
 
@@ -144,14 +150,14 @@ export PYTHONPATH=app/backend
 $env:PYTHONPATH = "app/backend"
 ```
 
-[`main.py`](main.py) and [`run_pipeline.py`](run_pipeline.py) prepend **`app/backend`** automatically **when you run those files only**.
+[`main.py`](main.py) and [`run_pipeline.py`](run_pipeline.py) prepend **`app/backend`** when you invoke those files directly.
 
 ## Configuration
 
 - **`.env`** — Secrets for **`config`** / pipeline fetch. Never commit.
-- **`FINANCE_WORKSPACE_ROOT`** — Optional alternate tree with **`data/`** (and optional workspace **`web/`**). See [`app/backend/config.py`](app/backend/config.py).
+- **`FINANCE_WORKSPACE_ROOT`** — Optional alternate tree containing **`data/`** (and optional workspace **`web/`**). See [`app/backend/config.py`](app/backend/config.py).
 
-**HTTP overrides** (`web_control`)
+Optional bind/port for **`web_control`**:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -164,7 +170,7 @@ $env:PYTHONPATH = "app/backend"
 python -m web_control
 ```
 
-The VS Code task **Web (Python): control server** runs [`app/backend/scripts/web_control_restart.py`](app/backend/scripts/web_control_restart.py): frees **8780**, sets **`PYTHONPATH`**, starts **`web_control`** from the repo root.
+The VS Code task **Web (Python): control server** runs [`app/backend/scripts/web_control_restart.py`](app/backend/scripts/web_control_restart.py): frees port **8780**, sets **`PYTHONPATH`**, starts **`web_control`** from the repo root.
 
 **Windows cmd** without activating the venv:
 
@@ -172,8 +178,6 @@ The VS Code task **Web (Python): control server** runs [`app/backend/scripts/web
 set PYTHONPATH=app\backend
 .venv\Scripts\python.exe -m web_control
 ```
-
-**URLs**
 
 | Page | URL |
 |------|-----|
@@ -183,12 +187,11 @@ set PYTHONPATH=app\backend
 | Holdings | [http://127.0.0.1:8780/holdings/](http://127.0.0.1:8780/holdings/) |
 | Categorize | [http://127.0.0.1:8780/categorize/](http://127.0.0.1:8780/categorize/) |
 
-> [!NOTE]
-> If **`app/frontend/dist/`** is missing, the server serves a small placeholder page with build instructions instead of a blank screen.
+If **`app/frontend/dist/`** is missing, you get a placeholder page with build instructions instead of a blank screen.
 
 ## SPA development (hot reload)
 
-**Terminal 1** (repo root, `PYTHONPATH=app/backend`)
+**Terminal 1** (repo root, `PYTHONPATH=app/backend`):
 
 ```bash
 python -m web_control
@@ -207,8 +210,8 @@ More detail: [`app/frontend/README.md`](app/frontend/README.md).
 
 ## Browser routes
 
-| Route | What you get |
-|-------|----------------|
+| Route | Description |
+|-------|-------------|
 | **`/`** | Dashboard (empty state if **`data/ledger.sqlite`** is missing). |
 | **`/pipeline`** | Pipeline controls with live **SSE** log. |
 | **`/heatmap`** | Monthly heatmap and drill-down. |
@@ -224,46 +227,44 @@ python run_pipeline.py --help
 python run_pipeline.py all
 ```
 
-**Commands** (each has its own flags: **`python run_pipeline.py COMMAND --help`**): **`route`**, **`holdings`**, **`transactions`**, **`all`**, **`both-process`**. Canonical compiled data: **`data/ledger.sqlite`** ([`pipeline_cli.py`](app/backend/apps/pipeline_cli.py)).
+Commands (each has its own flags—use **`python run_pipeline.py COMMAND --help`**): **`route`**, **`holdings`**, **`transactions`**, **`all`**, **`both-process`**. Canonical compiled store: **`data/ledger.sqlite`** ([`pipeline_cli.py`](app/backend/apps/pipeline_cli.py)).
 
-[`run_pipeline.py`](run_pipeline.py) and [`main.py`](main.py) shim to **`apps.pipeline_cli`** with **`app/backend`** on **`sys.path`**.
+[`run_pipeline.py`](run_pipeline.py) and [`main.py`](main.py) delegate to **`apps.pipeline_cli`** with **`app/backend`** on **`sys.path`**.
 
-> [!TIP]
-> `run_pipeline.py … --categorize` runs auto-categorization; finish leftovers at **`/categorize/`** while **`python -m web_control`** is running.
+`run_pipeline.py … --categorize` runs auto-categorization; finish remaining rows at **`/categorize/`** while **`python -m web_control`** is running.
 
 ## Contributing
 
-Issues and PRs are welcome—pipelines, UI, and docs all improve with more eyes.
+Issues and PRs are welcome.
 
-- Match style in touched files; keep PRs focused.
+- Match existing style in touched files; keep changes focused.
 - Do not commit secrets or personal exports; use **`FINANCE_WORKSPACE_ROOT`** for an isolated **`data/`** tree when experimenting.
 - **Backend:** [`app/backend/pipeline`](app/backend/pipeline), [`app/backend/web_control`](app/backend/web_control), [`config.py`](app/backend/config.py).
 - **Frontend:** [`app/frontend/README.md`](app/frontend/README.md).
 
-**Tests** (repo root):
+Tests from the repo root:
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-Suite under **`tests/`** (`unittest`). Context: [`docs/data-architecture-migration-plan.md`](docs/data-architecture-migration-plan.md).
+Suite lives under **`tests/`** (`unittest`). Background: [`docs/data-architecture-migration-plan.md`](docs/data-architecture-migration-plan.md).
 
 ## Security and privacy
 
-> [!WARNING]
-> Treat **`.env`** and everything under **`data/`** (exports, **`ledger.sqlite`**, pipeline trees) as **highly sensitive**. Confirm **`.gitignore`** before pushing forks or public branches.
+Treat **`.env`** and **`data/`** (exports, **`ledger.sqlite`**, pipeline trees) as sensitive. Confirm **`.gitignore`** before pushing forks or public branches.
 
 ## Utility scripts
 
-From the repo root with **`PYTHONPATH=app/backend`** (unless the script bootstraps paths):
+Run from the repo root with **`PYTHONPATH=app/backend`** unless the script bootstraps paths itself:
 
 | Command | Purpose |
 |---------|---------|
 | `python app/backend/scripts/verify_ledger_integrity.py` | Structural audit of the ledger DB ([`pipeline/ledger.py`](app/backend/pipeline/ledger.py)). |
 | `python app/backend/scripts/web_control_restart.py` | Free port **8780**, start **`python -m web_control`** with correct **`PYTHONPATH`** and cwd. |
 
-More scripts: [`app/backend/scripts`](app/backend/scripts).
+Additional scripts: [`app/backend/scripts`](app/backend/scripts).
 
 ## Screenshots
 
-No bundled screenshots yet. PRs adding anonymized captures under something like **`docs/images/`** (no real account data) are welcome.
+None bundled yet. PRs with anonymized UI captures under something like **`docs/images/`** (no real account data) are welcome.
