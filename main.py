@@ -1,6 +1,9 @@
-"""Qt desktop UI entrypoint. Run from the repository root: ``python main.py``."""
+#!/usr/bin/env python3
+"""Pipeline CLI shim. Same entrypoint as ``run_pipeline.py`` — see ``apps.pipeline_cli``."""
 
-from apps.qt_main import main
+import sys
+
+from apps.pipeline_cli import main
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

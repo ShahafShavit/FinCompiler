@@ -1,1 +1,1 @@
-"""Application entrypoints (Qt UI, pipeline CLI)."""
+"""Application entrypoints (pipeline CLI)."""

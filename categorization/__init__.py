@@ -1,6 +1,5 @@
-"""Pluggable manual categorization UIs (terminal, browser, …)."""
+"""Manual categorization (SQLite ledger): protocol and prompts; browser UX lives in ``web_control``."""
 
-from categorization.interactive.factory import create_interaction_handler
 from categorization.interactive.protocol import CategorizationInteractionHandler
 from categorization.interactive.prompts import (
     FluidStorePrompt,
@@ -13,5 +12,4 @@ __all__ = [
     "FluidStorePrompt",
     "NewStorePrompt",
     "ResolveStaticPrompt",
-    "create_interaction_handler",
 ]

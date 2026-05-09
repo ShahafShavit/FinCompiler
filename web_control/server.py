@@ -19,11 +19,8 @@ from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 import config
-from categorization.interactive.http_server import categorization_html
 from pipeline.ledger import migrate_ledger_db
-from logger import attach_sink_log_handlers, detach_sink_log_handlers
-
-from web_control import categorize_queue, control_nav, dashboard_api, heatmap, holdings_page, integrity_api, jobs
+from web_control import categorize_queue, dashboard_api, heatmap, integrity_api, jobs
 from web_control.json_safe import json_bytes_strict as _json_bytes_strict
 
 # Forward structured pipeline / Selenium logs to the dashboard SSE (exclude ``pipeline`` — it already uses sink via _notify).
@@ -74,7 +71,7 @@ _SPA_DEV_FALLBACK = (
 npm install
 npm run dev</code></pre>
     Vite proxies <code>/api</code>, <code>/heatmap/api</code>, <code>/heatmap/legacy-detail</code>,
-    <code>/categorize</code>, and <code>/holdings</code> back to this server on port 8780.
+    and the built SPA assets through its dev/prod setup (see <code>web/vite.config.ts</code>).
   </div>
   <div class="card">
     <strong>Prod:</strong> build once and reload this page:
@@ -82,7 +79,7 @@ npm run dev</code></pre>
 npm install
 npm run build</code></pre>
   </div>
-  <p>Backend pages still work: <a href="/holdings/">/holdings/</a> · <a href="/categorize/">/categorize/</a>.</p>
+  <p>With <code>python -m web_control</code> you get APIs and static assets; the UI is the React app (built or Vite dev).</p>
 </body>
 </html>
 """
@@ -138,6 +135,12 @@ _SPA_ROUTES: tuple[str, ...] = (
     "/heatmap/detail/",
     "/integrity",
     "/integrity/",
+    "/categorize",
+    "/categorize/",
+    "/categorize/index.html",
+    "/holdings",
+    "/holdings/",
+    "/holdings/index.html",
 )
 
 
@@ -278,11 +281,6 @@ def make_handler_class(state: ControlState):
                 self.end_headers()
                 return
 
-            if path in ("/holdings/", "/holdings/index.html"):
-                self._send(200, holdings_page.holdings_shell_html().encode("utf-8"), "text/html; charset=utf-8")
-                return
-
-            # Heatmap APIs (must precede SPA fallback since `/heatmap` itself is a SPA route).
             if path == "/heatmap/api/data":
                 try:
                     snap = heatmap.api_snapshot()
@@ -321,20 +319,14 @@ def make_handler_class(state: ControlState):
                 self._send(code, body, ct)
                 return
 
-            if path.startswith("/categorize/"):
+            if path.startswith("/categorize"):
                 rest = path[len("/categorize") :] or "/"
                 if not rest.startswith("/"):
                     rest = "/" + rest
-                if rest in ("/", "/index.html"):
-                    html = categorization_html("/categorize/")
-                    self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
-                    return
                 if rest.startswith("/api/"):
                     code, body, ct = categorize_queue.handle_get(rest)
                     self._send(code, body, ct)
                     return
-                self._send(404, b"Not Found", "text/plain")
-                return
 
             if path in _SPA_ROUTES:
                 body = _spa_index_bytes()
@@ -518,8 +510,6 @@ def make_handler_class(state: ControlState):
                 path.startswith("/api/")
                 or path.startswith("/heatmap/api/")
                 or path.startswith("/assets/")
-                or path.startswith("/holdings/")
-                or path.startswith("/categorize/")
             ):
                 if "/heatmap" in path or "/heatmap" in self.path:
                     log.warning("control HTTP 404 GET heatmap-like raw=%r path=%r", self.path, path)
@@ -555,7 +545,7 @@ def make_handler_class(state: ControlState):
                 )
                 return
 
-            if path.startswith("/categorize/"):
+            if path.startswith("/categorize"):
                 rest = path[len("/categorize") :] or "/"
                 if not rest.startswith("/"):
                     rest = "/" + rest

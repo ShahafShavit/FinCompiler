@@ -13,9 +13,9 @@ export default function TopNav() {
       <span className="sep">·</span>
       <NavLink to="/integrity">Data integrity</NavLink>
       <span className="sep">·</span>
-      <a href="/holdings/">Holdings</a>
+      <NavLink to="/holdings/">Holdings</NavLink>
       <span className="sep">·</span>
-      <a href="/categorize/">Categorize</a>
+      <NavLink to="/categorize/">Categorize</NavLink>
     </nav>
   );
 }

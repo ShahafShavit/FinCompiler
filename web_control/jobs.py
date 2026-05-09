@@ -8,8 +8,6 @@ from typing import Any, Callable, Optional
 
 import config
 import pipeline
-from categorization.categorizer import CategorizeFile
-from categorization.interactive.terminal import TerminalCategorizationHandler
 
 log = logging.getLogger(__name__)
 
@@ -197,14 +195,4 @@ def run_action(
 
 def _run_categorize_from_control(sink: Sink, control_state: Any = None) -> None:
     """Auto-assign what we can; anything left is visible at ``/categorize/`` (no blocking session)."""
-    from pipeline.ledger import migrate_ledger_db
-
-    migrate_ledger_db()
-    sink("CATEGORIZE: running auto pass (remaining questions live at /categorize/)")
-    cf = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=TerminalCategorizationHandler())
-    cf.auto_categorize()
-    n = cf.count_rows_needing_category()
-    if n:
-        sink(f"CATEGORIZE: {n} transaction(s) still need a category — open /categorize/")
-    else:
-        sink("CATEGORIZE: nothing is missing a category")
+    pipeline.run_auto_categorize_with_web_remainder(sink=sink)

@@ -1,13 +1,9 @@
-"""Shared top navigation for Python-rendered control pages (heatmap detail, holdings, categorize).
+"""Shared top navigation for legacy Python-rendered pages (e.g. heatmap HTML detail).
 
-The React SPA at ``/`` ships its own top nav (``web/src/components/TopNav.tsx``) that
-mirrors these links. This module is still used by the Python-rendered pages:
-- ``/holdings/`` (``web_control/holdings_page.py``)
-- ``/heatmap/legacy-detail`` (``web_control/heatmap.py:handle_detail_query``) — HTML drill-down
+The React SPA (`web/src/components/TopNav.tsx`) is the primary UI nav. This module remains
+for pages still emitted from Python (heatmap legacy detail HTML only).
 
 Links use root-absolute paths so they work regardless of any ``<base href>`` on the page.
-The Heatmap and Pipeline links target the SPA routes (no trailing slash); React Router
-takes over once the SPA is loaded.
 """
 
 

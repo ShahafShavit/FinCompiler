@@ -12,7 +12,7 @@ The local web UI is a React SPA in [`web/`](web/README.md) hosting three routes:
 - **`/pipeline`** — Pipeline runner: downloads, routing, compile, auto-categorize, Google Sheets push, live SSE log.
 - **`/heatmap`** — Monthly category heatmap (expense / income / net) + drill-down.
 
-Categorize (`/categorize/`) and Holdings (`/holdings/`) remain as Python-rendered pages and are linked from the SPA top nav.
+Categorize (`/categorize/`) and Holdings (`/holdings/`) are React routes in the SPA; the Python server only exposes JSON APIs and static assets.
 
 ### 1. Prerequisites
 
@@ -126,33 +126,28 @@ See [`web/README.md`](web/README.md) for the SPA layout and how to add new chart
 - **Home (`/`)** — Dashboard with KPIs and charts. Empty state when `data/ledger.sqlite` is missing.
 - **`/pipeline`** — One **Pipeline** card: check what you want (downloads, route inbox, compile holdings/transactions, auto-categorize), then **Run pipeline**. There is no separate “full vs both” flow—those are just combinations of the same checkboxes.
 - **`/heatmap`** — Tabbed monthly heatmap; click a cell for a per-month/category drill-down.
-- **`/categorize/`** — Answer rows that still need a category (after the ledger DB exists and an auto pass has run). No separate “session”; the page reflects whatever is still missing a category. Category fields are comboboxes (type to filter or enter a new label).
+- **`/categorize/`** — Manual category queue (React). Answer rows that still need a category after an auto pass. Combobox fields (type to filter or enter a new label).
+- **`/holdings/`** — Holdings timeline and manual ingest (React).
 
-### Headless CLI (without the web UI)
+### Headless CLI
 
 From the repo root, with the venv activated:
 
 ```bash
 python run_pipeline.py --help
+python main.py --help
 python run_pipeline.py all
 ```
 
+`main.py` is the same pipeline CLI as `run_pipeline.py`.
+
 (With venv not activated: `venv\Scripts\python.exe run_pipeline.py …` on Windows, or `venv/bin/python run_pipeline.py …` on macOS/Linux.)
 
-Interactive terminal/browser categorization via `run_pipeline.py --categorize` uses `FINANCE_CATEGORIZE_UI` and is separate from the dashboard queue at `/categorize/`.
+`run_pipeline.py … --categorize` runs an **automatic** category pass on the ledger, then tells you to finish any remaining rows in the browser at **`/categorize/`** (start `python -m web_control` first). There are no stdin prompts or a separate mini HTTP server for categorization.
 
 ### Utilities (`scripts/`)
 
 From the repo root (each adds the repo root to `sys.path` when needed):
 
 - `python scripts/verify_ledger_integrity.py` — structural audit of the ledger DB (`pipeline/ledger.py`)
-- `python scripts/run_categorize_http_workspace.py` — categorization with HTTP UI against your workspace (`FINANCE_WORKSPACE_ROOT`)
 - `python scripts/web_control_restart.py` — stop the control port listener and start `python -m web_control`
-
-### Qt desktop UI
-
-From the repo root:
-
-```bash
-python main.py
-```

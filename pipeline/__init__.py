@@ -1,15 +1,14 @@
 """
 Headless finance pipelines: holdings (balances) vs transactions.
 
-Use ``python run_pipeline.py`` or import these functions from automation.
-UI code should call into this package instead of duplicating steps.
+Use ``python main.py`` / ``python run_pipeline.py`` or import these functions from automation.
+Dashboard / web app should call into this package instead of duplicating steps.
 """
 from __future__ import annotations
 
 import glob
 import logging
 import os
-import signal
 from typing import Any, Callable, Iterable, Optional
 
 import pandas as pd
@@ -24,7 +23,7 @@ from . import spreadsheet_ingest
 
 log = logging.getLogger(__name__)
 
-# Column drops for bank/credit transaction workbooks (same as main UI)
+# Column drops for bank/credit transaction workbooks (same as default web/CLI full profile)
 TRANSACTION_DROP_COLUMNS: list[str] = [
     "סכום עסקה",
     "מטבע חיוב",
@@ -53,7 +52,7 @@ TRANSACTION_DROP_SOURCES = [
     ("מקור עסקה", "פקדון אינטר700"),
 ]
 
-# Extra drops used by the transactions UI path (brokerage etc.)
+# Extra drops used by the full web/CLI transaction path (brokerage etc.)
 TRANSACTION_DROP_SOURCES_UI_EXTRA = [
     ("מקור עסקה", "קניה-אינטרנט"),
     ("מקור עסקה", "מכירה-אינטרנט"),
@@ -333,49 +332,31 @@ def compile_holdings_main(*, sink: Optional[Callable[[str], None]] = None) -> No
     upsert_holdings_wide_to_ledger(merged, config.ledger_db_file)
 
 
-def run_categorization_interactive(
+def run_auto_categorize_with_web_remainder(
     *,
     sink: Optional[Callable[[str], None]] = None,
-    interaction_handler: Optional[Any] = None,
 ) -> None:
-    """
-    Same as the GUI categorize step: ``auto_categorize`` then ``manual_categorizer`` using
-    ``create_interaction_handler()`` (terminal or HTTP per ``FINANCE_CATEGORIZE_UI``), or a
-    caller-supplied handler (e.g. web control server with a fixed HTTP port).
-    """
-    from categorization import create_interaction_handler
+    """Auto-pass on the SQLite ledger; rows that still need a category are handled in the browser at ``/categorize/``."""
     from categorization.categorizer import CategorizeFile
+    from categorization.interactive.terminal import TerminalCategorizationHandler
 
     from pipeline.ledger import migrate_ledger_db
 
     migrate_ledger_db()
-    _notify(
-        "CATEGORIZE: interactive (auto, then prompts); FINANCE_CATEGORIZE_UI=http uses the browser",
-        sink,
+    _notify("CATEGORIZE: running auto pass (remaining questions → web app)", sink)
+    cf = CategorizeFile(
+        ledger_db_path=config.ledger_db_file,
+        interaction_handler=TerminalCategorizationHandler(),
     )
-    h = interaction_handler if interaction_handler is not None else create_interaction_handler()
-    old_sigint = signal.getsignal(signal.SIGINT)
-
-    def _sigint(_signum, _frame) -> None:  # noqa: ARG001
-        # Ensure HTTP server + blocked prompt wait are torn down before KeyboardInterrupt.
-        closer = getattr(h, "close", None)
-        if callable(closer):
-            closer()
-        raise KeyboardInterrupt
-
-    signal.signal(signal.SIGINT, _sigint)
-    try:
-        f = CategorizeFile(ledger_db_path=config.ledger_db_file, interaction_handler=h)
-        attach = getattr(h, "attach_categorizer", None)
-        if callable(attach):
-            attach(f)
-        f.auto_categorize()
-        f.manual_categorizer()
-    finally:
-        signal.signal(signal.SIGINT, old_sigint)
-        closer = getattr(h, "close", None)
-        if callable(closer):
-            closer()
+    cf.auto_categorize()
+    n = cf.count_rows_needing_category()
+    base = (
+        f"http://{config.control_http_host}:{int(config.control_http_port)}/categorize/"
+    )
+    if n:
+        _notify(f"CATEGORIZE: {n} transaction(s) still need a category — open {base}", sink)
+    else:
+        _notify("CATEGORIZE: nothing is missing a category", sink)
 
 
 def compile_transactions_main(

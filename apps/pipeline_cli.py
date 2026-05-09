@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run finance pipelines without the Qt UI.
+Run finance pipelines from the command line (browser-first; manual categorize via web_control).
 
 For full documentation run:
 
@@ -34,7 +34,7 @@ def _run_cli_backup_first() -> None:
 # ---------------------------------------------------------------------------
 
 MAIN_DESCRIPTION = """\
-Run the holdings (balances) and/or transactions pipelines without opening the GUI.
+Run the holdings (balances) and/or transactions pipelines from the CLI.
 
 Data flow (short version):
   - Chrome / Selenium still download into the shared folder: data/input/
@@ -129,8 +129,8 @@ TRANSACTIONS_EPILOG = """\
 notes:
   - Bank credit + bank osh can run in one Leumi session (enable both flags).
   - --from-date / --to-date only affect --fetch-bank-osh (same strings as in the bank UI).
-  - drop-profile: full = GUI-style filters; batch = smaller legacy drop set.
-  - --categorize: interactive prompts after compile; set FINANCE_CATEGORIZE_UI=http for browser.
+  - drop-profile: full = same column drops as the web / default transaction processor; batch = smaller legacy drop set.
+  - --categorize: after compile, run auto categorization; finish in the browser at /categorize/ (see web_control).
 
 examples:
   python run_pipeline.py transactions
@@ -151,7 +151,7 @@ Order:
   2. route - split everything in data/input into holdings vs transactions inboxes.
   3. Full holdings pipeline (no second route).
   4. Full transactions pipeline (no second route).
-  5. Optional: --categorize for interactive prompts (set FINANCE_CATEGORIZE_UI=http for browser).
+  5. Optional: --categorize runs auto categorization; open the web app (/categorize/) for any rows that still need a category.
 """
 
 ALL_EPILOG = """\
@@ -162,8 +162,8 @@ ALL_EPILOG = """\
 
 --from-date / --to-date apply to the bank osh download inside the Leumi session.
 
---auto-categorize runs only the automatic category pass (no prompts). --categorize runs
-auto + manual prompts (HTTP or terminal); do not combine with --auto-categorize.
+--auto-categorize runs only the automatic category pass. --categorize runs auto plus points you
+to the browser for anything left; do not combine with --auto-categorize.
 """
 
 
@@ -331,14 +331,14 @@ def _build_parser() -> argparse.ArgumentParser:
     tg_out.add_argument(
         "--categorize",
         action="store_true",
-        help="After compile: auto + interactive prompts (FINANCE_CATEGORIZE_UI=http for browser).",
+        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m web_control`).",
     )
     tg_out.add_argument(
         "--drop-profile",
         choices=("full", "batch"),
         default="full",
         metavar="PROFILE",
-        help="'full' = same column drops as the GUI transaction processor (default). "
+        help="'full' = same column drops as the default web transaction processor (default). "
         "'batch' = smaller drop set for legacy imports.",
     )
     tg_out.add_argument(
@@ -382,7 +382,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ag2.add_argument(
         "--categorize",
         action="store_true",
-        help="After compile: auto categorization then interactive prompts (terminal or HTTP via .env).",
+        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m web_control`).",
     )
     ag2.add_argument(
         "--drop-profile",
@@ -412,7 +412,7 @@ def _build_parser() -> argparse.ArgumentParser:
     b.add_argument(
         "--categorize",
         action="store_true",
-        help="After compile: auto + interactive prompts (FINANCE_CATEGORIZE_UI=http for browser).",
+        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m web_control`).",
     )
     b.add_argument(
         "--drop-profile",
@@ -472,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
             drop_profile=args.drop_profile,
         )
         if do_interactive_cat:
-            pipeline.run_categorization_interactive()
+            pipeline.run_auto_categorize_with_web_remainder()
         return 0
 
     if args.command == "all":
@@ -493,7 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             auto_categorize=auto_only,
         )
         if args.categorize:
-            pipeline.run_categorization_interactive()
+            pipeline.run_auto_categorize_with_web_remainder()
         return 0
 
     if args.command == "both-process":
@@ -505,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
             auto_categorize=auto_only,
         )
         if args.categorize:
-            pipeline.run_categorization_interactive()
+            pipeline.run_auto_categorize_with_web_remainder()
         return 0
 
     return 1

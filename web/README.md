@@ -6,9 +6,11 @@ Routes:
 
 - **`/`** — Dashboard (KPIs + charts: net worth, allocation, cash flow, top categories, sources). Reads from `/api/dashboard/*`.
 - **`/pipeline`** — Pipeline runner (downloads, route, compile, auto-categorize, Sheets push, live log). Wires to `/api/jobs/*`, `/api/sheets/*`, `/api/events` (SSE).
-- **`/heatmap`** — Monthly category heatmap (expense / income / net) with stats. Reads `/heatmap/api/data`, refresh via `/heatmap/api/refresh`. Click a cell → opens `/heatmap/detail` (Python-rendered HTML) in a new tab.
+- **`/heatmap/detail`** — Per-month/category drill-down (React). Uses `/heatmap/api/detail` and related APIs.
+- **`/holdings/`** — Holdings timeline and manual ingest. Uses `/api/holdings/*`.
+- **`/categorize/`** — Category queue. Uses `/categorize/api/*`.
 
-Holdings (`/holdings/`) and Categorize (`/categorize/`) remain Python-rendered by `web_control` and are linked from the SPA's top nav.
+Some legacy flows may still open Python-rendered HTML (e.g. older heatmap drill links); prefer in-app routes above.
 
 ## Prerequisites
 

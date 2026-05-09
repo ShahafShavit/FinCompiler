@@ -101,7 +101,7 @@ def _calendar_year_str() -> str:
 
 def desktop_holdings_sheet_name() -> str:
     """
-    Holdings tab name used by the desktop app sync (calendar year suffix by default).
+    Holdings worksheet title for local → Google Sheets push (calendar year suffix by default).
 
     Override with ``FINANCE_DESKTOP_HOLDINGS_SHEET`` when the sheet title is non-standard.
     """
@@ -111,10 +111,10 @@ def desktop_holdings_sheet_name() -> str:
 
 def desktop_totals_sheet_name() -> str:
     """
-    Totals / full-ledger tab name for desktop ↔ Sheets sync.
+    Totals / full-ledger worksheet title for local → Google Sheets push.
 
-    Defaults to ``totals_sheet_name`` (``FINANCE_TOTALS_SHEET_NAME``, usually ``Totals``) so PyQt,
-    web heatmap refresh, and push preview use **one** all-time worksheet — not a year-suffixed tab.
+    Defaults to ``totals_sheet_name`` (``FINANCE_TOTALS_SHEET_NAME``, usually ``Totals``) so
+    web heatmap and Sheets push preview use **one** all-time worksheet — not a year-suffixed tab.
 
     Override with ``FINANCE_DESKTOP_TOTALS_SHEET`` for a non-standard title.
     """
@@ -123,20 +123,13 @@ def desktop_totals_sheet_name() -> str:
 
 
 def desktop_sync_sheet_pairs() -> list[tuple[str, str]]:
-    """``(worksheet_title, local_csv_path)`` in the same order as ``qt_main`` pull/push."""
+    """``(worksheet_title, local_csv_path)`` for Sheets push (holdings first, totals second)."""
     return [
         (desktop_holdings_sheet_name(), holdings_file),
         (desktop_totals_sheet_name(), compiled_file),
     ]
 expenses_web_file = os.path.join(_web_root, "expenses_web.html")
 incomes_web_file = os.path.join(_web_root, "incomes_web.html")
-
-# Manual categorization UI: "terminal" | "http" (browser on localhost)
-categorize_ui_mode = os.environ.get("FINANCE_CATEGORIZE_UI", "terminal").strip().lower()
-categorize_http_host = os.environ.get("FINANCE_CATEGORIZE_HTTP_HOST", "127.0.0.1").strip() or "127.0.0.1"
-categorize_http_port = int(os.environ.get("FINANCE_CATEGORIZE_HTTP_PORT", "0") or "0")
-_categorize_open = os.environ.get("FINANCE_CATEGORIZE_HTTP_OPEN_BROWSER", "1").strip().lower()
-categorize_http_open_browser = _categorize_open not in ("0", "false", "no", "off")
 
 # Local web control dashboard: pipeline at / and categorization at /categorize/ on the same port
 control_http_host = os.environ.get("FINANCE_CONTROL_HTTP_HOST", "127.0.0.1").strip() or "127.0.0.1"

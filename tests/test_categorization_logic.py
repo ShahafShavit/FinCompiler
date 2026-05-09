@@ -6,19 +6,13 @@ Run from repo root:
 
 To exercise the real pipeline against a throwaway tree, set FINANCE_WORKSPACE_ROOT to a
 temp directory, ``importlib.reload`` on ``config``, then copy fixtures under that root.
-
-Manual browser UI (separate): set FINANCE_CATEGORIZE_UI=http and run the app (GET /api/next), or:
-  python -c "from tests.test_categorization_logic import manual_http_smoke; manual_http_smoke()"
 """
 
 from __future__ import annotations
 
-import concurrent.futures
 import json
 import os
 import tempfile
-import threading
-import time
 import unittest
 from unittest.mock import patch
 
@@ -27,7 +21,6 @@ import pandas as pd
 
 import config
 from categorization.categorizer import CategorizeFile
-from categorization.interactive.http_server import HttpCategorizationHandler
 from categorization.interactive.prompts import (
     FluidStorePrompt,
     NewStorePrompt,
@@ -236,66 +229,10 @@ class CategorizeStorenameTests(unittest.TestCase):
         self.assertNotIn(abs_fp, paths)
 
 
-class HttpHandlerIntegrationTest(unittest.TestCase):
-    """One thread blocks on prompt; another answers via the local HTTP API."""
-
-    def test_http_fluid_prompt_roundtrip(self) -> None:
-        h = HttpCategorizationHandler(host="127.0.0.1", port=0, open_browser=False)
-        self.addCleanup(h.close)
-
-        prompt = FluidStorePrompt(
-            store_name="HttpStore",
-            date="2024-02-02",
-            expense=0,
-            income=5,
-            details=None,
-            digits=None,
-            dynamic_categories=("A", "B"),
-            all_categories=("A", "B", "C"),
-            prompt_id="test-pid-1",
-        )
-
-        result_holder: list[str] = []
-
-        def client() -> None:
-            time.sleep(0.15)
-            import urllib.error
-            import urllib.request
-
-            base = h.base_url
-            for _ in range(50):
-                try:
-                    r = urllib.request.urlopen(base + "api/next", timeout=0.5)
-                    data = json.loads(r.read().decode("utf-8"))
-                except (urllib.error.URLError, json.JSONDecodeError):
-                    time.sleep(0.05)
-                    continue
-                pending = data.get("pending", data)
-                if pending.get("kind") == "fluid":
-                    body = json.dumps(
-                        {"kind": "fluid", "prompt_id": pending["prompt_id"], "category": "B"}
-                    ).encode("utf-8")
-                    req = urllib.request.Request(
-                        base + "api/respond",
-                        data=body,
-                        headers={"Content-Type": "application/json"},
-                        method="POST",
-                    )
-                    urllib.request.urlopen(req, timeout=2)
-                    return
-                time.sleep(0.05)
-            raise AssertionError("timed out waiting for fluid prompt in /api/next")
-
-        t = threading.Thread(target=client, daemon=True)
-        t.start()
-        try:
-            result_holder.append(h.prompt_fluid_store(prompt))
-        finally:
-            t.join(timeout=5)
-        self.assertEqual(result_holder[0], "B")
+class FluidPromptSerializationTests(unittest.TestCase):
+    """Prompt ``to_display_dict()`` must serialize for the web categorize API (JSON)."""
 
     def test_display_dict_json_matches_real_csv_cell_types(self) -> None:
-        """Pandas/numpy scalars from read_csv must serialize for /api/next (browser JSON.parse)."""
         p = FluidStorePrompt(
             store_name=np.str_("Shop"),
             date=pd.Timestamp("2024-06-01"),
@@ -309,84 +246,7 @@ class HttpHandlerIntegrationTest(unittest.TestCase):
         )
         json.loads(json.dumps(p.to_display_dict(), ensure_ascii=False))
 
-    def test_http_concurrent_get_index_and_api(self) -> None:
-        """Browsers open multiple TCP connections; index + /api/next must not deadlock."""
-        import urllib.request
-
-        h = HttpCategorizationHandler(host="127.0.0.1", port=0, open_browser=False)
-        self.addCleanup(h.close)
-
-        prompt = FluidStorePrompt(
-            store_name="Concurrent",
-            date="2024-01-01",
-            expense=0,
-            income=1,
-            details=None,
-            digits=None,
-            dynamic_categories=(),
-            all_categories=("a",),
-            prompt_id="conc-get",
-        )
-
-        def blocker() -> None:
-            h.prompt_fluid_store(prompt)
-
-        th = threading.Thread(target=blocker, daemon=True)
-        th.start()
-        for _ in range(100):
-            time.sleep(0.02)
-            if h.base_url:
-                break
-        else:
-            self.fail("server did not start")
-        base = h.base_url
-
-        def get_index() -> bytes:
-            return urllib.request.urlopen(base, timeout=3).read(300)
-
-        def get_api() -> bytes:
-            return urllib.request.urlopen(base + "api/next", timeout=3).read()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            f_idx = pool.submit(get_index)
-            f_api = pool.submit(get_api)
-            idx_body = f_idx.result()
-            api_body = f_api.result()
-        self.assertIn(b"<!DOCTYPE html>", idx_body)
-        self.assertIn(b"fluid", api_body)
-
-        req = urllib.request.Request(
-            base + "api/respond",
-            data=json.dumps(
-                {"kind": "fluid", "prompt_id": "conc-get", "category": "a"}
-            ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=2)
-        th.join(timeout=3)
-
-
-def manual_http_smoke() -> None:
-    """Interactive: prints URL; open in browser and answer one prompt (Ctrl+C to exit)."""
-    print("Open the printed URL in a browser; use Ctrl+C to stop.\n")
-    h = HttpCategorizationHandler(open_browser=True)
-    try:
-        p = FluidStorePrompt(
-            store_name="Smoke",
-            date="2024-01-01",
-            expense=0,
-            income=1,
-            details=None,
-            digits=None,
-            dynamic_categories=("a", "b"),
-            all_categories=("a", "b", "c"),
-            prompt_id="smoke",
-        )
-        print("Answer:", h.prompt_fluid_store(p))
-    finally:
-        h.close()
-
 
 if __name__ == "__main__":
     unittest.main()
+

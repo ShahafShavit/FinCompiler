@@ -1,4 +1,4 @@
-"""Protocol for pluggable categorization UIs (terminal, HTTP, future Discord, etc.)."""
+"""Protocol for pluggable categorization interaction (e.g. terminal prompts or web queue handlers)."""
 
 from __future__ import annotations
 
