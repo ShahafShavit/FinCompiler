@@ -1,5 +1,5 @@
 -- =============================================================================
--- financeCompilerv3.5 — canonical SQLite ledger (full DDL)
+-- FinCompiler — canonical SQLite ledger (full DDL)
 -- =============================================================================
 -- Single file database: ledger + static mappings + holdings.
 -- Aligns with docs/data-storage-and-pipeline-evaluation.md (Sections 13.3, 13.9, 13.10)

@@ -1,4 +1,4 @@
-# Finance compiler — web SPA
+# FinCompiler — web SPA
 
 React + Vite + TypeScript single-page app served by the Python `web_control` server from [`app/backend`](../backend/web_control/).
 

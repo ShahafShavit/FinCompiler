@@ -2,9 +2,9 @@
 
 <h1>
 <p align="center">
-  <img src="docs/images/readme-banner.png" alt="Finance Compiler — web-first personal finance tooling" width="800">
+  <img src="docs/images/readme-banner.png" alt="FinCompiler — web-first personal finance tooling" width="800">
   <br>
-  Finance Compiler
+  FinCompiler
 </p>
 </h1>
 
@@ -15,11 +15,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/stargazers"><img src="https://img.shields.io/github/stars/ShahafShavit/financeCompilerv3.5?style=flat-square&logo=github&label=stars" alt="GitHub stars"></a>
-  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/network/members"><img src="https://img.shields.io/github/forks/ShahafShavit/financeCompilerv3.5?style=flat-square&logo=github&label=forks" alt="GitHub forks"></a>
-  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ShahafShavit/financeCompilerv3.5?style=flat-square" alt="License"></a>
-  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/commits/main"><img src="https://img.shields.io/github/last-commit/ShahafShavit/financeCompilerv3.5?style=flat-square&logo=github&label=last%20commit" alt="Last commit"></a>
-  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/issues"><img src="https://img.shields.io/github/issues/ShahafShavit/financeCompilerv3.5?style=flat-square&logo=github&label=issues" alt="Issues"></a>
+  <a href="https://github.com/ShahafShavit/FinCompiler/stargazers"><img src="https://img.shields.io/github/stars/ShahafShavit/FinCompiler?style=flat-square&logo=github&label=stars" alt="GitHub stars"></a>
+  <a href="https://github.com/ShahafShavit/FinCompiler/network/members"><img src="https://img.shields.io/github/forks/ShahafShavit/FinCompiler?style=flat-square&logo=github&label=forks" alt="GitHub forks"></a>
+  <a href="https://github.com/ShahafShavit/FinCompiler/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ShahafShavit/FinCompiler?style=flat-square" alt="License"></a>
+  <a href="https://github.com/ShahafShavit/FinCompiler/commits/main"><img src="https://img.shields.io/github/last-commit/ShahafShavit/FinCompiler?style=flat-square&logo=github&label=last%20commit" alt="Last commit"></a>
+  <a href="https://github.com/ShahafShavit/FinCompiler/issues"><img src="https://img.shields.io/github/issues/ShahafShavit/FinCompiler?style=flat-square&logo=github&label=issues" alt="Issues"></a>
 </p>
 
 <p align="center">
@@ -47,7 +47,7 @@
 
 ## Overview
 
-Finance Compiler is a small **Python backend** plus **React SPA**: ingest spreadsheets, route them through **`data/pipeline/`**, and keep the canonical picture in **`data/ledger.sqlite`** (see [`app/backend/config.py`](app/backend/config.py)).
+**FinCompiler** is a small **Python backend** plus **React SPA**: ingest spreadsheets, route them through **`data/pipeline/`**, and keep the canonical picture in **`data/ledger.sqlite`** (see [`app/backend/config.py`](app/backend/config.py)).
 
 **What you get**
 
@@ -84,8 +84,8 @@ Optional portal fetch and Sheets-related flows use **`config`** / **`pipeline`**
 ### 1. Clone
 
 ```bash
-git clone <repository-url>
-cd <cloned-directory>
+git clone https://github.com/ShahafShavit/FinCompiler.git
+cd FinCompiler
 ```
 
 ### 2. Python dependencies

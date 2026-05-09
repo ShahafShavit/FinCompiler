@@ -85,7 +85,7 @@ def create_critical_paths_backup(
     manifest: dict[str, Any] = {
         "schema_version": _SCHEMA_VERSION,
         "created_at_utc": created_at,
-        "tool": "financeCompilerv3.5-pipeline-backup",
+        "tool": "FinCompiler-pipeline-backup",
         "included_top_level": included,
         "total_bytes": 0,
         "backup_root": os.path.abspath(root),
