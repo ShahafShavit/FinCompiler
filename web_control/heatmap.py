@@ -849,8 +849,8 @@ _DETAIL_EXTRA_COLS = [
     "category_updated_at",
     "data_updated_at",
 ]
-_COLS_EXP = ["תאריך", "מקור עסקה", "בחובה", "תאור מורחב", "פירוט נוסף"] + _DETAIL_EXTRA_COLS
-_COLS_IN = ["תאריך", "מקור עסקה", "בזכות", "תאור מורחב", "פירוט נוסף"] + _DETAIL_EXTRA_COLS
+_COLS_EXP = ["תאריך", "מקור עסקה", "קטגוריה", "בחובה", "תאור מורחב", "פירוט נוסף"] + _DETAIL_EXTRA_COLS
+_COLS_IN = ["תאריך", "מקור עסקה", "קטגוריה", "בזכות", "תאור מורחב", "פירוט נוסף"] + _DETAIL_EXTRA_COLS
 _DETAIL_SOURCE_VISIBLE = (
     ["תאריך", "מקור עסקה", "קטגוריה", "בחובה", "בזכות", "תאור מורחב", "פירוט נוסף"]
     + _DETAIL_EXTRA_COLS
@@ -963,8 +963,8 @@ def _detail_frames_category(
     work = sub.copy()
     work["__cat__"] = work["קטגוריה"].fillna("").astype(str).str.strip()
     work.loc[work["__cat__"] == "", "__cat__"] = "(uncategorized)"
-    cols_show_exp = _detail_column_order(work, _COLS_EXP + ["קטגוריה"])
-    cols_show_in = _detail_column_order(work, _COLS_IN + ["קטגוריה"])
+    cols_show_exp = _detail_column_order(work, _COLS_EXP)
+    cols_show_in = _detail_column_order(work, _COLS_IN)
     if report_type == "expense":
         mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
         details = _sort_detail_frame(work.loc[mask, cols_show_exp], work)

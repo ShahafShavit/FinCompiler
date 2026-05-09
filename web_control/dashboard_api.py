@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -30,6 +31,9 @@ from . import dashboard_tx_sql
 
 log = logging.getLogger(__name__)
 
+_DASH_CACHE_MAX = 64
+_dash_response_cache: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+
 
 # --- shared helpers ---------------------------------------------------------
 
@@ -40,6 +44,25 @@ def _ledger_path() -> str:
 
 def _ledger_exists() -> bool:
     return os.path.isfile(_ledger_path())
+
+
+def _ledger_mtime_ns_for_cache() -> int:
+    """Monotonic cache revision for the ledger file; ``-1`` when the file is absent."""
+    path = _ledger_path()
+    if not os.path.isfile(path):
+        return -1
+    st = os.stat(path)
+    return int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000)))
+
+
+def ledger_meta() -> dict[str, Any]:
+    """Cheap revision for dashboards: ``stat`` only, no DB open or migrate."""
+    path = _ledger_path()
+    if not os.path.isfile(path):
+        return {"ok": True, "exists": False, "mtime_ns": None}
+    st = os.stat(path)
+    mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000)))
+    return {"ok": True, "exists": True, "mtime_ns": mtime_ns}
 
 
 def _empty_payload(extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -440,7 +463,15 @@ def _qs_int(qs: dict[str, list[str]], key: str, default: int) -> int:
         return default
 
 
-def handle_dashboard_request(name: str, qs: dict[str, list[str]]) -> dict[str, Any]:
+def _qs_cache_key(qs: dict[str, list[str]]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    items: list[tuple[str, tuple[str, ...]]] = []
+    for k in sorted(qs.keys()):
+        vals = qs.get(k) or []
+        items.append((k, tuple(str(x) for x in vals)))
+    return tuple(items)
+
+
+def _dispatch_dashboard_request_uncached(name: str, qs: dict[str, list[str]]) -> dict[str, Any]:
     """Dispatch by name. Unknown name → ``ok: False``."""
     if name == "summary":
         return summary()
@@ -477,6 +508,22 @@ def handle_dashboard_request(name: str, qs: dict[str, list[str]]) -> dict[str, A
     return {"ok": False, "error": "unknown_endpoint", "message": f"unknown dashboard endpoint: {name}"}
 
 
+def handle_dashboard_request(name: str, qs: dict[str, list[str]]) -> dict[str, Any]:
+    """Dispatch with in-memory JSON cache keyed by endpoint + query + ledger ``mtime_ns``."""
+    rev = _ledger_mtime_ns_for_cache()
+    ckey = (str(name), _qs_cache_key(qs), rev)
+    if ckey in _dash_response_cache:
+        _dash_response_cache.move_to_end(ckey)
+        return _dash_response_cache[ckey]
+    payload = _dispatch_dashboard_request_uncached(name, qs)
+    if payload.get("ok") is True:
+        _dash_response_cache[ckey] = payload
+        _dash_response_cache.move_to_end(ckey)
+        while len(_dash_response_cache) > _DASH_CACHE_MAX:
+            _dash_response_cache.popitem(last=False)
+    return payload
+
+
 __all__ = [
     "summary",
     "allocation_latest",
@@ -486,5 +533,6 @@ __all__ = [
     "category_period_stats",
     "source_category_matrix",
     "sources",
+    "ledger_meta",
     "handle_dashboard_request",
 ]

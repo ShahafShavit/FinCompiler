@@ -358,6 +358,15 @@ def make_handler_class(state: ControlState):
                 self._send(404, b"", "image/x-icon")
                 return
 
+            if path == "/api/ledger-meta":
+                try:
+                    payload = dashboard_api.ledger_meta()
+                except Exception:  # noqa: BLE001
+                    log.exception("GET /api/ledger-meta failed")
+                    payload = {"ok": False, "exists": False, "mtime_ns": None, "error": "server_error"}
+                self._send(200, _json_bytes_strict(payload), "application/json; charset=utf-8")
+                return
+
             if path.startswith("/api/dashboard/"):
                 name = path[len("/api/dashboard/") :].strip("/")
                 qs = parse_qs(parsed.query, keep_blank_values=False)

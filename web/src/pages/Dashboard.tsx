@@ -1,4 +1,5 @@
-import { useMemo, useEffect, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Area,
@@ -12,13 +13,14 @@ import {
   Line,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 
-import { formatMoney, formatPct, getJson } from '../lib/api';
+import { fetchJson, formatMoney, formatPct } from '../lib/api';
 import {
   heatmapDetailCategory,
   heatmapDetailMonth,
@@ -31,10 +33,50 @@ import type {
   CategoryPeriodStatRow,
   CategoryPeriodStatsResponse,
   DashboardSummary,
+  LedgerMeta,
   SourceCategoryMatrixResponse,
 } from '../lib/dashboardTypes';
 
 import './Dashboard.css';
+
+const DASH_QUERY_GC_MS = 60 * 60 * 1000;
+
+function useLedgerMetaQuery() {
+  return useQuery({
+    queryKey: ['ledger-meta'] as const,
+    queryFn: async (): Promise<LedgerMeta> => {
+      const r = await fetchJson<LedgerMeta>('/api/ledger-meta');
+      if (!r.ok) throw new Error(`ledger-meta: HTTP ${r.status}`);
+      return r.data;
+    },
+    staleTime: 0,
+    gcTime: DASH_QUERY_GC_MS,
+    refetchOnWindowFocus: true,
+  });
+}
+
+function dashboardRevisionFromMeta(meta: LedgerMeta | undefined): number | 'no_file' | null {
+  if (!meta?.ok) return null;
+  if (!meta.exists) return 'no_file';
+  if (meta.mtime_ns == null) return null;
+  return meta.mtime_ns;
+}
+
+async function fetchDashboardJson<T>(url: string): Promise<T> {
+  const r = await fetchJson<T>(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.data;
+}
+
+function useDashboardQuery<T>(revision: number | 'no_file' | null, url: string, metaReady: boolean) {
+  return useQuery({
+    queryKey: ['dashboard', url, revision] as const,
+    queryFn: () => fetchDashboardJson<T>(url),
+    enabled: metaReady && revision !== null,
+    staleTime: Infinity,
+    gcTime: DASH_QUERY_GC_MS,
+  });
+}
 
 const PALETTE = [
   '#4c6ef5',
@@ -110,33 +152,33 @@ function MoneyTooltip({ active, payload, label }: { active?: boolean; payload?: 
   );
 }
 
-function CashflowTooltip({
+function CashflowMonthTooltip({
   active,
-  payload,
   label,
+  payload,
 }: {
   active?: boolean;
-  payload?: TooltipPayload[];
   label?: string;
+  payload?: Array<{ payload?: CashflowRow }>;
 }) {
-  if (!active || !payload || payload.length === 0) return null;
-  const sr = payload.find((p) => p.name === 'Savings rate');
-  const moneyRows = payload.filter((p) => p.name !== 'Savings rate');
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
   return (
     <div className="dash-tooltip">
       <div style={{ marginBottom: '0.25rem', fontWeight: 600 }}>{label}</div>
-      {moneyRows.map((p, i) => (
-        <div key={i} className="dash-tooltip__row">
-          <span style={{ color: p.color }}>{p.name}</span>
-          <span>{formatMoney(p.value ?? 0)}</span>
-        </div>
-      ))}
-      {sr?.value != null && Number.isFinite(sr.value) ? (
-        <div className="dash-tooltip__row">
-          <span style={{ color: sr.color }}>{sr.name}</span>
-          <span>{formatPct(sr.value)}</span>
-        </div>
-      ) : null}
+      <div className="dash-tooltip__row">
+        <span style={{ color: '#37b24d' }}>Income</span>
+        <span>{formatMoney(row.income)}</span>
+      </div>
+      <div className="dash-tooltip__row">
+        <span style={{ color: '#fa5252' }}>Expense</span>
+        <span>{formatMoney(row.expense)}</span>
+      </div>
+      <div className="dash-tooltip__row">
+        <span style={{ color: '#a5b4fc' }}>Net</span>
+        <span>{formatMoney(row.net)}</span>
+      </div>
     </div>
   );
 }
@@ -178,42 +220,15 @@ function CategoryChartTooltip({
   );
 }
 
-function useFetch<T>(url: string): { data: T | null; error: string | null; loading: boolean } {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getJson<T>(url)
-      .then((d) => {
-        if (!cancelled) {
-          setData(d);
-          setLoading(false);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e));
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
-
-  return { data, error, loading };
-}
-
 function AllocationDonutCard() {
-  const { data, error, loading } = useFetch<{
+  const meta = useLedgerMetaQuery();
+  const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
+  const metaReady = meta.isSuccess;
+  const { data, error, isPending } = useDashboardQuery<{
     ok: boolean;
     rows: AllocationRow[];
     as_of_date: string | null;
-  }>('/api/dashboard/allocation');
+  }>(rev, '/api/dashboard/allocation', metaReady);
   const filtered = useMemo(
     () => (data?.rows ?? []).filter((r) => Math.abs(r.balance_ils) > 0.005),
     [data?.rows],
@@ -226,10 +241,10 @@ function AllocationDonutCard() {
           <span className="dash-card__meta">({data.as_of_date})</span>
         ) : null}
       </h3>
-      {loading ? (
+      {isPending ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error}</div>
+        <div className="dash-empty">Error: {error.message}</div>
       ) : filtered.length === 0 ? (
         <div className="dash-empty">No holdings snapshot yet.</div>
       ) : (
@@ -259,11 +274,14 @@ function AllocationDonutCard() {
 type AllocPivot = { as_of_date: string } & Record<string, number | string>;
 
 function NetWorthStackedCard() {
-  const { data, error, loading } = useFetch<{
+  const meta = useLedgerMetaQuery();
+  const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
+  const metaReady = meta.isSuccess;
+  const { data, error, isPending } = useDashboardQuery<{
     ok: boolean;
     rows: AllocationTimelineRow[];
     activity_types: string[];
-  }>('/api/dashboard/allocation-timeline');
+  }>(rev, '/api/dashboard/allocation-timeline', metaReady);
   const { rows, types } = useMemo(() => {
     const out: AllocPivot[] = [];
     const byDate: Record<string, AllocPivot> = {};
@@ -287,10 +305,10 @@ function NetWorthStackedCard() {
       <p className="dash-card__sub">
         Stacked balances by activity type; total height = net worth per snapshot.
       </p>
-      {loading ? (
+      {isPending ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error}</div>
+        <div className="dash-empty">Error: {error.message}</div>
       ) : rows.length === 0 ? (
         <div className="dash-empty">No holdings snapshots yet.</div>
       ) : (
@@ -322,15 +340,20 @@ function NetWorthStackedCard() {
 
 function CashflowCard() {
   const navigate = useNavigate();
-  const { data, error, loading } = useFetch<{ ok: boolean; rows: CashflowRow[] }>(
-    '/api/dashboard/cashflow-monthly?months=24',
+  const meta = useLedgerMetaQuery();
+  const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
+  const metaReady = meta.isSuccess;
+  const cashflowUrl = '/api/dashboard/cashflow-monthly?months=24';
+  const { data, error, isPending } = useDashboardQuery<{ ok: boolean; rows: CashflowRow[] }>(
+    rev,
+    cashflowUrl,
+    metaReady,
   );
   const rows = useMemo(
     () =>
       (data?.rows ?? []).map((r) => ({
         ...r,
         expenseNeg: -Math.abs(r.expense),
-        savingsRate: r.income > 0 ? r.net / r.income : null,
       })),
     [data?.rows],
   );
@@ -338,21 +361,33 @@ function CashflowCard() {
     <div className="dash-card dash-card--chart-click">
       <h3 className="dash-card__title">Monthly cash flow</h3>
       <p className="dash-card__sub">
-        Last 24 months · bars = income & expense, line = net, purple = savings rate vs income. Click to drill.{' '}
+        Last 24 months · green = income above 0, red = expense below 0 (outflows), blue = net cash flow (income − expense).
+        Click a bar or net point to drill.{' '}
         <a className="dash-inline-link" href="/heatmap">
           Category heatmap
         </a>
       </p>
-      {loading ? (
+      {isPending ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error}</div>
+        <div className="dash-empty">Error: {error.message}</div>
       ) : rows.length === 0 ? (
         <div className="dash-empty">No transactions yet.</div>
       ) : (
         <ResponsiveContainer width="100%" height={300}>
-          <ComposedChart data={rows} margin={{ top: 6, right: 18, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2b2c33" />
+          <ComposedChart
+            data={rows}
+            margin={{ top: 8, right: 10, left: 4, bottom: 0 }}
+            barCategoryGap="18%"
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#2b2c33" vertical={false} />
+            <ReferenceLine
+              yAxisId="left"
+              y={0}
+              stroke="#e8e8ec"
+              strokeWidth={2}
+              strokeLinecap="square"
+            />
             <XAxis dataKey="month" stroke="#aeb4c0" fontSize={11} />
             <YAxis
               yAxisId="left"
@@ -360,22 +395,14 @@ function CashflowCard() {
               fontSize={11}
               tickFormatter={(v) => formatMoney(v as number, '')}
             />
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              stroke="#c4b5fd"
-              fontSize={10}
-              width={44}
-              tickFormatter={(v) => `${Math.round((Number(v) as number) * 100)}%`}
-            />
-            <Tooltip content={<CashflowTooltip />} />
+            <Tooltip content={<CashflowMonthTooltip />} />
             <Legend wrapperStyle={{ fontSize: '0.78rem' }} />
             <Bar
               yAxisId="left"
               dataKey="income"
               name="Income"
               fill="#37b24d"
-              stackId="cf"
+              maxBarSize={44}
               cursor="pointer"
               onClick={(d: unknown) => {
                 const m = (d as CashflowRow)?.month;
@@ -385,9 +412,9 @@ function CashflowCard() {
             <Bar
               yAxisId="left"
               dataKey="expenseNeg"
-              name="Expense"
+              name="Expense (outflow)"
               fill="#fa5252"
-              stackId="cf"
+              maxBarSize={44}
               cursor="pointer"
               onClick={(d: unknown) => {
                 const m = (d as CashflowRow)?.month;
@@ -420,17 +447,6 @@ function CashflowCard() {
                   />
                 );
               }}
-            />
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="savingsRate"
-              name="Savings rate"
-              stroke="#c4b5fd"
-              strokeWidth={1.5}
-              dot={false}
-              connectNulls={false}
-              isAnimationActive={false}
             />
           </ComposedChart>
         </ResponsiveContainer>
@@ -474,9 +490,11 @@ function compareCatRows(a: CategoryPeriodStatRow, b: CategoryPeriodStatRow, key:
 function CategoryOverviewCard() {
   const navigate = useNavigate();
   const [categoryPeriod, setCategoryPeriod] = useState<CategoryPeriodToken>('12m');
-  const { data, error, loading } = useFetch<CategoryPeriodStatsResponse>(
-    `/api/dashboard/category-period-stats?period=${encodeURIComponent(categoryPeriod)}&limit=40`,
-  );
+  const meta = useLedgerMetaQuery();
+  const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
+  const metaReady = meta.isSuccess;
+  const catUrl = `/api/dashboard/category-period-stats?period=${encodeURIComponent(categoryPeriod)}&limit=40`;
+  const { data, error, isPending } = useDashboardQuery<CategoryPeriodStatsResponse>(rev, catUrl, metaReady);
   const [view, setView] = useState<'table' | 'chart'>('table');
   const [sort, setSort] = useState<{ key: CatSortKey; dir: 'asc' | 'desc' }>({
     key: 'flow',
@@ -555,10 +573,10 @@ function CategoryOverviewCard() {
         </div>
       </div>
 
-      {loading ? (
+      {isPending ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error}</div>
+        <div className="dash-empty">Error: {error.message}</div>
       ) : !data?.rows?.length ? (
         <div className="dash-empty">No categorized activity in this period.</div>
       ) : view === 'table' ? (
@@ -679,8 +697,15 @@ const OTHER_BUCKET_RE = /^\(other /i;
 
 function SourceCategoryMatrixCard() {
   const navigate = useNavigate();
-  const { data, error, loading } = useFetch<SourceCategoryMatrixResponse>(
-    '/api/dashboard/source-category-matrix?months=12&direction=expense&top_sources=10&top_categories=12',
+  const meta = useLedgerMetaQuery();
+  const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
+  const metaReady = meta.isSuccess;
+  const matrixUrl =
+    '/api/dashboard/source-category-matrix?months=12&direction=expense&top_sources=10&top_categories=12';
+  const { data, error, isPending } = useDashboardQuery<SourceCategoryMatrixResponse>(
+    rev,
+    matrixUrl,
+    metaReady,
   );
   const maxCell = useMemo(() => {
     let m = 0;
@@ -708,10 +733,10 @@ function SourceCategoryMatrixCard() {
       <p className="dash-card__sub">
         Last 12 months · expense amounts by bank/source and category. Click a cell for transactions.
       </p>
-      {loading ? (
+      {isPending ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error}</div>
+        <div className="dash-empty">Error: {error.message}</div>
       ) : !data?.sources?.length || !data?.categories?.length ? (
         <div className="dash-empty">No expense transactions in range.</div>
       ) : (
@@ -763,9 +788,15 @@ function SourceCategoryMatrixCard() {
 }
 
 function KpiStrip() {
-  const { data, error, loading } = useFetch<DashboardSummary>('/api/dashboard/summary');
-  if (loading) return <div className="dash-empty">Loading KPIs…</div>;
-  if (error) return <div className="dash-empty">Error: {error}</div>;
+  const meta = useLedgerMetaQuery();
+  const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
+  const summary = useDashboardQuery<DashboardSummary>(rev, '/api/dashboard/summary', meta.isSuccess);
+
+  if (meta.isPending) return <div className="dash-empty">Loading KPIs…</div>;
+  if (meta.isError) return null;
+  if (summary.isPending) return <div className="dash-empty">Loading KPIs…</div>;
+  if (summary.error) return <div className="dash-empty">Error: {summary.error.message}</div>;
+  const data = summary.data;
   if (!data?.ledger_exists) {
     return (
       <div className="dash-empty">
@@ -806,12 +837,18 @@ function KpiStrip() {
 }
 
 export default function Dashboard() {
+  const meta = useLedgerMetaQuery();
   return (
     <div className="app-page dash-page">
       <header className="dash-header">
         <h1>Dashboard</h1>
         <p className="sub">Holdings, cash flow, and category activity in one place.</p>
       </header>
+      {meta.isError ? (
+        <div className="dash-empty" role="alert">
+          Could not read ledger revision: {meta.error instanceof Error ? meta.error.message : String(meta.error)}
+        </div>
+      ) : null}
       <KpiStrip />
 
       <section className="dash-section" aria-labelledby="dash-holdings-heading">

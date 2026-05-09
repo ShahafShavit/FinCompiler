@@ -1,3 +1,11 @@
+/** Response from ``GET /api/ledger-meta`` (file stat only). */
+export type LedgerMeta = {
+  ok: boolean;
+  exists: boolean;
+  mtime_ns: number | null;
+  error?: string;
+};
+
 export type DashboardSummary = {
   ok: boolean;
   ledger_exists: boolean;
@@ -29,7 +37,6 @@ export type CashflowRow = {
   expense: number;
   net: number;
   expenseNeg?: number;
-  savingsRate?: number | null;
 };
 export type CategoryPeriodStatRow = {
   category: string;

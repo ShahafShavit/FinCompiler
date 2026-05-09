@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { fetchJson, getJson, postJson } from '../lib/api';
 import { useEventStream } from '../lib/useEventStream';
@@ -70,6 +71,8 @@ export default function Pipeline() {
   });
   const [catUrl, setCatUrl] = useState('');
   const logRef = useRef<HTMLDivElement | null>(null);
+  const runningRef = useRef(false);
+  const queryClient = useQueryClient();
 
   // Derived dependencies (mirrors `syncPipelineDeps` from the legacy HTML page).
   const dlChildrenDisabled = !dl;
@@ -108,10 +111,15 @@ export default function Pipeline() {
       });
     },
     state: (isRunning, job, err) => {
+      const wasRunning = runningRef.current;
+      runningRef.current = isRunning;
       setRunning(isRunning);
       setCurrentJob(job);
       if (err) setBusyError(err);
       else setBusyError(null);
+      if (wasRunning && !isRunning && !err) {
+        void queryClient.invalidateQueries({ queryKey: ['ledger-meta'] });
+      }
     },
   });
 
