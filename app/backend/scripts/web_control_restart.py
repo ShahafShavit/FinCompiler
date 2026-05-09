@@ -2,6 +2,7 @@
 Stop anything listening on the finance control HTTP port, then start ``python -m web_control``.
 
 Use from VS Code (or CLI) so the same command both starts the dashboard and replaces a prior instance.
+Expects ``PYTHONPATH`` to include ``app/backend`` for the child process (set automatically here).
 """
 
 from __future__ import annotations
@@ -13,9 +14,20 @@ import sys
 import time
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+# .../app/backend (packages: web_control, pipeline, …)
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+# Repository root (contains ``data/``, ``app/``)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+
+
+def _child_env() -> dict[str, str]:
+    env = dict(os.environ)
+    back = str(_BACKEND_ROOT)
+    pp = (env.get("PYTHONPATH") or "").strip()
+    env["PYTHONPATH"] = back if not pp else f"{back}{os.pathsep}{pp}"
+    return env
 
 
 def _repo_venv_python(repo: Path) -> Path | None:
@@ -76,7 +88,7 @@ def _kill_listeners_windows(port: int) -> None:
     )
     subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-        cwd=str(_ROOT),
+        cwd=str(_REPO_ROOT),
         capture_output=True,
         timeout=30,
     )
@@ -86,7 +98,7 @@ def _kill_listeners_posix(port: int) -> None:
     try:
         r = subprocess.run(
             ["lsof", "-ti", f":{port}"],
-            cwd=str(_ROOT),
+            cwd=str(_REPO_ROOT),
             capture_output=True,
             text=True,
             timeout=15,
@@ -94,7 +106,7 @@ def _kill_listeners_posix(port: int) -> None:
     except FileNotFoundError:
         r = subprocess.run(
             ["fuser", "-k", f"{port}/tcp"],
-            cwd=str(_ROOT),
+            cwd=str(_REPO_ROOT),
             capture_output=True,
             text=True,
             timeout=15,
@@ -133,13 +145,13 @@ def kill_listeners_on_control_port(port: int) -> None:
 
 def main() -> int:
     port = _control_port()
-    py = python_for_web_control_child(_ROOT)
+    py = python_for_web_control_child(_REPO_ROOT)
     print(f"Finance control: freeing port {port} (if in use), then starting web_control…", flush=True)
     print(f"Using Python: {py}", flush=True)
     kill_listeners_on_control_port(port)
     time.sleep(0.3)
-    os.chdir(_ROOT)
-    rc = subprocess.run([py, "-m", "web_control"]).returncode
+    os.chdir(_REPO_ROOT)
+    rc = subprocess.run([py, "-m", "web_control"], cwd=str(_REPO_ROOT), env=_child_env()).returncode
     return rc
 
 

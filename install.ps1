@@ -6,6 +6,6 @@ Set-Location $Root
 python -m venv .venv
 & "$Root\.venv\Scripts\Activate.ps1"
 python -m pip install -U pip
-python "$Root\scripts\generate_requirements.py"
+python "$Root\app\backend\scripts\generate_requirements.py"
 python -m pip install -r requirements.txt
 Write-Host "Done. Activate with: .venv\Scripts\Activate.ps1"

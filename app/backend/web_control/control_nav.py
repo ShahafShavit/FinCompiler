@@ -1,6 +1,6 @@
 """Shared top navigation for legacy Python-rendered pages (e.g. heatmap HTML detail).
 
-The React SPA (`web/src/components/TopNav.tsx`) is the primary UI nav. This module remains
+The React SPA (`app/frontend/src/components/TopNav.tsx`) is the primary UI nav. This module remains
 for pages still emitted from Python (heatmap legacy detail HTML only).
 
 Links use root-absolute paths so they work regardless of any ``<base href>`` on the page.

@@ -36,12 +36,12 @@ _JOB_SSE_LOGGERS = [
 log = logging.getLogger(__name__)
 
 
-# --- SPA static serving (web/dist) ---------------------------------------
-# Built by Vite (`npm --prefix web run build`). When `dist/` is missing (typical in dev
+# --- SPA static serving (app/frontend/dist) ------------------------------
+# Built by Vite (`npm --prefix app/frontend run build`). When `dist/` is missing (typical in dev
 # while Vite serves on :5173 directly), backend returns a clear placeholder so the user
 # sees what to do without a confusing blank page.
 
-_SPA_DIST_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
+_SPA_DIST_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 _SPA_INDEX_FILE = _SPA_DIST_DIR / "index.html"
 _SPA_ASSETS_DIR = _SPA_DIST_DIR / "assets"
 
@@ -63,23 +63,23 @@ _SPA_DEV_FALLBACK = (
 </head>
 <body>
   <h1>SPA bundle not built</h1>
-  <p>The control server expected <code>web/dist/index.html</code> but it is missing.</p>
+  <p>The control server expected <code>app/frontend/dist/index.html</code> but it is missing.</p>
   <div class="card">
     <strong>Dev:</strong> run the Vite dev server in a second terminal and open
     <a href="http://127.0.0.1:5173/">http://127.0.0.1:5173/</a>:
-    <pre><code>cd web
+    <pre><code>cd app/frontend
 npm install
 npm run dev</code></pre>
     Vite proxies <code>/api</code>, <code>/heatmap/api</code>, <code>/heatmap/legacy-detail</code>,
-    and the built SPA assets through its dev/prod setup (see <code>web/vite.config.ts</code>).
+    and the built SPA assets through its dev/prod setup (see <code>app/frontend/vite.config.ts</code>).
   </div>
   <div class="card">
     <strong>Prod:</strong> build once and reload this page:
-    <pre><code>cd web
+    <pre><code>cd app/frontend
 npm install
 npm run build</code></pre>
   </div>
-  <p>With <code>python -m web_control</code> you get APIs and static assets; the UI is the React app (built or Vite dev).</p>
+  <p>With <code>PYTHONPATH=app/backend python -m web_control</code> (from repo root) you get APIs and static assets; the UI is the React app (built or Vite dev).</p>
 </body>
 </html>
 """

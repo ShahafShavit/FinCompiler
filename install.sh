@@ -18,6 +18,6 @@ else
 fi
 
 python -m pip install -U pip
-python "$ROOT/scripts/generate_requirements.py"
+python "$ROOT/app/backend/scripts/generate_requirements.py"
 python -m pip install -r requirements.txt
 echo "Done. Activate with: source .venv/Scripts/activate (or .venv\\Scripts\\activate on Windows)"

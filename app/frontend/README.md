@@ -1,6 +1,6 @@
 # Finance compiler — web SPA
 
-React + Vite + TypeScript single-page app served by the Python `web_control` server.
+React + Vite + TypeScript single-page app served by the Python `web_control` server from [`app/backend`](../backend/web_control/).
 
 Routes:
 
@@ -15,40 +15,40 @@ Some legacy flows may still open Python-rendered HTML (e.g. older heatmap drill 
 ## Prerequisites
 
 - Node.js 20+ (matches Vite 6 requirement; tested on 22).
-- Python venv from the repo root, with the rest of the project's `requirements.txt` installed.
+- Python venv from the repo root, with `requirements.txt` installed.
 
 ## Development
 
-Two processes, both run from the repo root.
+Two processes: Python control server from the **repository root** with `PYTHONPATH` including `app/backend`, and Vite from **`app/frontend`**.
 
 ```bash
-# Terminal 1: Python control server (host for /api, /heatmap/api, /holdings, /categorize)
+# Terminal 1 (repo root): export PYTHONPATH=app/backend   # POSIX
 python -m web_control
 
-# Terminal 2: Vite dev server with HMR
-cd web
+# Terminal 2
+cd app/frontend
 npm install
 npm run dev
 ```
 
-Open the **Vite** URL printed in terminal 2 (defaults to <http://127.0.0.1:5173/>). It proxies `/api`, `/heatmap/api`, `/heatmap/detail`, `/categorize`, and `/holdings` back to `http://127.0.0.1:8780/`.
+Open the **Vite** URL (defaults to <http://127.0.0.1:5173/>). It proxies `/api`, `/heatmap/api`, `/heatmap/detail`, `/categorize`, and `/holdings` to `http://127.0.0.1:8780/`.
 
 ## Production build
 
 ```bash
-cd web
-npm install   # only the first time / when deps change
+cd app/frontend
+npm install   # first time / when deps change
 npm run build
 ```
 
-Output lands in `web/dist/`. Then start `python -m web_control` and visit <http://127.0.0.1:8780/> — the Python server serves `web/dist/index.html` for SPA routes (`/`, `/pipeline`, `/heatmap`) and `web/dist/assets/*` as static files.
+Output is **`dist/`** under this directory. With `PYTHONPATH=app/backend`, run `python -m web_control` from the repo root and open <http://127.0.0.1:8780/> — the server serves `app/frontend/dist/index.html` and `dist/assets/*`.
 
-If you visit the Python server before running `npm run build`, you'll see a placeholder page with the build instructions instead of a blank screen.
+If you open the Python server before building, you get a placeholder page with instructions instead of a blank screen.
 
 ## Layout
 
 ```
-web/
+app/frontend/
 ├── index.html                 # Vite entry
 ├── package.json               # deps + npm scripts
 ├── vite.config.ts             # proxy to :8780
@@ -71,6 +71,6 @@ web/
 
 ## Adding charts / endpoints
 
-1. Add the Python aggregation in `web_control/dashboard_api.py` and dispatch it from `handle_dashboard_request`.
-2. Add the typing in `web/src/lib/dashboardTypes.ts`.
+1. Add the Python aggregation in `app/backend/web_control/dashboard_api.py` and dispatch it from `handle_dashboard_request`.
+2. Add the typing in `app/frontend/src/lib/dashboardTypes.ts`.
 3. Add a card component in `Dashboard.tsx` using `useFetch` + Recharts.

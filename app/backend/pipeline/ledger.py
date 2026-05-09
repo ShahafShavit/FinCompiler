@@ -376,9 +376,9 @@ CREATE TABLE ledger_transaction__mig_v9 (
 
 
 def _full_schema_path() -> Path:
-    """Resolve ``schema/ledger/full_schema.sql`` from the repository root."""
-    repo_root = Path(__file__).resolve().parent.parent
-    return repo_root / "schema" / "ledger" / "full_schema.sql"
+    """Resolve bundled ``schema/ledger/full_schema.sql`` under ``app/backend``."""
+    backend_root = Path(__file__).resolve().parents[1]
+    return backend_root / "schema" / "ledger" / "full_schema.sql"
 
 
 def _current_schema_version(conn: sqlite3.Connection) -> int:

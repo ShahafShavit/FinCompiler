@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """CLI for installment ``statement_month`` fill — logic lives in ``pipeline.installment_statement_months``.
 
-  PYTHONPATH=. python scripts/fill_installment_statement_months.py
-  PYTHONPATH=. python scripts/fill_installment_statement_months.py --apply
-  PYTHONPATH=. python scripts/fill_installment_statement_months.py --db path/to/ledger.sqlite -o preview.csv
+  PYTHONPATH=app/backend python app/backend/scripts/fill_installment_statement_months.py
+  PYTHONPATH=app/backend python app/backend/scripts/fill_installment_statement_months.py --apply
+  PYTHONPATH=app/backend python app/backend/scripts/fill_installment_statement_months.py --db path/to/ledger.sqlite -o preview.csv
 """
 
 from __future__ import annotations

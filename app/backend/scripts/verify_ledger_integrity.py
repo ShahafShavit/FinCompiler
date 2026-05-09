@@ -3,8 +3,8 @@
 
 Uses ``pipeline/ledger`` (constraint audit) — keep SQL in sync when DDL changes.
 
-  PYTHONPATH=. python scripts/verify_ledger_integrity.py
-  PYTHONPATH=. python scripts/verify_ledger_integrity.py --json
+  PYTHONPATH=app/backend python app/backend/scripts/verify_ledger_integrity.py
+  PYTHONPATH=app/backend python app/backend/scripts/verify_ledger_integrity.py --json
 """
 
 from __future__ import annotations

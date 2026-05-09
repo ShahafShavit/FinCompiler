@@ -9,13 +9,13 @@ testing/
 *.sqlite-wal
 *.sqlite-shm
 
-# Web runtime artifacts (legacy reporting outputs in web/, runtime CSVs)
+# Web runtime artifacts (legacy reporting outputs under workspace ``web/``, runtime CSVs)
 /web/data/
 /web/transactions/
 /web/expenses_web.html
 /web/incomes_web.html
 /web/net_heatmap.html
 
-# Web SPA build / dependencies
-/web/node_modules/
-/web/dist/
+# Frontend SPA build / dependencies (under ``app/frontend``)
+/app/frontend/node_modules/
+/app/frontend/dist/
