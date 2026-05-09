@@ -1,7 +1,9 @@
-<!-- Hero uses the same HTML shape GitHub renders for Ghostty-style READMEs: one <h1> wrapping a centered <p>. -->
+<!-- Hero: centered banner + h1 matches patterns GitHub renders well (see ghostty-org/ghostty README). -->
 
 <h1>
 <p align="center">
+  <img src="docs/images/readme-banner.png" alt="Finance Compiler — web-first personal finance tooling" width="800">
+  <br>
   Finance Compiler
 </p>
 </h1>
@@ -10,6 +12,21 @@
   Web-first personal finance: bank exports and balances compile into a <strong>local SQLite ledger</strong>.
   <br>
   Explore it in a dashboard, heatmaps, categorization, and holdings—or run the same pipelines from the CLI.
+</p>
+
+<p align="center">
+  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/stargazers"><img src="https://img.shields.io/github/stars/ShahafShavit/financeCompilerv3.5?style=flat-square&logo=github&label=stars" alt="GitHub stars"></a>
+  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/network/members"><img src="https://img.shields.io/github/forks/ShahafShavit/financeCompilerv3.5?style=flat-square&logo=github&label=forks" alt="GitHub forks"></a>
+  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ShahafShavit/financeCompilerv3.5?style=flat-square" alt="License"></a>
+  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/commits/main"><img src="https://img.shields.io/github/last-commit/ShahafShavit/financeCompilerv3.5?style=flat-square&logo=github&label=last%20commit" alt="Last commit"></a>
+  <a href="https://github.com/ShahafShavit/financeCompilerv3.5/issues"><img src="https://img.shields.io/github/issues/ShahafShavit/financeCompilerv3.5?style=flat-square&logo=github&label=issues" alt="Issues"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 20+">
+  <img src="https://img.shields.io/badge/React-Vite-646CFF?style=flat-square&logo=vite&logoColor=white" alt="React + Vite">
+  <img src="https://img.shields.io/badge/Data-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite">
 </p>
 
 <p align="center">
@@ -26,16 +43,6 @@
   <a href="#automation-pipeline-cli">CLI</a>
   ·
   <a href="#contributing">Contributing</a>
-</p>
-
-<p align="center">
-  <strong>Python 3.11+</strong>
-  ·
-  <strong>Node 20+</strong>
-  ·
-  <strong>React / Vite / TypeScript</strong>
-  ·
-  <strong>SQLite</strong>
 </p>
 
 ## Overview
@@ -264,6 +271,10 @@ Run from the repo root with **`PYTHONPATH=app/backend`** unless the script boots
 | `python app/backend/scripts/web_control_restart.py` | Free port **8780**, start **`python -m web_control`** with correct **`PYTHONPATH`** and cwd. |
 
 Additional scripts: [`app/backend/scripts`](app/backend/scripts).
+
+## License
+
+Released under the [MIT License](LICENSE).
 
 ## Screenshots
 
