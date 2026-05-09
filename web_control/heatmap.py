@@ -753,10 +753,31 @@ def _filter_recent_months_heatmap(df: pd.DataFrame, months: int) -> pd.DataFrame
 _PERIOD_TO_MONTHS_HM = {"30d": 1, "ytd": -1, "12m": 12, "3m": 3, "6m": 6}
 
 
-def _period_filter_transactions(df: pd.DataFrame, period: str) -> pd.DataFrame:
+def _period_filter_transactions(
+    df: pd.DataFrame,
+    period: str,
+    *,
+    start_ym: str | None = None,
+    end_ym: str | None = None,
+) -> pd.DataFrame:
     if df.empty:
         return df
-    p = (period or "12m").lower().strip()
+    from . import dashboard_tx_sql
+
+    bounds = dashboard_tx_sql.normalize_ym_range(start_ym, end_ym)
+    if bounds is not None:
+        lo, hi = bounds
+        ym = df["YearMonth"].fillna("").astype(str)
+        return df.loc[(ym >= lo) & (ym <= hi) & (ym != "")]
+
+    raw = (period or "12m").strip()
+    p = raw.lower()
+    if p == "all":
+        return df
+    if len(raw) == 4 and raw.isdigit():
+        pref = f"{raw}-"
+        ym = df["YearMonth"].fillna("").astype(str)
+        return df.loc[ym.str.startswith(pref)]
     if p == "30d":
         et = df["effective_tx_date"]
         max_d = pd.Timestamp(et.max()) if et.notna().any() else pd.NaT
@@ -954,10 +975,16 @@ def _detail_frames_month(
 
 
 def _detail_frames_category(
-    bundle: HeatmapBundle, report_type: ReportType, category: str, period: str
+    bundle: HeatmapBundle,
+    report_type: ReportType,
+    category: str,
+    period: str,
+    *,
+    start_ym: str | None = None,
+    end_ym: str | None = None,
 ) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
     df = bundle.df
-    sub = _period_filter_transactions(df, period)
+    sub = _period_filter_transactions(df, period, start_ym=start_ym, end_ym=end_ym)
     if sub.empty:
         return None
     work = sub.copy()
@@ -965,25 +992,37 @@ def _detail_frames_category(
     work.loc[work["__cat__"] == "", "__cat__"] = "(uncategorized)"
     cols_show_exp = _detail_column_order(work, _COLS_EXP)
     cols_show_in = _detail_column_order(work, _COLS_IN)
+
+    from . import dashboard_tx_sql
+
+    bounds_lbl = dashboard_tx_sql.normalize_ym_range(start_ym, end_ym)
+    if bounds_lbl is not None:
+        lo, hi = bounds_lbl
+        win_lbl = f"{lo} – {hi}"
+    elif (period or "").strip().lower() == "all":
+        win_lbl = "all"
+    else:
+        win_lbl = period
+
     if report_type == "expense":
         mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
         details = _sort_detail_frame(work.loc[mask, cols_show_exp], work)
         if details.empty:
             return None
-        return (f"הוצאות — {category} ({period})", [(None, details)])
+        return (f"הוצאות — {category} ({win_lbl})", [(None, details)])
     if report_type == "income":
         mask = (work["__cat__"] == category) & (work["בזכות"] > 0)
         details = _sort_detail_frame(work.loc[mask, cols_show_in], work)
         if details.empty:
             return None
-        return (f"הכנסות — {category} ({period})", [(None, details)])
+        return (f"הכנסות — {category} ({win_lbl})", [(None, details)])
     income_mask = (work["__cat__"] == category) & (work["בזכות"] > 0)
     expense_mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
     income_df = _sort_detail_frame(work.loc[income_mask, cols_show_in], work)
     expense_df = _sort_detail_frame(work.loc[expense_mask, cols_show_exp], work)
     if income_df.empty and expense_df.empty:
         return None
-    return (f"נטו — {category} ({period})", [("הכנסות", income_df), ("הוצאות", expense_df)])
+    return (f"נטו — {category} ({win_lbl})", [("הכנסות", income_df), ("הוצאות", expense_df)])
 
 
 def _detail_frames_source(
@@ -1063,6 +1102,10 @@ def build_detail_frames_from_qs(
     if rt_raw in ("expense", "income", "net"):
         rt = rt_raw  # type: ignore[assignment]
     period = _qs_first(qs, "period", "12m").strip().lower()
+    start_ym_raw = _qs_first(qs, "start_ym", "").strip()
+    end_ym_raw = _qs_first(qs, "end_ym", "").strip()
+    start_ym = start_ym_raw or None
+    end_ym = end_ym_raw or None
     months = max(1, _qs_int(qs, "months", 12))
 
     if src and cat:
@@ -1074,7 +1117,9 @@ def build_detail_frames_from_qs(
     if ym and not cat:
         return _detail_frames_month(bundle, rt, ym)
     if cat and not ym:
-        return _detail_frames_category(bundle, rt, cat, period)
+        return _detail_frames_category(
+            bundle, rt, cat, period, start_ym=start_ym, end_ym=end_ym
+        )
     return None
 
 
@@ -1300,6 +1345,15 @@ def _heatmap_shared_css() -> str:
       }
       table.hm-grid tbody tr:nth-child(even) td.cell {
         box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.025);
+      }
+      table.hm-grid tbody tr:hover th.row-h {
+        box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.075);
+      }
+      table.hm-grid tbody tr:hover td.hm-rowmetric {
+        box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.075);
+      }
+      table.hm-grid tbody tr:hover td.cell {
+        box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.09);
       }
       table.hm-grid tbody tr.year-start th.row-h {
         border-top: 2px solid #5d7cff;

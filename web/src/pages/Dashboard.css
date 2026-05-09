@@ -74,26 +74,56 @@
   margin: 0 0 0.65rem;
 }
 
+.dash-card-meta-line__hint {
+  font-weight: 400;
+  opacity: 0.9;
+}
+
+.dash-card-meta-line--small {
+  font-size: 0.74rem;
+  margin-top: -0.4rem;
+  margin-bottom: 0.65rem;
+  opacity: 0.95;
+}
+
 .dash-cat-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(17.5rem, 24rem);
+  gap: 0.85rem 1.25rem;
+  align-items: start;
   margin-bottom: 0.25rem;
 }
 
-.dash-cat-head-actions {
+@media (max-width: 720px) {
+  .dash-cat-head {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dash-cat-head__main {
+  min-width: 0;
+}
+
+.dash-cat-head__aside {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 0.65rem;
+  min-width: 0;
+}
+
+.dash-cat-head__view {
+  flex-shrink: 0;
 }
 
 .dash-cat-period-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.3rem;
+  flex: 1 1 10.25rem;
+  min-width: min(100%, 10.25rem);
+  max-width: 100%;
 }
 
 .dash-cat-period-label {
@@ -102,6 +132,7 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-muted);
+  line-height: 1.2;
 }
 
 .dash-cat-period-select {
@@ -113,10 +144,44 @@
   font-size: 0.78rem;
   font-family: inherit;
   cursor: pointer;
-  min-width: 11rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .dash-cat-period-select:focus-visible {
+  outline: 2px solid #4c6ef5;
+  outline-offset: 1px;
+}
+
+.dash-card-meta-line--muted strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.dash-cat-period-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.dash-cat-period-input-month {
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.38rem 0.55rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.dash-cat-period-input-month:focus-visible {
   outline: 2px solid #4c6ef5;
   outline-offset: 1px;
 }
@@ -127,6 +192,16 @@
   border-radius: 8px;
   overflow: hidden;
   flex-shrink: 0;
+}
+
+.dash-seg.dash-seg--grow {
+  display: flex;
+  width: 100%;
+}
+
+.dash-seg.dash-seg--grow .dash-seg__btn {
+  flex: 1;
+  text-align: center;
 }
 
 .dash-seg__btn {

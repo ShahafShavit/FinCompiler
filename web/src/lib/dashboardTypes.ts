@@ -55,6 +55,17 @@ export type CategoryPeriodStatsResponse = {
   period_income_total: number;
   period_expense_total: number;
   rows: CategoryPeriodStatRow[];
+  category_bucket_count?: number;
+  start_ym?: string;
+  end_ym?: string;
+  window_label?: string;
+};
+
+export type MonthBoundsResponse = {
+  ok: boolean;
+  ledger_exists: boolean;
+  min_ym: string | null;
+  max_ym: string | null;
 };
 export type SourceCategoryMatrixResponse = {
   ok: boolean;

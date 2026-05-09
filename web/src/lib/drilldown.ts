@@ -15,11 +15,20 @@ export function heatmapDetailMonth(type: HeatmapReportType, ym: string): string 
   return `/heatmap/detail?${p.toString()}`;
 }
 
-export function heatmapDetailCategory(type: HeatmapReportType, category: string, period = '12m'): string {
+export function heatmapDetailCategory(
+  type: HeatmapReportType,
+  category: string,
+  period = '12m',
+  ymRange?: { startYm: string; endYm: string } | null,
+): string {
   const p = new URLSearchParams();
   p.set('type', type);
   p.set('cat', category);
   p.set('period', period);
+  if (ymRange?.startYm && ymRange?.endYm) {
+    p.set('start_ym', ymRange.startYm);
+    p.set('end_ym', ymRange.endYm);
+  }
   return `/heatmap/detail?${p.toString()}`;
 }
 

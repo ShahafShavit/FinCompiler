@@ -34,6 +34,7 @@ import type {
   CategoryPeriodStatsResponse,
   DashboardSummary,
   LedgerMeta,
+  MonthBoundsResponse,
   SourceCategoryMatrixResponse,
 } from '../lib/dashboardTypes';
 
@@ -455,15 +456,30 @@ function CashflowCard() {
   );
 }
 
-type CategoryPeriodToken = '30d' | 'ytd' | '3m' | '6m' | '12m';
+type CategoryRangeKind = 'preset' | 'year' | 'custom';
 
-const CATEGORY_PERIOD_OPTIONS: { value: CategoryPeriodToken; label: string }[] = [
+const CATEGORY_STATS_ROW_LIMIT = 500;
+
+const CATEGORY_PRESET_OPTIONS: { value: string; label: string }[] = [
   { value: '30d', label: 'Last 30 days' },
   { value: 'ytd', label: 'Year to date' },
   { value: '3m', label: 'Last 3 months' },
   { value: '6m', label: 'Last 6 months' },
   { value: '12m', label: 'Last 12 months' },
+  { value: 'all', label: 'All time' },
 ];
+
+function yearsDescendingFromBounds(minYm: string | null, maxYm: string | null): number[] {
+  if (!minYm || !maxYm || minYm.length < 4 || maxYm.length < 4) return [];
+  const yLo = Number(minYm.slice(0, 4));
+  const yHi = Number(maxYm.slice(0, 4));
+  if (!Number.isFinite(yLo) || !Number.isFinite(yHi)) return [];
+  const a = Math.min(yLo, yHi);
+  const b = Math.max(yLo, yHi);
+  const out: number[] = [];
+  for (let y = b; y >= a; y -= 1) out.push(y);
+  return out;
+}
 
 type CatSortKey = 'flow' | 'category' | 'income' | 'expense' | 'net' | 'txn_count' | 'pct_in' | 'pct_ex';
 
@@ -489,12 +505,106 @@ function compareCatRows(a: CategoryPeriodStatRow, b: CategoryPeriodStatRow, key:
 
 function CategoryOverviewCard() {
   const navigate = useNavigate();
-  const [categoryPeriod, setCategoryPeriod] = useState<CategoryPeriodToken>('12m');
+  const [rangeKind, setRangeKind] = useState<CategoryRangeKind>('preset');
+  const [presetPeriod, setPresetPeriod] = useState('12m');
+  const [calendarYear, setCalendarYear] = useState('');
+  const [customStartYm, setCustomStartYm] = useState('');
+  const [customEndYm, setCustomEndYm] = useState('');
+
   const meta = useLedgerMetaQuery();
   const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
   const metaReady = meta.isSuccess;
-  const catUrl = `/api/dashboard/category-period-stats?period=${encodeURIComponent(categoryPeriod)}&limit=40`;
-  const { data, error, isPending } = useDashboardQuery<CategoryPeriodStatsResponse>(rev, catUrl, metaReady);
+
+  const boundsQuery = useDashboardQuery<MonthBoundsResponse>(
+    rev,
+    '/api/dashboard/month-bounds',
+    meta.isSuccess && meta.data.exists === true,
+  );
+  const yearOptions = useMemo(
+    () => yearsDescendingFromBounds(boundsQuery.data?.min_ym ?? null, boundsQuery.data?.max_ym ?? null),
+    [boundsQuery.data?.min_ym, boundsQuery.data?.max_ym],
+  );
+
+  /** Keeps fetch URL / controlled year select aligned when bounds arrive or state is stale. */
+  const effectiveCalendarYear = useMemo(() => {
+    if (!yearOptions.length) return '';
+    const parsed = Number.parseInt(calendarYear, 10);
+    if (Number.isFinite(parsed) && yearOptions.includes(parsed)) return String(parsed);
+    return String(yearOptions[0]);
+  }, [calendarYear, yearOptions]);
+
+  const onRangeKindChange = (next: CategoryRangeKind) => {
+    setRangeKind(next);
+    if (
+      next === 'year' &&
+      boundsQuery.isSuccess &&
+      boundsQuery.data &&
+      yearOptions.length > 0
+    ) {
+      const parsed = Number.parseInt(calendarYear, 10);
+      const valid = Number.isFinite(parsed) && yearOptions.includes(parsed);
+      if (!valid) setCalendarYear(String(yearOptions[0]));
+    }
+  };
+
+  const catUrl = useMemo(() => {
+    const p = new URLSearchParams();
+    if (rangeKind === 'preset' && presetPeriod === 'all') {
+      p.set('limit', '0');
+    } else {
+      p.set('limit', String(CATEGORY_STATS_ROW_LIMIT));
+    }
+    if (rangeKind === 'preset') {
+      p.set('period', presetPeriod);
+    } else if (rangeKind === 'year') {
+      p.set('period', effectiveCalendarYear || '12m');
+    } else {
+      p.set('period', '12m');
+      const a = customStartYm.trim();
+      const b = customEndYm.trim();
+      if (a && b) {
+        p.set('start_ym', a);
+        p.set('end_ym', b);
+      }
+    }
+    return `/api/dashboard/category-period-stats?${p.toString()}`;
+  }, [rangeKind, presetPeriod, effectiveCalendarYear, customStartYm, customEndYm]);
+
+  const yearPickerBlocked =
+    rangeKind === 'year' && boundsQuery.isSuccess && yearOptions.length === 0;
+
+  const yearChosenOk =
+    rangeKind !== 'year' ||
+    (boundsQuery.isSuccess && yearOptions.length > 0 && effectiveCalendarYear !== '');
+
+  const catQueryReady =
+    metaReady &&
+    rev !== null &&
+    !yearPickerBlocked &&
+    yearChosenOk &&
+    (rangeKind !== 'custom' || (customStartYm.trim() !== '' && customEndYm.trim() !== ''));
+
+  const { data, error, isPending } = useDashboardQuery<CategoryPeriodStatsResponse>(
+    rev,
+    catUrl,
+    catQueryReady,
+  );
+
+  const heatmapYmRange =
+    rangeKind === 'custom' && customStartYm.trim() && customEndYm.trim()
+      ? { startYm: customStartYm.trim(), endYm: customEndYm.trim() }
+      : null;
+
+  function drillCategory(cat: string, reportType: 'net' | 'income' | 'expense') {
+    const periodTok =
+      rangeKind === 'preset'
+        ? presetPeriod
+        : rangeKind === 'year'
+          ? effectiveCalendarYear || '12m'
+          : '12m';
+    navigate(heatmapDetailCategory(reportType, cat, periodTok, heatmapYmRange));
+  }
+
   const [view, setView] = useState<'table' | 'chart'>('table');
   const [sort, setSort] = useState<{ key: CatSortKey; dir: 'asc' | 'desc' }>({
     key: 'flow',
@@ -515,13 +625,14 @@ function CategoryOverviewCard() {
     );
   };
 
-  const sortMark = (key: CatSortKey) =>
-    sort.key === key ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : '';
+  const sortMark = (key: CatSortKey) => (sort.key === key ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : '');
+
+  const windowHint = data?.window_label;
 
   return (
     <div className="dash-card">
       <div className="dash-cat-head">
-        <div>
+        <div className="dash-cat-head__main">
           <h3 className="dash-card__title dash-card__title--inline">Category overview</h3>
           <p className="dash-card__sub dash-card__sub--tight">
             Ranked by income + expense; columns are comparable at a glance.{' '}
@@ -529,51 +640,146 @@ function CategoryOverviewCard() {
               Full heatmap
             </a>
           </p>
+          {windowHint ? (
+            <p className="dash-card-meta-line dash-card-meta-line--muted">
+              Window: <strong>{windowHint}</strong>
+            </p>
+          ) : null}
           {data?.period_income_total != null ? (
             <p className="dash-card-meta-line">
               Period totals: <strong>{formatMoney(data.period_income_total)}</strong> income ·{' '}
               <strong>{formatMoney(data.period_expense_total)}</strong> expenses
+              {' — '}
+              <span className="dash-card-meta-line__hint">
+                sums include every included transaction (not only the table below).
+              </span>
+            </p>
+          ) : null}
+          {data?.category_bucket_count != null && data.rows?.length ? (
+            <p className="dash-card-meta-line dash-card-meta-line--small">
+              {data.rows.length < data.category_bucket_count
+                ? `Table: showing ${data.rows.length} of ${data.category_bucket_count} categories.${data.limit > 0 ? ` Row limit is ${data.limit}.` : ''} Open heatmap for the full breakdown.`
+                : `Table: all ${data.category_bucket_count} categories with activity in this window.`}
             </p>
           ) : null}
         </div>
-        <div className="dash-cat-head-actions">
-          <label className="dash-cat-period-wrap" htmlFor="dash-cat-period-select">
-            <span className="dash-cat-period-label">Window</span>
-            <select
-              id="dash-cat-period-select"
-              className="dash-cat-period-select"
-              value={categoryPeriod}
-              onChange={(e) => setCategoryPeriod(e.target.value as CategoryPeriodToken)}
-            >
-              {CATEGORY_PERIOD_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="dash-seg" role="tablist" aria-label="View mode">
-            <button
-              type="button"
-              className="dash-seg__btn"
-              data-active={view === 'table'}
-              onClick={() => setView('table')}
-            >
-              Table
-            </button>
-            <button
-              type="button"
-              className="dash-seg__btn"
-              data-active={view === 'chart'}
-              onClick={() => setView('chart')}
-            >
-              Chart
-            </button>
+        <div className="dash-cat-head__aside">
+          <div className="dash-cat-period-toolbar">
+            <label className="dash-cat-period-wrap" htmlFor="dash-cat-range-kind">
+              <span className="dash-cat-period-label">Range</span>
+              <select
+                id="dash-cat-range-kind"
+                className="dash-cat-period-select"
+                value={rangeKind}
+                onChange={(e) => onRangeKindChange(e.target.value as CategoryRangeKind)}
+              >
+                <option value="preset">Preset</option>
+                <option value="year">Calendar year</option>
+                <option value="custom">Custom months</option>
+              </select>
+            </label>
+            {rangeKind === 'preset' ? (
+              <label className="dash-cat-period-wrap" htmlFor="dash-cat-period-select">
+                <span className="dash-cat-period-label">Window</span>
+                <select
+                  id="dash-cat-period-select"
+                  className="dash-cat-period-select"
+                  value={presetPeriod}
+                  onChange={(e) => setPresetPeriod(e.target.value)}
+                >
+                  {CATEGORY_PRESET_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {rangeKind === 'year' ? (
+              <label className="dash-cat-period-wrap" htmlFor="dash-cat-year-select">
+                <span className="dash-cat-period-label">Year</span>
+                <select
+                  id="dash-cat-year-select"
+                  className="dash-cat-period-select"
+                  disabled={!boundsQuery.isSuccess || yearOptions.length === 0}
+                  value={effectiveCalendarYear}
+                  onChange={(e) => setCalendarYear(e.target.value)}
+                >
+                  {!boundsQuery.isSuccess ? (
+                    <option value="">Loading years…</option>
+                  ) : !yearOptions.length ? (
+                    <option value="">No data range</option>
+                  ) : (
+                    yearOptions.map((y) => (
+                      <option key={y} value={String(y)}>
+                        {y}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+            ) : null}
+            {rangeKind === 'custom' ? (
+              <>
+                <label className="dash-cat-period-wrap" htmlFor="dash-cat-ym-start">
+                  <span className="dash-cat-period-label">From</span>
+                  <input
+                    id="dash-cat-ym-start"
+                    className="dash-cat-period-input-month"
+                    type="month"
+                    value={customStartYm}
+                    onChange={(e) => setCustomStartYm(e.target.value)}
+                  />
+                </label>
+                <label className="dash-cat-period-wrap" htmlFor="dash-cat-ym-end">
+                  <span className="dash-cat-period-label">To</span>
+                  <input
+                    id="dash-cat-ym-end"
+                    className="dash-cat-period-input-month"
+                    type="month"
+                    value={customEndYm}
+                    onChange={(e) => setCustomEndYm(e.target.value)}
+                  />
+                </label>
+              </>
+            ) : null}
+          </div>
+          <div className="dash-cat-head__view">
+            <div className="dash-seg dash-seg--grow" role="tablist" aria-label="View mode">
+              <button
+                type="button"
+                className="dash-seg__btn"
+                data-active={view === 'table'}
+                onClick={() => setView('table')}
+              >
+                Table
+              </button>
+              <button
+                type="button"
+                className="dash-seg__btn"
+                data-active={view === 'chart'}
+                onClick={() => setView('chart')}
+              >
+                Chart
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {isPending ? (
+      {!catQueryReady ? (
+        <div className="dash-empty">
+          {yearPickerBlocked
+            ? 'No effective months in ledger for a year view.'
+            : !metaReady || rev === null
+              ? 'Loading…'
+              : rangeKind === 'custom'
+                ? 'Choose start and end months.'
+                : rangeKind === 'year'
+                  ? 'Loading year list…'
+                  : 'Loading…'}
+        </div>
+      ) : isPending ? (
         <div className="dash-empty">Loading…</div>
       ) : error ? (
         <div className="dash-empty">Error: {error.message}</div>
@@ -618,11 +824,11 @@ function CategoryOverviewCard() {
                   role="button"
                   tabIndex={0}
                   title="Open net drill-down for this category"
-                  onClick={() => navigate(heatmapDetailCategory('net', row.category, categoryPeriod))}
+                  onClick={() => drillCategory(row.category, 'net')}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      navigate(heatmapDetailCategory('net', row.category, categoryPeriod));
+                      drillCategory(row.category, 'net');
                     }
                   }}
                 >
@@ -667,7 +873,7 @@ function CategoryOverviewCard() {
                 {chartRows.map((r, i) => (
                   <Cell
                     key={`inc-${i}`}
-                    onClick={() => navigate(heatmapDetailCategory('income', r.category, categoryPeriod))}
+                    onClick={() => drillCategory(r.category, 'income')}
                   />
                 ))}
               </Bar>
@@ -675,13 +881,13 @@ function CategoryOverviewCard() {
                 {chartRows.map((r, i) => (
                   <Cell
                     key={`exp-${i}`}
-                    onClick={() => navigate(heatmapDetailCategory('expense', r.category, categoryPeriod))}
+                    onClick={() => drillCategory(r.category, 'expense')}
                   />
                 ))}
               </Bar>
               <Bar dataKey="net" name="Net" fill="#4c6ef5" cursor="pointer">
                 {chartRows.map((r, i) => (
-                  <Cell key={`net-${i}`} onClick={() => navigate(heatmapDetailCategory('net', r.category, categoryPeriod))} />
+                  <Cell key={`net-${i}`} onClick={() => drillCategory(r.category, 'net')} />
                 ))}
               </Bar>
             </BarChart>

@@ -8,9 +8,14 @@ Period / effective month rules mirror legacy ``dashboard_api`` pandas helpers:
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections import defaultdict
 from typing import Any
+
+_YM_RE = re.compile(r"^(\d{4})-(\d{2})$")
+_YM_RANGE_MAX_MONTHS = 240
+_CATEGORY_STATS_MAX_ROWS = 8000
 
 from pipeline.ledger import (
     LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR,
@@ -76,24 +81,93 @@ period_tx AS (
     )
 )"""
 
+PERIOD_TX_YM_RANGE = """
+period_tx AS (
+  SELECT t.*
+  FROM tx_norm t
+  WHERE t.effective_ym IS NOT NULL
+    AND t.effective_ym >= ?
+    AND t.effective_ym <= ?
+)"""
+
 PERIOD_TO_MONTHS = {"30d": 1, "ytd": -1, "12m": 12, "3m": 3, "6m": 6}
+_YEAR_RE = re.compile(r"^\d{4}$")
+
+
+def is_valid_effective_ym(value: str) -> bool:
+    """True if ``value`` is ``YYYY-MM`` with a real calendar month."""
+    m = _YM_RE.match((value or "").strip())
+    if not m:
+        return False
+    month = int(m.group(2))
+    return 1 <= month <= 12
+
+
+def ym_range_span_months(lo: str, hi: str) -> int:
+    """Inclusive month count from ``lo`` to ``hi`` (both ``YYYY-MM``)."""
+    m_lo = _YM_RE.match(lo.strip())
+    m_hi = _YM_RE.match(hi.strip())
+    if not m_lo or not m_hi:
+        return 0
+    y1, mo1 = int(m_lo.group(1)), int(m_lo.group(2))
+    y2, mo2 = int(m_hi.group(1)), int(m_hi.group(2))
+    return (y2 - y1) * 12 + (mo2 - mo1) + 1
+
+
+def normalize_ym_range(
+    start_ym: str | None, end_ym: str | None
+) -> tuple[str, str] | None:
+    """Return ordered ``(lo, hi)`` if both are valid and span ≤ ``_YM_RANGE_MAX_MONTHS``."""
+    if start_ym is None or end_ym is None:
+        return None
+    a = start_ym.strip()
+    b = end_ym.strip()
+    if not is_valid_effective_ym(a) or not is_valid_effective_ym(b):
+        return None
+    lo, hi = (a, b) if a <= b else (b, a)
+    if ym_range_span_months(lo, hi) > _YM_RANGE_MAX_MONTHS:
+        return None
+    return lo, hi
 
 
 def _with_period_parts(period: str) -> tuple[str, list[Any]]:
-    """Return (period_tx_sql, bind_params)."""
-    p = (period or "12m").lower().strip()
+    """Return (period_tx_sql, bind_params) from ``period`` token only (no custom YM range)."""
+    raw = (period or "12m").strip()
+    p = raw.lower()
     if p == "30d":
         return PERIOD_TX_30D, []
     if p == "ytd":
         return PERIOD_TX_YTD, []
+    if p == "all":
+        return "period_tx AS (SELECT * FROM tx_norm)", []
+    if _YEAR_RE.fullmatch(raw):
+        y = raw
+        return PERIOD_TX_YM_RANGE, [f"{y}-01", f"{y}-12"]
     n = PERIOD_TO_MONTHS.get(p, 12)
     if n is None or n <= 0:
         n = 12
     return PERIOD_TX_LAST_N, [int(n)]
 
 
-def _with_header(period: str) -> tuple[str, list[Any]]:
-    ptx, params = _with_period_parts(period)
+def _with_header(
+    period: str,
+    start_ym: str | None = None,
+    end_ym: str | None = None,
+) -> tuple[str, list[Any]]:
+    """Build ``tx_norm`` + ``period_tx`` CTE clause and bind params.
+
+    Precedence (documented contract with API):
+    1. Both ``start_ym`` and ``end_ym`` valid and span ≤ ``_YM_RANGE_MAX_MONTHS`` → inclusive
+       ``effective_ym`` filter.
+    2. Else ``period`` token: ``30d``, ``ytd``, ``all``, calendar year ``YYYY``, last-N months,
+       default ``12m``.
+    """
+    bounds = normalize_ym_range(start_ym, end_ym)
+    if bounds is not None:
+        lo, hi = bounds
+        ptx, params = PERIOD_TX_YM_RANGE, [lo, hi]
+    else:
+        ptx, params = _with_period_parts(period)
     return f"{TX_NORM},\n{ptx}", params
 
 
@@ -104,6 +178,19 @@ def _with_last_n_months(n: int) -> tuple[str, list[Any]]:
 def _with_period_tx_all() -> tuple[str, list[Any]]:
     """All transaction rows (matches pandas path when ``months <= 0``)."""
     return f"{TX_NORM},\nperiod_tx AS (SELECT * FROM tx_norm)", []
+
+
+def effective_month_bounds(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
+    """Min / max ``effective_ym`` over included ledger rows (``None`` if empty)."""
+    sql = f"""WITH {TX_NORM}
+    SELECT MIN(effective_ym), MAX(effective_ym)
+    FROM tx_norm
+    WHERE effective_ym IS NOT NULL
+    """
+    row = conn.execute(sql).fetchone()
+    if not row or row[0] is None:
+        return None, None
+    return str(row[0]), str(row[1])
 
 
 def _with_last_n_or_all(months: int) -> tuple[str, list[Any]]:
@@ -135,9 +222,14 @@ def cashflow_monthly(conn: sqlite3.Connection, months: int) -> list[dict[str, An
 
 
 def top_categories_totals_and_rows(
-    conn: sqlite3.Connection, period: str, report_type: str, limit: int
+    conn: sqlite3.Connection,
+    period: str,
+    report_type: str,
+    limit: int,
+    start_ym: str | None = None,
+    end_ym: str | None = None,
 ) -> tuple[float, float, list[tuple[str, float]]]:
-    wh, params = _with_header(period)
+    wh, params = _with_header(period, start_ym=start_ym, end_ym=end_ym)
     sql_tot = f"WITH {wh} SELECT COALESCE(SUM(income_amt), 0.0), COALESCE(SUM(expense_amt), 0.0) FROM period_tx"
     tot = conn.execute(sql_tot, params).fetchone()
     period_income_total = float(tot[0] or 0.0)
@@ -163,14 +255,30 @@ def top_categories_totals_and_rows(
     return period_income_total, period_expense_total, ranked
 
 
-def category_period_stats(conn: sqlite3.Connection, period: str, limit: int) -> tuple[float, float, list[dict[str, Any]]]:
-    wh, params = _with_header(period)
+def category_period_stats(
+    conn: sqlite3.Connection,
+    period: str,
+    limit: int,
+    start_ym: str | None = None,
+    end_ym: str | None = None,
+) -> tuple[float, float, int, list[dict[str, Any]]]:
+    wh, params = _with_header(period, start_ym=start_ym, end_ym=end_ym)
     sql_tot = f"WITH {wh} SELECT COALESCE(SUM(income_amt), 0.0), COALESCE(SUM(expense_amt), 0.0) FROM period_tx"
     tot = conn.execute(sql_tot, params).fetchone()
     period_income_total = float(tot[0] or 0.0)
     period_expense_total = float(tot[1] or 0.0)
 
-    sql_grp = f"""WITH {wh}
+    sql_cat_count = f"""WITH {wh}
+    SELECT COUNT(*) FROM (
+      SELECT cat_norm FROM period_tx
+      GROUP BY cat_norm
+      HAVING SUM(income_amt) > 0 OR SUM(expense_amt) > 0
+    )
+    """
+    cnt_row = conn.execute(sql_cat_count, params).fetchone()
+    category_bucket_count = int(cnt_row[0] or 0)
+
+    grp_core = f"""WITH {wh}
     SELECT cat_norm,
            COALESCE(SUM(income_amt), 0.0) AS income,
            COALESCE(SUM(expense_amt), 0.0) AS expense,
@@ -179,9 +287,16 @@ def category_period_stats(conn: sqlite3.Connection, period: str, limit: int) -> 
     GROUP BY cat_norm
     HAVING SUM(income_amt) > 0 OR SUM(expense_amt) > 0
     ORDER BY SUM(income_amt) + SUM(expense_amt) DESC
-    LIMIT ?
     """
-    cur = conn.execute(sql_grp, [*params, int(limit)])
+
+    lim = int(limit)
+    if lim <= 0:
+        sql_grp = f"{grp_core}\n"
+        cur = conn.execute(sql_grp, params)
+    else:
+        cap = min(lim, _CATEGORY_STATS_MAX_ROWS)
+        sql_grp = f"{grp_core}\nLIMIT ?\n"
+        cur = conn.execute(sql_grp, [*params, cap])
     out_rows: list[dict[str, Any]] = []
     for cat, inc, exp, cnt in cur.fetchall():
         incf = float(inc or 0.0)
@@ -198,7 +313,7 @@ def category_period_stats(conn: sqlite3.Connection, period: str, limit: int) -> 
                 "pct_of_period_expense": expf / period_expense_total if period_expense_total > 0 else 0.0,
             }
         )
-    return period_income_total, period_expense_total, out_rows
+    return period_income_total, period_expense_total, category_bucket_count, out_rows
 
 
 def sources(conn: sqlite3.Connection, months: int) -> list[dict[str, Any]]:

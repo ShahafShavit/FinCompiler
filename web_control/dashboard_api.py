@@ -72,6 +72,35 @@ def _empty_payload(extra: dict[str, Any] | None = None) -> dict[str, Any]:
     return base
 
 
+_PRESET_CATEGORY_WINDOW_LABELS: dict[str, str] = {
+    "30d": "Last 30 days",
+    "ytd": "Year to date",
+    "3m": "Last 3 months",
+    "6m": "Last 6 months",
+    "12m": "Last 12 months",
+}
+
+
+def _category_window_meta(
+    period: str, start_ym: str | None, end_ym: str | None
+) -> dict[str, Any]:
+    """Echo ``start_ym`` / ``end_ym`` and a short label for custom, all, calendar-year, and presets."""
+    bounds = dashboard_tx_sql.normalize_ym_range(start_ym, end_ym)
+    if bounds is not None:
+        lo, hi = bounds
+        return {"start_ym": lo, "end_ym": hi, "window_label": f"{lo} – {hi}"}
+    raw = (period or "12m").strip()
+    low = raw.lower()
+    if low == "all":
+        return {"window_label": "All time"}
+    if len(raw) == 4 and raw.isdigit():
+        return {"window_label": raw}
+    lbl = _PRESET_CATEGORY_WINDOW_LABELS.get(low)
+    if lbl:
+        return {"window_label": lbl}
+    return {}
+
+
 def _tx_conn() -> sqlite3.Connection | None:
     if not _ledger_exists():
         return None
@@ -308,17 +337,31 @@ def cashflow_monthly(months: int = 24) -> dict[str, Any]:
 
 
 def top_categories(
-    period: str = "12m", report_type: str = "expense", limit: int = 10
+    period: str = "12m",
+    report_type: str = "expense",
+    limit: int = 10,
+    start_ym: str | None = None,
+    end_ym: str | None = None,
 ) -> dict[str, Any]:
     """``[{category, amount, pct_of_expense?, pct_of_income?}]`` ranked desc."""
-    meta: dict[str, Any] = {"period": period, "type": report_type, "limit": int(limit)}
+    meta: dict[str, Any] = {
+        "period": period,
+        "type": report_type,
+        "limit": int(limit),
+        **_category_window_meta(period, start_ym, end_ym),
+    }
     conn = _tx_conn()
     if conn is None:
         return _empty_payload({**meta, "period_income_total": 0.0, "period_expense_total": 0.0})
     try:
         period_income_total, period_expense_total, ranked = (
             dashboard_tx_sql.top_categories_totals_and_rows(
-                conn, period, report_type, int(limit)
+                conn,
+                period,
+                report_type,
+                int(limit),
+                start_ym=start_ym,
+                end_ym=end_ym,
             )
         )
     except Exception:  # noqa: BLE001
@@ -348,23 +391,39 @@ def top_categories(
     }
 
 
-def category_period_stats(period: str = "12m", limit: int = 35) -> dict[str, Any]:
+def category_period_stats(
+    period: str = "12m",
+    limit: int = 35,
+    start_ym: str | None = None,
+    end_ym: str | None = None,
+) -> dict[str, Any]:
     """Per category for the period: income, expense, net, txn counts, % of period totals."""
-    meta: dict[str, Any] = {"period": period, "limit": int(limit)}
+    meta: dict[str, Any] = {
+        "period": period,
+        "limit": int(limit),
+        **_category_window_meta(period, start_ym, end_ym),
+    }
     conn = _tx_conn()
     if conn is None:
-        return _empty_payload({**meta, "period_income_total": 0.0, "period_expense_total": 0.0})
+        return _empty_payload(
+            {**meta, "period_income_total": 0.0, "period_expense_total": 0.0, "category_bucket_count": 0}
+        )
     try:
-        period_income_total, period_expense_total, out_rows = (
-            dashboard_tx_sql.category_period_stats(conn, period, int(limit))
+        period_income_total, period_expense_total, category_bucket_count, out_rows = (
+            dashboard_tx_sql.category_period_stats(
+                conn, period, int(limit), start_ym=start_ym, end_ym=end_ym
+            )
         )
     except Exception:  # noqa: BLE001
         log.exception("dashboard: category_period_stats failed")
-        return _empty_payload({**meta, "period_income_total": 0.0, "period_expense_total": 0.0})
+        return _empty_payload(
+            {**meta, "period_income_total": 0.0, "period_expense_total": 0.0, "category_bucket_count": 0}
+        )
     finally:
         conn.close()
     meta["period_income_total"] = period_income_total
     meta["period_expense_total"] = period_expense_total
+    meta["category_bucket_count"] = category_bucket_count
     if not out_rows:
         return _empty_payload(meta)
     return {
@@ -439,6 +498,26 @@ def sources(months: int = 12) -> dict[str, Any]:
     }
 
 
+def month_bounds() -> dict[str, Any]:
+    """Min / max ``effective_ym`` in the ledger (included rows only), for dashboard range pickers."""
+    conn = _tx_conn()
+    if conn is None:
+        return {"ok": True, "ledger_exists": False, "min_ym": None, "max_ym": None}
+    try:
+        lo, hi = dashboard_tx_sql.effective_month_bounds(conn)
+        return {
+            "ok": True,
+            "ledger_exists": True,
+            "min_ym": lo,
+            "max_ym": hi,
+        }
+    except Exception:  # noqa: BLE001
+        log.exception("dashboard: month_bounds failed")
+        return {"ok": True, "ledger_exists": _ledger_exists(), "min_ym": None, "max_ym": None}
+    finally:
+        conn.close()
+
+
 # --- query string helpers (used by server.py) -------------------------------
 
 
@@ -486,11 +565,28 @@ def _dispatch_dashboard_request_uncached(name: str, qs: dict[str, list[str]]) ->
         period = _qs_first(qs, "period", "12m") or "12m"
         report_type = _qs_first(qs, "type", "expense") or "expense"
         limit = _qs_int(qs, "limit", 10)
-        return top_categories(period=period, report_type=report_type, limit=limit)
+        start_ym = _qs_first(qs, "start_ym")
+        end_ym = _qs_first(qs, "end_ym")
+        return top_categories(
+            period=period,
+            report_type=report_type,
+            limit=limit,
+            start_ym=start_ym,
+            end_ym=end_ym,
+        )
     if name == "category-period-stats":
         period = _qs_first(qs, "period", "12m") or "12m"
-        limit = _qs_int(qs, "limit", 35)
-        return category_period_stats(period=period, limit=limit)
+        raw_l = _qs_int(qs, "limit", 500)
+        # limit <= 0: return all categories (no SQL LIMIT). Else cap rows for responsiveness.
+        _CAT_CAP = 8000
+        limit = 0 if raw_l <= 0 else min(_CAT_CAP, raw_l)
+        start_ym = _qs_first(qs, "start_ym")
+        end_ym = _qs_first(qs, "end_ym")
+        return category_period_stats(
+            period=period, limit=limit, start_ym=start_ym, end_ym=end_ym
+        )
+    if name == "month-bounds":
+        return month_bounds()
     if name == "sources":
         months = _qs_int(qs, "months", 12)
         return sources(months=months)
@@ -531,6 +627,7 @@ __all__ = [
     "cashflow_monthly",
     "top_categories",
     "category_period_stats",
+    "month_bounds",
     "source_category_matrix",
     "sources",
     "ledger_meta",

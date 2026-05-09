@@ -323,6 +323,19 @@
   box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.025);
 }
 
+/* Row hover: brighten full row (works with inline cell backgrounds via inset overlay) */
+.heatmap-page table.hm-grid tbody tr:hover th.row-h {
+  box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.075);
+}
+
+.heatmap-page table.hm-grid tbody tr:hover td.hm-rowmetric {
+  box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.075);
+}
+
+.heatmap-page table.hm-grid tbody tr:hover td.cell {
+  box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.09);
+}
+
 .heatmap-page table.hm-grid tbody tr.year-start th.row-h {
   border-top: 2px solid #5d7cff;
 }
