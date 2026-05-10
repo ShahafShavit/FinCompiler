@@ -62,7 +62,7 @@
 
 **Repository layout**
 
-- **`app/backend`** — `pipeline`, `categorization`, `web_control`, [`config.py`](app/backend/config.py), [`logger.py`](app/backend/logger.py), [`schema`](app/backend/schema), [`scripts`](app/backend/scripts).
+- **`app/backend`** — `pipeline`, `categorization`, `api`, [`config.py`](app/backend/config.py), [`logger.py`](app/backend/logger.py), [`schema`](app/backend/schema), [`scripts`](app/backend/scripts). See [docs/backend-imports.md](docs/backend-imports.md) for `PYTHONPATH` and layer boundaries.
 - **`app/frontend`** — Vite + React + TypeScript ([frontend README](app/frontend/README.md)).
 
 Optional portal fetch and Sheets-related flows use **`config`** / **`pipeline`** and secrets in **`.env`** (start from **`.env.example`**).
@@ -97,7 +97,7 @@ Optional portal fetch and Sheets-related flows use **`config`** / **`pipeline`**
 
 ```text
 ┌─────────────┐     HTTP / API / SSE      ┌────────────────┐
-│  Browser    │ ◄────────────────────────► │  web_control   │
+│  Browser    │ ◄────────────────────────► │  api   │
 │  React SPA  │         static `dist/`    │  (Python)      │
 └─────────────┘                            └────────┬───────┘
                                                     │
@@ -174,14 +174,14 @@ See **[Environment variables](#environment-variables)** for every key. You only 
 From the **repository root**, with **`PYTHONPATH`** including **`app/backend`** ([below](#python-path-and-working-directory)):
 
 ```bash
-python -m web_control
+python -m api
 ```
 
 Open [http://127.0.0.1:8780/](http://127.0.0.1:8780/) (default port **8780**).
 
 ## Python path and working directory
 
-Use the **repository root** as your current working directory whenever you run the server or CLI so **`data/`** and **`.env`** resolve. Add **`app/backend`** to **`PYTHONPATH`** so **`web_control`**, **`pipeline`**, and **`config`** import cleanly.
+Use the **repository root** as your current working directory whenever you run the server or CLI so **`data/`** and **`.env`** resolve. Add **`app/backend`** to **`PYTHONPATH`** so **`api`**, **`pipeline`**, and **`config`** import cleanly.
 
 **POSIX**
 
@@ -211,7 +211,7 @@ Portal logins, Max/Isracard credentials, and Google Sheets **service account JSO
 **Migrating from an older `.env`:** keep your legacy `bank_*`, `credit_*`, `max_*`, `GOOGLE_API_USER`, and `GOOGLE_WORKSHEET_ID` lines temporarily, run:
 
 ```bash
-PYTHONPATH=app/backend python -m providers_migrate_env
+PYTHONPATH=app/backend python -m providers
 ```
 
 (or use **Import from .env** on the Settings page), verify the UI, then **remove those secret lines** from `.env`.
@@ -224,7 +224,7 @@ PYTHONPATH=app/backend python -m providers_migrate_env
 |----------|----------|---------|---------|
 | `FINANCE_WORKSPACE_ROOT` | No | *(empty)* | If set, **`data/`** and workspace **`web/`** resolve under this directory instead of the repo root—useful for tests or an isolated data tree. |
 
-**`web_control` HTTP bind**
+**`api` HTTP bind**
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -251,7 +251,7 @@ PYTHONPATH=app/backend python -m providers_migrate_env
 
 | Variable | Purpose |
 |----------|---------|
-| `FINANCE_PYTHON_EXE` | Optional Python path for [`web_control_restart.py`](app/backend/scripts/web_control_restart.py) |
+| `FINANCE_PYTHON_EXE` | Optional Python path for [`api_server_restart.py`](app/backend/scripts/api_server_restart.py) |
 
 ### Optional: encryption at rest
 
@@ -260,16 +260,16 @@ PYTHONPATH=app/backend python -m providers_migrate_env
 ## Run the web app
 
 ```bash
-python -m web_control
+python -m api
 ```
 
-The VS Code task **Web (Python): control server** runs [`app/backend/scripts/web_control_restart.py`](app/backend/scripts/web_control_restart.py): frees port **8780**, sets **`PYTHONPATH`**, starts **`web_control`** from the repo root.
+The VS Code task **Web (Python): control server** runs [`app/backend/scripts/api_server_restart.py`](app/backend/scripts/api_server_restart.py): frees port **8780**, sets **`PYTHONPATH`**, starts **`api`** from the repo root.
 
 **Windows cmd** without activating the venv:
 
 ```cmd
 set PYTHONPATH=app\backend
-.venv\Scripts\python.exe -m web_control
+.venv\Scripts\python.exe -m api
 ```
 
 | Page | URL |
@@ -288,7 +288,7 @@ If **`app/frontend/dist/`** is missing, you get a placeholder page with build in
 **Terminal 1** (repo root, `PYTHONPATH=app/backend`):
 
 ```bash
-python -m web_control
+python -m api
 ```
 
 **Terminal 2**
@@ -325,7 +325,7 @@ Commands (each has its own flags—use **`python run_pipeline.py COMMAND --help`
 
 [`run_pipeline.py`](run_pipeline.py) and [`main.py`](main.py) delegate to **`apps.pipeline_cli`** with **`app/backend`** on **`sys.path`**.
 
-`run_pipeline.py … --categorize` runs auto-categorization; finish remaining rows at **`/categorize/`** while **`python -m web_control`** is running.
+`run_pipeline.py … --categorize` runs auto-categorization; finish remaining rows at **`/categorize/`** while **`python -m api`** is running.
 
 ## Contributing
 
@@ -333,7 +333,7 @@ Issues and PRs are welcome.
 
 - Match existing style in touched files; keep changes focused.
 - Do not commit secrets or personal exports; use **`FINANCE_WORKSPACE_ROOT`** for an isolated **`data/`** tree when experimenting.
-- **Backend:** [`app/backend/pipeline`](app/backend/pipeline), [`app/backend/web_control`](app/backend/web_control), [`config.py`](app/backend/config.py).
+- **Backend:** [`app/backend/pipeline`](app/backend/pipeline), [`app/backend/api`](app/backend/api), [`config.py`](app/backend/config.py).
 - **Frontend:** [`app/frontend/README.md`](app/frontend/README.md).
 
 Tests from the repo root:
@@ -355,7 +355,7 @@ Run from the repo root with **`PYTHONPATH=app/backend`** unless the script boots
 | Command | Purpose |
 |---------|---------|
 | `python app/backend/scripts/verify_ledger_integrity.py` | Structural audit of the ledger DB ([`pipeline/ledger.py`](app/backend/pipeline/ledger.py)). |
-| `python app/backend/scripts/web_control_restart.py` | Free port **8780**, start **`python -m web_control`** with correct **`PYTHONPATH`** and cwd. |
+| `python app/backend/scripts/api_server_restart.py` | Free port **8780**, start **`python -m api`** with correct **`PYTHONPATH`** and cwd. |
 
 Additional scripts: [`app/backend/scripts`](app/backend/scripts).
 

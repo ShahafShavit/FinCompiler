@@ -1,6 +1,6 @@
 # FinCompiler — web SPA
 
-React + Vite + TypeScript single-page app served by the Python `web_control` server from [`app/backend`](../backend/web_control/).
+React + Vite + TypeScript single-page app served by the Python `api` server from [`app/backend`](../backend/api/).
 
 Routes:
 
@@ -21,7 +21,7 @@ Two processes: Python control server from the **repository root** with `PYTHONPA
 
 ```bash
 # Terminal 1 (repo root): export PYTHONPATH=app/backend   # POSIX
-python -m web_control
+python -m api
 
 # Terminal 2
 cd app/frontend
@@ -39,7 +39,7 @@ npm install   # first time / when deps change
 npm run build
 ```
 
-Output is **`dist/`** under this directory. With `PYTHONPATH=app/backend`, run `python -m web_control` from the repo root and open <http://127.0.0.1:8780/> — the server serves `app/frontend/dist/index.html` and `dist/assets/*`.
+Output is **`dist/`** under this directory. With `PYTHONPATH=app/backend`, run `python -m api` from the repo root and open <http://127.0.0.1:8780/> — the server serves `app/frontend/dist/index.html` and `dist/assets/*`.
 
 If you open the Python server before building, you get a placeholder page with instructions instead of a blank screen.
 
@@ -69,6 +69,6 @@ app/frontend/
 
 ## Adding charts / endpoints
 
-1. Add the Python aggregation in `app/backend/web_control/dashboard_api.py` and dispatch it from `handle_dashboard_request`.
+1. Add the Python aggregation in `app/backend/api/dashboard_api.py` and dispatch it from `handle_dashboard_request`.
 2. Add the typing in `app/frontend/src/lib/dashboardTypes.ts`.
 3. Add a card component in `Dashboard.tsx` using `useFetch` + Recharts.

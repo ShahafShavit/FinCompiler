@@ -72,7 +72,7 @@ transaction_category_file = os.path.join(_compiled_root, "bak", "transaction_cat
 _static_root = _w("data", "static")
 static_dir = _static_root + os.sep
 
-# UI-managed secrets (portal + Google Sheets path/id). See ``providers_store``.
+# UI-managed secrets (portal + Google Sheets path/id). See ``providers``.
 private_dir = _data("private")
 providers_file = os.path.join(private_dir, "providers.json")
 

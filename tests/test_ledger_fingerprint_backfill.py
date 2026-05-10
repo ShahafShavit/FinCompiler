@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pipeline.csv_handler import generate_transaction_fingerprint
+from pipeline.fingerprint import generate_transaction_fingerprint
 from pipeline.ledger import (
     backfill_null_fingerprints,
     list_would_duplicate_null_rows,

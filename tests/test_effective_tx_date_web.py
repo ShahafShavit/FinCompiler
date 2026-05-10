@@ -49,7 +49,7 @@ class EffectiveTxDateWebTests(unittest.TestCase):
 
     def test_dashboard_summary_30d_anchor_uses_effective_date(self) -> None:
         import config as config_mod
-        from web_control import dashboard_api
+        from api import dashboard_api
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -88,7 +88,7 @@ class EffectiveTxDateWebTests(unittest.TestCase):
 
     def test_dashboard_tx_sql_30d_includes_row_by_statement_month(self) -> None:
         import config as config_mod
-        from web_control import dashboard_tx_sql
+        from api import dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -125,7 +125,7 @@ SELECT COALESCE(SUM(income_amt), 0) FROM period_tx"""
 
     def test_dashboard_tx_sql_ytd_year_from_effective_max(self) -> None:
         import config as config_mod
-        from web_control import dashboard_tx_sql
+        from api import dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp

@@ -1,5 +1,5 @@
 """
-Guardrails for :func:`pipeline.csv_handler.generate_transaction_fingerprint`.
+Guardrails for :func:`pipeline.fingerprint.generate_transaction_fingerprint`.
 
 The fingerprint must always encode the **same calendar date** as
 :func:`pipeline.compiler.parse_post_ingest_date_scalar` for ``תאריך``. Using
@@ -15,7 +15,7 @@ import unittest
 import pandas as pd
 
 from pipeline.compiler import parse_post_ingest_date_scalar
-from pipeline.csv_handler import generate_transaction_fingerprint, generate_transaction_fingerprint_legacy
+from pipeline.fingerprint import generate_transaction_fingerprint, generate_transaction_fingerprint_legacy
 
 
 def _tx_row(

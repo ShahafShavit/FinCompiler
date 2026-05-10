@@ -34,7 +34,7 @@ Set by application code on **first insert** (not a trigger). Rules live in `pipe
 
 ## Identity
 
-- **`fingerprint`** is the **canonical** dedupe key (`UNIQUE` when non-NULL). It is produced by `pipeline/csv_handler.generate_transaction_fingerprint` and encodes **both** `בחובה` and `בזכות`, so paired same-day opposite flows do not collide. It may be **NULL** until filled by the compile path or by calling helpers in `pipeline.ledger` (e.g. `backfill_null_fingerprints`) / ad-hoc SQL against your DB.
+- **`fingerprint`** is the **canonical** dedupe key (`UNIQUE` when non-NULL). It is produced by `pipeline/fingerprint.generate_transaction_fingerprint` and encodes **both** `בחובה` and `בזכות`, so paired same-day opposite flows do not collide. It may be **NULL** until filled by the compile path or by calling helpers in `pipeline.ledger` (e.g. `backfill_null_fingerprints`) / ad-hoc SQL against your DB.
 - **Legacy CSV / Excel** sometimes include **מזהה עסקה** (a per-row content hash). That value is **not** stored on `ledger_transaction`. Application code prefers **`fingerprint`**, then legacy hash where present.
 - There is **no** separate fingerprint-metadata table.
 

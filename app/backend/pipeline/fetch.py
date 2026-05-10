@@ -4,7 +4,7 @@ from __future__ import annotations
 Fetch transaction and holdings files from bank/credit portals via Selenium.
 
 Pipeline position: writes into ``config.download_inbox_dir`` (browser download folder).
-Next step: ``inbox_router.route_shared_download_inbox`` then ``spreadsheet_ingest`` into each pipeline's ``raw`` dir.
+Next step: ``pipeline.route_inbox.route_shared_download_inbox`` then ``spreadsheet_ingest`` into each pipeline's ``raw`` dir.
 """
 import logging
 import urllib.parse
@@ -1124,7 +1124,7 @@ if __name__ == "__main__":
 
     # maxCard = MaxCredit(config.max_username, config.max_password)
     # maxCard.download()
-    from providers_store import get_resolved
+    from providers import get_resolved
 
     pr = get_resolved()
     b = Bank(pr.bank_username, pr.bank_password)

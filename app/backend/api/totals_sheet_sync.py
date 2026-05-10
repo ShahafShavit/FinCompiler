@@ -12,7 +12,7 @@ import config
 
 
 def is_sheets_configured() -> bool:
-    from providers_store import google_api_user_path, google_worksheet_id
+    from providers import google_api_user_path, google_worksheet_id
 
     cred = (google_api_user_path() or "").strip()
     sid = (google_worksheet_id() or "").strip()

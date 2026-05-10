@@ -445,7 +445,7 @@ def rename_category_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
         conn.execute("UPDATE store_category SET category = ? WHERE category = ?", (to_cat, from_cat))
         conn.commit()
         try:
-            from web_control import heatmap as _heatmap_mod
+            from api import heatmap as _heatmap_mod
 
             _heatmap_mod.invalidate_bundle_cache()
         except Exception:  # noqa: BLE001
@@ -522,7 +522,7 @@ def patch_store_static_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
         except Exception:  # noqa: BLE001
             log.exception("forward_fill after static toggle for %s", store_name)
     try:
-        from web_control import heatmap as _heatmap_mod
+        from api import heatmap as _heatmap_mod
 
         _heatmap_mod.invalidate_bundle_cache()
     except Exception:  # noqa: BLE001
@@ -542,7 +542,7 @@ def patch_ledger_transaction_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
 
     One of ``id`` or ``fingerprint`` must be present (``id`` wins if both are set).
     """
-    from web_control import heatmap
+    from api import heatmap
 
     try:
         data = json.loads(raw_body.decode("utf-8") or "{}")

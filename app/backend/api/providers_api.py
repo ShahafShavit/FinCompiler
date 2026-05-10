@@ -6,15 +6,14 @@ import json
 import logging
 from typing import Any
 
-import providers_registry
-import providers_store
+import providers
 
 log = logging.getLogger(__name__)
 
 
 def api_get() -> dict[str, Any]:
-    doc = providers_store.load_document()
-    return providers_store.document_for_api_get(doc)
+    doc = providers.load_document()
+    return providers.document_for_api_get(doc)
 
 
 def api_put(raw_body: bytes) -> tuple[int, dict[str, Any]]:
@@ -29,29 +28,29 @@ def api_put(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     if isinstance(bank, dict) and bank.get("provider") is not None:
         pid = str(bank.get("provider") or "").strip().lower()
         try:
-            providers_registry.bank_class(pid)
+            providers.bank_class(pid)
         except ValueError as e:
             return 400, {"ok": False, "error": "validation_error", "message": str(e)}
 
-    current = providers_store.load_document()
+    current = providers.load_document()
     try:
-        merged = providers_store.merge_put_update(current, body)
+        merged = providers.merge_put_update(current, body)
     except Exception:  # noqa: BLE001
         log.exception("providers merge_put_update failed")
         return 500, {"ok": False, "error": "server_error", "message": "Failed to merge providers (see server log)."}
 
     try:
-        providers_store.save_document_atomic(merged)
+        providers.save_document_atomic(merged)
     except OSError as e:
         log.exception("providers save failed")
         return 500, {"ok": False, "error": "server_error", "message": str(e)}
 
-    return 200, {"ok": True, "config": providers_store.document_for_api_get(merged)}
+    return 200, {"ok": True, "config": providers.document_for_api_get(merged)}
 
 
 def api_import_env() -> tuple[int, dict[str, Any]]:
     try:
-        merged = providers_store.import_legacy_env_from_dotenv(save=True)
+        merged = providers.import_legacy_env_from_dotenv(save=True)
     except OSError as e:
         return 500, {"ok": False, "error": "server_error", "message": str(e)}
     except Exception:  # noqa: BLE001
@@ -60,5 +59,5 @@ def api_import_env() -> tuple[int, dict[str, Any]]:
     return 200, {
         "ok": True,
         "message": "Merged .env into providers.json. Remove secret keys from .env when verified.",
-        "config": providers_store.document_for_api_get(merged),
+        "config": providers.document_for_api_get(merged),
     }

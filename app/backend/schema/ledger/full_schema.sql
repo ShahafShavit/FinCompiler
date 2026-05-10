@@ -3,7 +3,7 @@
 -- =============================================================================
 -- Single file database: ledger + static mappings + holdings.
 -- Aligns with docs/data-storage-and-pipeline-evaluation.md (Sections 13.3, 13.9, 13.10)
--- and current pipeline column names (pipeline/compiler.py, pipeline/csv_handler.py).
+-- and current pipeline column names (pipeline/compiler.py, pipeline/workbook_normalize.py).
 --
 -- Apply with: sqlite3 path/to/ledger.sqlite < full_schema.sql
 -- Or from Python: execute script in order after creating an empty file.
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS ledger_transaction (
     "פירוט נוסף"     TEXT,
     "תאור מורחב"     TEXT,
     "4 ספרות"        TEXT,
-    -- Dedupe key: encodes both debit/credit columns (see pipeline.csv_handler.generate_transaction_fingerprint)
+    -- Dedupe key: encodes both debit/credit columns (see pipeline.fingerprint.generate_transaction_fingerprint)
     "fingerprint"    TEXT,
     "קטגוריה"        TEXT,
     notes              TEXT,

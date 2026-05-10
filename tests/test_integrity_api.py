@@ -1,4 +1,4 @@
-"""Tests for :mod:`web_control.integrity_api`."""
+"""Tests for :mod:`api.integrity_api`."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class IntegrityApiTests(unittest.TestCase):
         return config_mod.ledger_db_file
 
     def test_rename_category_updates_ledger_and_store(self) -> None:
-        from web_control import integrity_api
+        from api import integrity_api
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -66,7 +66,7 @@ class IntegrityApiTests(unittest.TestCase):
             conn.close()
 
     def test_patch_store_static_rejects_multiple_categories(self) -> None:
-        from web_control import integrity_api
+        from api import integrity_api
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -85,7 +85,7 @@ class IntegrityApiTests(unittest.TestCase):
         self.assertEqual(payload.get("error"), "multiple_categories_for_static")
 
     def test_patch_store_static_ok_and_forward_fill(self) -> None:
-        from web_control import integrity_api
+        from api import integrity_api
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -118,7 +118,7 @@ class IntegrityApiTests(unittest.TestCase):
             conn.close()
 
     def test_report_has_sections(self) -> None:
-        from web_control import integrity_api
+        from api import integrity_api
 
         self._fresh_db()
         rpt = integrity_api.build_integrity_report()
@@ -128,7 +128,7 @@ class IntegrityApiTests(unittest.TestCase):
         self.assertIn("duplicate_fingerprint", ids)
 
     def test_list_stores_aggregated(self) -> None:
-        from web_control import integrity_api
+        from api import integrity_api
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -148,7 +148,7 @@ class IntegrityApiTests(unittest.TestCase):
         self.assertEqual(stores[0]["categories"], ["C1"])
 
     def test_integrity_excluded_section_and_uncategorized_filter(self) -> None:
-        from web_control import integrity_api
+        from api import integrity_api
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -183,7 +183,7 @@ class IntegrityApiTests(unittest.TestCase):
         self.assertEqual(by_id["uncategorized"].get("count"), 1)
 
     def test_patch_ledger_tx_by_fingerprint(self) -> None:
-        from web_control import integrity_api
+        from api import integrity_api
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)

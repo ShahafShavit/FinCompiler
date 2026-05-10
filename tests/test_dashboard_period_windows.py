@@ -21,7 +21,7 @@ class DashboardPeriodWindowTests(unittest.TestCase):
         import config as config_mod
 
         from pipeline.ledger import migrate_ledger_db
-        from web_control import dashboard_tx_sql
+        from api import dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -62,7 +62,7 @@ class DashboardPeriodWindowTests(unittest.TestCase):
         import config as config_mod
 
         from pipeline.ledger import migrate_ledger_db
-        from web_control import dashboard_tx_sql
+        from api import dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -99,7 +99,7 @@ class DashboardPeriodWindowTests(unittest.TestCase):
         import config as config_mod
 
         from pipeline.ledger import migrate_ledger_db
-        from web_control import dashboard_tx_sql
+        from api import dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -142,7 +142,7 @@ class DashboardPeriodWindowTests(unittest.TestCase):
         import config as config_mod
 
         from pipeline.ledger import migrate_ledger_db
-        from web_control import dashboard_tx_sql
+        from api import dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp

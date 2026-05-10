@@ -1,5 +1,5 @@
 """
-Stop anything listening on the finance control HTTP port, then start ``python -m web_control``.
+Stop anything listening on the finance control HTTP port, then start ``python -m api``.
 
 Use from VS Code (or CLI) so the same command both starts the dashboard and replaces a prior instance.
 Expects ``PYTHONPATH`` to include ``app/backend`` for the child process (set automatically here).
@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-# .../app/backend (packages: web_control, pipeline, …)
+# .../app/backend (packages: api, pipeline, …)
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 # Repository root (contains ``data/``, ``app/``)
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -45,9 +45,9 @@ def _repo_venv_python(repo: Path) -> Path | None:
     return None
 
 
-def python_for_web_control_child(repo: Path) -> str:
+def python_for_api_child(repo: Path) -> str:
     """
-    Interpreter used to run ``python -m web_control``.
+    Interpreter used to run ``python -m api``.
 
     Prefers ``FINANCE_PYTHON_EXE``, an active ``VIRTUAL_ENV``, then a repo ``.venv`` / ``venv``,
     so the server sees the same packages as ``install.ps1`` even when the script was launched with
@@ -145,13 +145,13 @@ def kill_listeners_on_control_port(port: int) -> None:
 
 def main() -> int:
     port = _control_port()
-    py = python_for_web_control_child(_REPO_ROOT)
-    print(f"Finance control: freeing port {port} (if in use), then starting web_control…", flush=True)
+    py = python_for_api_child(_REPO_ROOT)
+    print(f"Finance control: freeing port {port} (if in use), then starting api…", flush=True)
     print(f"Using Python: {py}", flush=True)
     kill_listeners_on_control_port(port)
     time.sleep(0.3)
     os.chdir(_REPO_ROOT)
-    rc = subprocess.run([py, "-m", "web_control"], cwd=str(_REPO_ROOT), env=_child_env()).returncode
+    rc = subprocess.run([py, "-m", "api"], cwd=str(_REPO_ROOT), env=_child_env()).returncode
     return rc
 
 

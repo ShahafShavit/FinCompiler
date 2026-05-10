@@ -62,7 +62,7 @@ class LedgerMigrateTests(unittest.TestCase):
         import config as config_mod
         import pandas as pd
 
-        from pipeline.csv_handler import generate_transaction_fingerprint
+        from pipeline.fingerprint import generate_transaction_fingerprint
         from pipeline.ledger import migrate_ledger_db
 
         with tempfile.TemporaryDirectory() as tmp:

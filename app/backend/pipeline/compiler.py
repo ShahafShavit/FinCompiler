@@ -133,8 +133,8 @@ class Compiler:
             self._holdings_ledger,
         )
         if ledger_db and self._holdings_ledger:
-            from pipeline.holdings_csv_import import holdings_long_to_wide
-            from pipeline.holdings_csv_import import load_holdings_long_dataframe
+            from pipeline.holdings_balance import holdings_long_to_wide
+            from pipeline.holdings_balance import load_holdings_long_dataframe
             from pipeline.ledger import migrate_ledger_db
 
             migrate_ledger_db(ledger_db)
@@ -287,7 +287,7 @@ class Compiler:
 
     def save_main(self):
         if self.ledger_db:
-            from pipeline.holdings_csv_import import upsert_holdings_wide_to_ledger
+            from pipeline.holdings_balance import upsert_holdings_wide_to_ledger
 
             if not self._holdings_ledger:
                 raise ValueError("Compiler.save_main with ledger_db is only supported for holdings wide merge")

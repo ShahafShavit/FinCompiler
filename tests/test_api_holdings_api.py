@@ -37,8 +37,8 @@ class WebControlHoldingsApiTests(unittest.TestCase):
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from pipeline.holdings_csv_import import upsert_holdings_rows
-            from web_control.server import ControlHTTPServer, ControlState, make_handler_class
+            from pipeline.holdings_balance import upsert_holdings_rows
+            from api.server import ControlHTTPServer, ControlState, make_handler_class
 
             seed = [
                 {"as_of_date": "2026-05-01", "activity_type": "עובר ושב", "balance_ils": 1000},

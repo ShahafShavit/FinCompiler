@@ -16,7 +16,7 @@ You are a **read-only architecture analyst** for the FinCompiler codebase. Your 
 
 2. **Trace the transactions pipeline** — In order:
    - `pipeline/inbox_router.py` — how downloads move from shared input to inboxes
-   - `pipeline/spreadsheet_ingest.py` / `pipeline/csv_handler.py` — raw → clean CSV
+   - `pipeline/spreadsheet_ingest.py` / `pipeline/workbook_normalize.py` — inbox workbooks → normalized frames (optional debug CSV)
    - `pipeline/__init__.py` — `route_inbox`, `ingest_transactions_inbox`, `csv_from_raw_transactions`, `compile_transactions_main`
    - `pipeline/compiler.py` — `__compile_new__`, `compile_to_main` (fingerprint dedupe, category priority), `update_fingerprint_db`, `save_*`
 

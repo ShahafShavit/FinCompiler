@@ -20,7 +20,7 @@ from pipeline.compiler import (
     parse_post_ingest_date_column,
     parse_post_ingest_date_scalar,
 )
-from pipeline.csv_handler import (
+from pipeline.fingerprint import (
     generate_transaction_fingerprint,
     generate_transaction_fingerprint_legacy,
 )

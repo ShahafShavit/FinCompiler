@@ -37,9 +37,9 @@
 
     {
       "label": "Web (Python): control server (start / restart)",
-      "detail": "Free port 8780 if held, then run web_control with PYTHONPATH=app/backend (serves APIs + built SPA at /).",
+      "detail": "Free port 8780 if held, then run api with PYTHONPATH=app/backend (serves APIs + built SPA at /).",
       "type": "shell",
-      "command": ".venv/bin/python app/backend/scripts/web_control_restart.py || python3 app/backend/scripts/web_control_restart.py",
+      "command": ".venv/bin/python app/backend/scripts/api_server_restart.py || python3 app/backend/scripts/api_server_restart.py",
       "windows": {
         "options": {
           "cwd": "${workspaceFolder}",
@@ -51,7 +51,7 @@
             "PYTHONPATH": "${workspaceFolder}\\app\\backend"
           }
         },
-        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe app\\backend\\scripts\\web_control_restart.py) else (python app\\backend\\scripts\\web_control_restart.py)"
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe app\\backend\\scripts\\api_server_restart.py) else (python app\\backend\\scripts\\api_server_restart.py)"
       },
       "options": {
         "cwd": "${workspaceFolder}",

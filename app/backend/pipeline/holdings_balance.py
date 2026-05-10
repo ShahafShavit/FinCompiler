@@ -1,8 +1,9 @@
 """
-Import wide ``holdings.csv`` exports into ``holdings_balance`` (relational melt).
+Holdings balances in SQLite: ``holdings_balance`` melt/wide helpers, upserts, and API support.
 
-Year-specific files may use different **column orders**; all non-date columns become
-``activity_type`` keys. Normalizes known spelling variants for the deposits column.
+Wide frames (date column ``תאריך`` plus per-activity balance columns) come from the compile
+path (workbooks) or in-memory edits; all non-date columns become ``activity_type`` keys when
+melted. Normalizes known spelling variants for the deposits column.
 """
 
 from __future__ import annotations
@@ -52,11 +53,11 @@ def _month_start_date(v: Any) -> str:
 
 def wide_holdings_to_long(df: pd.DataFrame) -> pd.DataFrame:
     if "תאריך" not in df.columns:
-        raise ValueError('holdings CSV must include a "תאריך" column')
+        raise ValueError('wide holdings frame must include a "תאריך" column')
     id_vars = ["תאריך"]
     others = [c for c in df.columns if c != "תאריך"]
     if not others:
-        raise ValueError("holdings CSV has no balance columns besides תאריך")
+        raise ValueError("wide holdings frame has no balance columns besides תאריך")
     long_df = df.melt(
         id_vars=id_vars,
         value_vars=others,
@@ -75,12 +76,6 @@ def wide_holdings_to_long(df: pd.DataFrame) -> pd.DataFrame:
     long_df["as_of_date"] = long_df["as_of_date"].map(_month_start_date)
     long_df["balance_ils"] = pd.to_numeric(long_df["balance_ils"], errors="coerce").fillna(0.0)
     return long_df
-
-
-def load_holdings_wide_csv(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    df.columns = [str(c).strip() for c in df.columns]
-    return wide_holdings_to_long(df)
 
 
 def load_holdings_long_dataframe(db_path: str) -> pd.DataFrame:
@@ -581,41 +576,11 @@ def upsert_holdings_long(
 
 
 def upsert_holdings_wide_to_ledger(wide_df: pd.DataFrame, db_path: str | None = None) -> dict[str, Any]:
-    """Melt wide ``holdings.csv``-shaped frame and upsert into ``holdings_balance``."""
+    """Melt a wide holdings frame (``תאריך`` + activity columns) and upsert into ``holdings_balance``."""
     if wide_df.empty:
         return upsert_holdings_long(pd.DataFrame(columns=["as_of_date", "activity_type", "balance_ils"]), db_path)
     long_df = wide_holdings_to_long(wide_df)
     return upsert_holdings_long(long_df, db_path)
-
-
-def import_holdings_csvs(
-    paths: list[str],
-    db_path: str | None = None,
-    *,
-    clear_holdings_first: bool = False,
-) -> dict[str, Any]:
-    """
-    Upsert melted rows into ``holdings_balance`` (``INSERT OR REPLACE``).
-
-    If ``clear_holdings_first`` is True, deletes all rows from ``holdings_balance`` first.
-    """
-    frames = [load_holdings_wide_csv(p) for p in paths]
-    combined = pd.concat(frames, ignore_index=True)
-    combined = combined.drop_duplicates(subset=["as_of_date", "activity_type"], keep="last")
-
-    db = db_path if db_path is not None else config.ledger_db_file
-    report = upsert_holdings_long(
-        combined,
-        db,
-        clear_holdings_first=clear_holdings_first,
-    )
-    report["source_files"] = list(paths)
-    log.info(
-        "holdings import: %s file(s) merged → %s logical rows",
-        len(paths),
-        report.get("rows_upserted"),
-    )
-    return report
 
 
 def verify_holdings_long(expected: pd.DataFrame, db_path: str) -> dict[str, Any]:

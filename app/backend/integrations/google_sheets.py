@@ -489,7 +489,7 @@ def push_monthly_look(gsh):
     update_sheet_with_headers(spreadsheet, headers, data, 'מבט חודשי')
     print("Pushed updated monthly look.")
 if __name__ == "__main__":
-    from providers_store import google_api_user_path, google_worksheet_id
+    from providers import google_api_user_path, google_worksheet_id
 
     gsh = GoogleSheetsHandler(google_api_user_path(), google_worksheet_id())
 

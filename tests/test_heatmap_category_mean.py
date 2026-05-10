@@ -1,10 +1,10 @@
-"""Heatmap category average: recent active months only (see web_control.heatmap)."""
+"""Heatmap category average: recent active months only (see api.heatmap)."""
 
 import unittest
 
 import pandas as pd
 
-from web_control.heatmap import category_mean_recent_active
+from api.heatmap import category_mean_recent_active
 
 
 class TestCategoryMeanRecentActive(unittest.TestCase):

@@ -1,8 +1,11 @@
 """
-Load/save ``data/private/providers.json`` — single source for portal + Google Sheets secrets.
+Load/save ``data/private/providers.json`` — single source for portal + Google Sheets secrets,
+plus lazy mapping from provider ids to Selenium portal classes (no Selenium import until used).
 
 No runtime reads of legacy ``bank_*`` / ``GOOGLE_*`` environment variables; use
 ``import_legacy_env_from_dotenv()`` once to migrate.
+
+CLI: ``python -m providers`` — merge legacy ``.env`` keys into ``providers.json``.
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Type
 
 import config
 
@@ -21,6 +24,42 @@ log = logging.getLogger(__name__)
 PROVIDERS_VERSION = 1
 
 _DEFAULT_CREDENTIAL_IDS = ("max", "isracard")
+
+# --- Lazy portal class maps (avoid importing Selenium for JSON-only callers) ---
+_banks_cache: dict[str, Type] | None = None
+_credits_cache: dict[str, Type] | None = None
+
+
+def _portal_class_maps() -> tuple[dict[str, Type], dict[str, Type]]:
+    global _banks_cache, _credits_cache
+    if _banks_cache is not None and _credits_cache is not None:
+        return _banks_cache, _credits_cache
+    from pipeline.fetch import Bank as _Bank, IsracardCredit as _IsracardCredit, MaxCredit as _MaxCredit
+
+    _banks_cache = {"leumi": _Bank}
+    _credits_cache = {"max": _MaxCredit, "isracard": _IsracardCredit}
+    return _banks_cache, _credits_cache
+
+
+def bank_class(provider_id: str) -> Type:
+    banks, _ = _portal_class_maps()
+    pid = (provider_id or "").strip().lower()
+    cls = banks.get(pid)
+    if cls is None:
+        raise ValueError(f"Unsupported bank provider {provider_id!r}; supported: {sorted(banks)}")
+    return cls
+
+
+def credit_provider_classes() -> dict[str, Type]:
+    _, credits = _portal_class_maps()
+    return credits
+
+
+def assert_credit_provider(provider_id: str) -> None:
+    credits = credit_provider_classes()
+    pid = (provider_id or "").strip().lower()
+    if pid not in credits:
+        raise ValueError(f"Unsupported credit provider {provider_id!r}; supported: {sorted(credits)}")
 
 
 def default_document() -> dict[str, Any]:
@@ -370,3 +409,15 @@ def import_legacy_env_from_dotenv(*, save: bool = True) -> dict[str, Any]:
     if save:
         save_document_atomic(merged)
     return merged
+
+
+def main() -> int:
+    """``python -m providers`` — migrate legacy ``.env`` keys into ``providers.json``."""
+    import_legacy_env_from_dotenv(save=True)
+    print(f"Wrote merged providers to {providers_file_path()!r}")
+    print("Remove bank_*, credit_*, max_*, GOOGLE_API_USER, GOOGLE_WORKSHEET_ID from .env when done.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

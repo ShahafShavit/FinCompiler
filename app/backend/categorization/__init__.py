@@ -1,4 +1,4 @@
-"""Manual categorization (SQLite ledger): protocol and prompts; browser UX lives in ``web_control``."""
+"""Manual categorization (SQLite ledger): protocol and prompts; browser UX is served by the ``api`` package."""
 
 from categorization.interactive.protocol import CategorizationInteractionHandler
 from categorization.interactive.prompts import (

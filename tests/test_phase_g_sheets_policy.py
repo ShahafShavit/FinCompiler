@@ -23,14 +23,14 @@ class PhaseGSheetsPolicyTests(unittest.TestCase):
         self.assertFalse(hasattr(GSLink, "pull_sheet_readonly_to_csv"))
 
     def test_totals_sheet_sync_push_helper_only(self) -> None:
-        import web_control.totals_sheet_sync as tss
+        import api.totals_sheet_sync as tss
 
         self.assertTrue(hasattr(tss, "is_sheets_configured"))
         self.assertFalse(hasattr(tss, "ensure_totals_csv_present"))
         self.assertFalse(hasattr(tss, "refresh_totals_from_cloud"))
 
     def test_desktop_sheets_api_has_no_api_pull(self) -> None:
-        import web_control.desktop_sheets_api as dsa
+        import api.desktop_sheets_api as dsa
 
         self.assertFalse(hasattr(dsa, "api_pull"))
         self.assertTrue(hasattr(dsa, "api_push"))

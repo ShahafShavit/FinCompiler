@@ -1,4 +1,4 @@
-/** Mirrors ``web_control.heatmap._format_cell_money`` (Python). */
+/** Mirrors ``api.heatmap._format_cell_money`` (Python). */
 export function formatCellMoney(v: number): string {
   const sign = v < 0 ? '-' : '';
   const a = Math.abs(v);

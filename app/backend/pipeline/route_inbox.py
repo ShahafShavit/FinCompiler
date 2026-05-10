@@ -1,19 +1,20 @@
 """
-Classify browser downloads and move them into per-pipeline inbox folders.
+Route inbox (pipeline step 2): classify browser downloads and move them into per-pipeline inbox folders.
 
-Shared download folder (Chrome): ``config.download_inbox_dir``.
+Runs after browser download (``pipeline.fetch``). Shared download folder: ``config.download_inbox_dir``.
 Pipeline dirs: ``config.holdings_*`` and ``config.transactions_*``.
 """
+
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import shutil
-import glob
 
 import config
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("pipeline.route_inbox")
 
 HOLDINGS_MARKERS = ("יתרות",)
 

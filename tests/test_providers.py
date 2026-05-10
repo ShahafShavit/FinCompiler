@@ -1,4 +1,4 @@
-"""Tests for ``providers_store`` (normalize, merge, paths)."""
+"""Tests for ``providers`` (normalize, merge, paths)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 
-class ProvidersStoreTests(unittest.TestCase):
+class ProvidersTests(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.pop("FINANCE_WORKSPACE_ROOT", None)
         import config as config_mod
@@ -17,7 +17,7 @@ class ProvidersStoreTests(unittest.TestCase):
         importlib.reload(config_mod)
 
     def test_normalize_and_merge_keep_password(self) -> None:
-        import providers_store as ps
+        import providers as ps
 
         base = ps.default_document()
         base["bank"]["credentials"]["username"] = "u1"
@@ -30,7 +30,7 @@ class ProvidersStoreTests(unittest.TestCase):
         self.assertEqual(merged["bank"]["credentials"]["password"], "secret1")
 
     def test_merge_password_null_clears(self) -> None:
-        import providers_store as ps
+        import providers as ps
 
         base = ps.default_document()
         base["bank"]["credentials"]["password"] = "x"
@@ -38,7 +38,7 @@ class ProvidersStoreTests(unittest.TestCase):
         self.assertEqual(merged["bank"]["credentials"]["password"], "")
 
     def test_document_for_api_get_redacts(self) -> None:
-        import providers_store as ps
+        import providers as ps
 
         doc = ps.default_document()
         doc["bank"]["credentials"]["password"] = "hunter2"
@@ -48,7 +48,7 @@ class ProvidersStoreTests(unittest.TestCase):
 
     def test_providers_file_respects_workspace(self) -> None:
         import config as config_mod
-        import providers_store as ps
+        import providers as ps
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp

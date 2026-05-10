@@ -10,8 +10,8 @@ from typing import Any, Iterator
 
 import config
 from integrations.google_sheets import GSLink, GoogleSheetsHandler
-from providers_store import google_api_user_path, google_worksheet_id
-from web_control.totals_sheet_sync import is_sheets_configured
+from providers import google_api_user_path, google_worksheet_id
+from api.totals_sheet_sync import is_sheets_configured
 
 log = logging.getLogger(__name__)
 

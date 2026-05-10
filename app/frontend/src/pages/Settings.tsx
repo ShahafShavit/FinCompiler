@@ -86,7 +86,7 @@ export default function Settings() {
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
         setErr(
-          'Request timed out. If you use the Vite dev server (port 5173), ensure python -m web_control is running on 8780.',
+          'Request timed out. If you use the Vite dev server (port 5173), ensure python -m api is running on 8780.',
         );
       } else {
         setErr(e instanceof Error ? e.message : String(e));

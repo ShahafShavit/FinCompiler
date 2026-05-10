@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 import unittest
 
-from pipeline.ingested_at_rules import ingested_at_for_new_ledger_row
+from pipeline.ledger import ingested_at_for_new_ledger_row
 
 
 class IngestedAtRulesTests(unittest.TestCase):

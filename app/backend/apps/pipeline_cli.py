@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run finance pipelines from the command line (browser-first; manual categorize via web_control).
+Run finance pipelines from the command line (browser-first; manual categorize via the local HTTP app).
 
 For full documentation run:
 
@@ -72,7 +72,7 @@ typical workflows:
   python run_pipeline.py transactions --no-route
 
 classification rule for route:
-  - Filename contains the bank balances marker (see inbox_router.HOLDINGS_MARKERS) -> holdings inbox
+  - Filename contains the bank balances marker (see pipeline.route_inbox.HOLDINGS_MARKERS) -> holdings inbox
   - Any other .xls / .xlsx / .xlsm -> transactions inbox
   - Anything else -> data/input/unclassified/
 """
@@ -130,7 +130,7 @@ notes:
   - Bank credit + bank osh can run in one Leumi session (enable both flags).
   - --from-date / --to-date only affect --fetch-bank-osh (same strings as in the bank UI).
   - drop-profile: full = same column drops as the web / default transaction processor; batch = smaller legacy drop set.
-  - --categorize: after compile, run auto categorization; finish in the browser at /categorize/ (see web_control).
+  - --categorize: after compile, run auto categorization; finish in the browser at /categorize/ (run ``python -m api``).
 
 examples:
   python run_pipeline.py transactions
@@ -331,7 +331,7 @@ def _build_parser() -> argparse.ArgumentParser:
     tg_out.add_argument(
         "--categorize",
         action="store_true",
-        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m web_control`).",
+        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api`).",
     )
     tg_out.add_argument(
         "--drop-profile",
@@ -382,7 +382,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ag2.add_argument(
         "--categorize",
         action="store_true",
-        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m web_control`).",
+        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api`).",
     )
     ag2.add_argument(
         "--drop-profile",
@@ -412,7 +412,7 @@ def _build_parser() -> argparse.ArgumentParser:
     b.add_argument(
         "--categorize",
         action="store_true",
-        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m web_control`).",
+        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api`).",
     )
     b.add_argument(
         "--drop-profile",

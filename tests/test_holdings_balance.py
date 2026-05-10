@@ -1,4 +1,4 @@
-"""Tests for wide holdings CSV → holdings_balance import."""
+"""Tests for wide holdings → holdings_balance (SQLite) helpers."""
 
 from __future__ import annotations
 
@@ -9,10 +9,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
+
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "holdings_sample_2024ish.csv"
 
 
-class HoldingsCsvImportTests(unittest.TestCase):
+class HoldingsBalanceTests(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.pop("FINANCE_WORKSPACE_ROOT", None)
         import config as config_mod
@@ -27,10 +29,13 @@ class HoldingsCsvImportTests(unittest.TestCase):
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from pipeline.holdings_csv_import import import_holdings_csvs
+            from pipeline.holdings_balance import upsert_holdings_long, wide_holdings_to_long
 
-            report = import_holdings_csvs(
-                [str(_FIXTURE)],
+            wide = pd.read_csv(_FIXTURE)
+            wide.columns = [str(c).strip() for c in wide.columns]
+            long_df = wide_holdings_to_long(wide)
+            report = upsert_holdings_long(
+                long_df,
                 config_mod.ledger_db_file,
                 clear_holdings_first=True,
             )
@@ -38,13 +43,11 @@ class HoldingsCsvImportTests(unittest.TestCase):
             self.assertEqual(report.get("rows_upserted"), 8)
 
     def test_long_wide_roundtrip_matches_melt(self) -> None:
-        from pipeline.holdings_csv_import import (
-            holdings_long_to_wide,
-            load_holdings_wide_csv,
-            wide_holdings_to_long,
-        )
+        from pipeline.holdings_balance import holdings_long_to_wide, wide_holdings_to_long
 
-        long_a = load_holdings_wide_csv(str(_FIXTURE))
+        wide_fixture = pd.read_csv(_FIXTURE)
+        wide_fixture.columns = [str(c).strip() for c in wide_fixture.columns]
+        long_a = wide_holdings_to_long(wide_fixture)
         wide = holdings_long_to_wide(long_a)
         long_b = wide_holdings_to_long(wide)
         long_a = long_a.sort_values(["as_of_date", "activity_type"]).reset_index(drop=True)
@@ -64,7 +67,7 @@ class HoldingsCsvImportTests(unittest.TestCase):
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from pipeline.holdings_csv_import import (
+            from pipeline.holdings_balance import (
                 get_holdings_conflicts,
                 get_holdings_meta,
                 query_holdings_timeline,
@@ -100,7 +103,7 @@ class HoldingsCsvImportTests(unittest.TestCase):
             self.assertEqual(conflicts[0]["incoming_balance_ils"], 999.0)
 
     def test_parse_holdings_paste_grid(self) -> None:
-        from pipeline.holdings_csv_import import parse_holdings_paste_grid
+        from pipeline.holdings_balance import parse_holdings_paste_grid
 
         text = (
             "תאריך\tעובר ושב\tניירות ערך\n"

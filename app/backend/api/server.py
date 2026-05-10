@@ -20,15 +20,17 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import config
 from pipeline.ledger import migrate_ledger_db
-from web_control import categorize_queue, dashboard_api, heatmap, integrity_api, jobs
-from web_control.json_safe import json_bytes_strict as _json_bytes_strict
+from api import categorize_queue, dashboard_api, heatmap, integrity_api, jobs
+from api.json_safe import json_bytes_strict as _json_bytes_strict
+from api.routes_holdings_http import handle_holdings_get, handle_holdings_post
 
 # Forward structured pipeline / Selenium logs to the dashboard SSE (exclude ``pipeline`` — it already uses sink via _notify).
 _JOB_SSE_LOGGERS = [
-    "pipeline.portal_fetch",
-    "pipeline.inbox_router",
+    "pipeline.fetch",
+    "pipeline.route_inbox",
     "pipeline.spreadsheet_ingest",
-    "pipeline.csv_handler",
+    "pipeline.workbook_normalize",
+    "pipeline.fingerprint",
     "pipeline.compiler",
     "categorization.categorizer",
 ]
@@ -79,7 +81,7 @@ npm run dev</code></pre>
 npm install
 npm run build</code></pre>
   </div>
-  <p>With <code>PYTHONPATH=app/backend python -m web_control</code> (from repo root) you get APIs and static assets; the UI is the React app (built or Vite dev).</p>
+  <p>With <code>PYTHONPATH=app/backend python -m api</code> (from repo root) you get APIs and static assets; the UI is the React app (built or Vite dev).</p>
 </body>
 </html>
 """
@@ -434,7 +436,7 @@ def make_handler_class(state: ControlState):
                 return
 
             if path == "/api/providers-config":
-                from web_control import providers_api
+                from api import providers_api
 
                 self._send(
                     200,
@@ -443,42 +445,11 @@ def make_handler_class(state: ControlState):
                 )
                 return
 
-            if path == "/api/holdings/meta":
-                from pipeline.holdings_csv_import import get_holdings_meta
-
-                body = _json_bytes_strict(get_holdings_meta(config.ledger_db_file))
-                self._send(200, body, "application/json; charset=utf-8")
-                return
-
-            if path == "/api/holdings/timeline":
-                from pipeline.holdings_csv_import import query_holdings_timeline
-
-                qs = parse_qs(parsed.query, keep_blank_values=False)
-                from_date = (qs.get("from") or [None])[0]
-                to_date = (qs.get("to") or [None])[0]
-                activities = [str(x) for x in (qs.get("activity") or []) if str(x).strip()]
-                try:
-                    df = query_holdings_timeline(
-                        config.ledger_db_file,
-                        start_date=str(from_date).strip() if from_date else None,
-                        end_date=str(to_date).strip() if to_date else None,
-                        activity_types=activities,
-                    )
-                    payload = {
-                        "ok": True,
-                        "rows": df.to_dict(orient="records"),
-                    }
-                    self._send(200, _json_bytes_strict(payload), "application/json; charset=utf-8")
-                except Exception as e:  # noqa: BLE001
-                    self._send(
-                        400,
-                        _json_bytes_strict({"ok": False, "error": "invalid_request", "message": str(e)}),
-                        "application/json; charset=utf-8",
-                    )
+            if handle_holdings_get(self, path, parsed):
                 return
 
             if path == "/api/sheets/status":
-                from web_control import desktop_sheets_api
+                from api import desktop_sheets_api
 
                 body = _json_bytes_strict(desktop_sheets_api.api_status())
                 self._send(200, body, "application/json; charset=utf-8")
@@ -566,7 +537,7 @@ def make_handler_class(state: ControlState):
                 return
 
             if path == "/api/sheets/preview":
-                from web_control import desktop_sheets_api
+                from api import desktop_sheets_api
 
                 clen = int(self.headers.get("Content-Length", "0") or "0")
                 if clen > 0:
@@ -578,118 +549,7 @@ def make_handler_class(state: ControlState):
                 self._send(200, _json_bytes_strict(snap), "application/json; charset=utf-8")
                 return
 
-            if path == "/api/holdings/parse-paste-grid":
-                from pipeline.holdings_csv_import import parse_holdings_paste_grid
-
-                clen = int(self.headers.get("Content-Length", "0") or "0")
-                raw = self.rfile.read(clen) if clen > 0 else b"{}"
-                try:
-                    data = json.loads(raw.decode("utf-8"))
-                except json.JSONDecodeError:
-                    self._send(
-                        400,
-                        _json_bytes_strict({"ok": False, "error": "invalid_json", "message": "invalid JSON body"}),
-                        "application/json; charset=utf-8",
-                    )
-                    return
-                text = str((data or {}).get("text") or "")
-                out = parse_holdings_paste_grid(text)
-                self._send(200, _json_bytes_strict(out), "application/json; charset=utf-8")
-                return
-
-            if path == "/api/holdings/check-conflicts":
-                from pipeline.holdings_csv_import import get_holdings_conflicts
-
-                clen = int(self.headers.get("Content-Length", "0") or "0")
-                raw = self.rfile.read(clen) if clen > 0 else b"{}"
-                try:
-                    data = json.loads(raw.decode("utf-8"))
-                except json.JSONDecodeError:
-                    self._send(
-                        400,
-                        _json_bytes_strict({"ok": False, "error": "invalid_json", "message": "invalid JSON body"}),
-                        "application/json; charset=utf-8",
-                    )
-                    return
-                rows = data.get("rows") if isinstance(data.get("rows"), list) else []
-                try:
-                    conflicts = get_holdings_conflicts(rows, config.ledger_db_file)
-                except Exception as e:  # noqa: BLE001
-                    self._send(
-                        400,
-                        _json_bytes_strict({"ok": False, "error": "invalid_rows", "message": str(e)}),
-                        "application/json; charset=utf-8",
-                    )
-                    return
-                self._send(
-                    200,
-                    _json_bytes_strict({"ok": True, "conflicts": conflicts, "conflict_count": len(conflicts)}),
-                    "application/json; charset=utf-8",
-                )
-                return
-
-            if path == "/api/holdings/manual-upsert-batch":
-                from pipeline.holdings_csv_import import upsert_holdings_rows
-
-                clen = int(self.headers.get("Content-Length", "0") or "0")
-                raw = self.rfile.read(clen) if clen > 0 else b"{}"
-                try:
-                    data = json.loads(raw.decode("utf-8"))
-                except json.JSONDecodeError:
-                    self._send(
-                        400,
-                        _json_bytes_strict({"ok": False, "error": "invalid_json", "message": "invalid JSON body"}),
-                        "application/json; charset=utf-8",
-                    )
-                    return
-                rows = data.get("rows") if isinstance(data.get("rows"), list) else []
-                overwrite = bool(data.get("overwrite_conflicts"))
-                try:
-                    out = upsert_holdings_rows(rows, config.ledger_db_file, overwrite_conflicts=overwrite)
-                except Exception as e:  # noqa: BLE001
-                    self._send(
-                        400,
-                        _json_bytes_strict({"ok": False, "error": "invalid_rows", "message": str(e)}),
-                        "application/json; charset=utf-8",
-                    )
-                    return
-                code = 200 if out.get("ok") else 409
-                self._send(code, _json_bytes_strict(out), "application/json; charset=utf-8")
-                return
-
-            if path == "/api/holdings/move-date":
-                from pipeline.holdings_csv_import import move_holdings_date
-
-                clen = int(self.headers.get("Content-Length", "0") or "0")
-                raw = self.rfile.read(clen) if clen > 0 else b"{}"
-                try:
-                    data = json.loads(raw.decode("utf-8"))
-                except json.JSONDecodeError:
-                    self._send(
-                        400,
-                        _json_bytes_strict({"ok": False, "error": "invalid_json", "message": "invalid JSON body"}),
-                        "application/json; charset=utf-8",
-                    )
-                    return
-                source_date = (data or {}).get("source_date")
-                target_date = (data or {}).get("target_date")
-                overwrite = bool((data or {}).get("overwrite_conflicts"))
-                try:
-                    out = move_holdings_date(
-                        source_date,
-                        target_date,
-                        config.ledger_db_file,
-                        overwrite_conflicts=overwrite,
-                    )
-                except Exception as e:  # noqa: BLE001
-                    self._send(
-                        400,
-                        _json_bytes_strict({"ok": False, "error": "invalid_request", "message": str(e)}),
-                        "application/json; charset=utf-8",
-                    )
-                    return
-                code = 200 if out.get("ok") else 409
-                self._send(code, _json_bytes_strict(out), "application/json; charset=utf-8")
+            if handle_holdings_post(self, path):
                 return
 
             if path == "/api/integrity/rename-category":
@@ -712,7 +572,7 @@ def make_handler_class(state: ControlState):
                 return
 
             if path == "/api/sheets/push":
-                from web_control import desktop_sheets_api
+                from api import desktop_sheets_api
 
                 clen = int(self.headers.get("Content-Length", "0") or "0")
                 raw = self.rfile.read(clen) if clen > 0 else b"{}"
@@ -746,7 +606,7 @@ def make_handler_class(state: ControlState):
                 clen = int(self.headers.get("Content-Length", "0") or "0")
                 if clen > 0:
                     self.rfile.read(clen)
-                from web_control import providers_api
+                from api import providers_api
 
                 status, payload = providers_api.api_import_env()
                 self._send(status, _json_bytes_strict(payload), "application/json; charset=utf-8")
@@ -808,7 +668,7 @@ def make_handler_class(state: ControlState):
             if path == "/api/providers-config":
                 clen = int(self.headers.get("Content-Length", "0") or "0")
                 raw = self.rfile.read(clen) if clen > 0 else b"{}"
-                from web_control import providers_api
+                from api import providers_api
 
                 status, payload = providers_api.api_put(raw)
                 self._send(status, _json_bytes_strict(payload), "application/json; charset=utf-8")
@@ -891,7 +751,7 @@ def _address_already_in_use(err: OSError) -> bool:
 def _fail_port_in_use(host: str, port: int, cause: OSError) -> None:
     log.error(
         "Control HTTP port %s:%s is already in use — another process holds it "
-        "(often a second `python -m web_control`). Stop that process, then retry.\n"
+        "(often a second `python -m api`). Stop that process, then retry.\n"
         "  Windows:  netstat -ano | findstr \":%s\"\n"
         "            Stop-Process -Id <PID> -Force\n"
         "  Unix:     lsof -i :%s   or   ss -lntp | grep %s",

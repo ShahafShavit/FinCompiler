@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from pipeline.csv_handler import generate_transaction_fingerprint
+from pipeline.fingerprint import generate_transaction_fingerprint
 from pipeline.ledger import dedupe_import_batch_by_fingerprint
 
 
