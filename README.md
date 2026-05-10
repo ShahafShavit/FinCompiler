@@ -95,7 +95,7 @@ From the repo root, fastest path:
 - **macOS / Linux / Git Bash:** `./install.sh`
 - **Windows PowerShell:** `.\install.ps1`
 
-These create `.venv`, run [`app/backend/scripts/generate_requirements.py`](app/backend/scripts/generate_requirements.py), then `pip install -r requirements.txt`.
+These create `.venv`, upgrade `pip`, then `pip install -r requirements.txt`.
 
 <details>
 <summary><strong>Manual install</strong> (venv + pip only)</summary>

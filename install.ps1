@@ -1,4 +1,4 @@
-# Create .venv, regenerate requirements.txt from imports, install dependencies.
+# Create .venv and install dependencies from requirements.txt.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
@@ -6,6 +6,5 @@ Set-Location $Root
 python -m venv .venv
 & "$Root\.venv\Scripts\Activate.ps1"
 python -m pip install -U pip
-python "$Root\app\backend\scripts\generate_requirements.py"
 python -m pip install -r requirements.txt
 Write-Host "Done. Activate with: .venv\Scripts\Activate.ps1"

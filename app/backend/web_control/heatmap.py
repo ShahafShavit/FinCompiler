@@ -1,8 +1,7 @@
 """
-Interactive heatmap data and HTML for /heatmap (native HTML/CSS/JS, no Plotly).
+Interactive heatmap data and HTML for /heatmap (native HTML/CSS/JS).
 
-Logic mirrors ``reporting.interactive_look.InteractiveReportGenerator``: same CSV columns,
-pivots, log/symlog normalization, summary stats styling, and per-cell drill-down.
+Column pivots, log/symlog normalization, summary stats styling, and per-cell drill-down.
 """
 
 from __future__ import annotations

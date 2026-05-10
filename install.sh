@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create .venv, regenerate requirements.txt from imports, install dependencies.
+# Create .venv and install dependencies from requirements.txt.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
@@ -18,6 +18,5 @@ else
 fi
 
 python -m pip install -U pip
-python "$ROOT/app/backend/scripts/generate_requirements.py"
 python -m pip install -r requirements.txt
 echo "Done. Activate with: source .venv/Scripts/activate (or .venv\\Scripts\\activate on Windows)"
