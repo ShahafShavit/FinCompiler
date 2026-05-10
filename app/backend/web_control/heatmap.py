@@ -1,12 +1,11 @@
 """
-Interactive heatmap data and HTML for /heatmap (native HTML/CSS/JS).
+Heatmap data for /heatmap: pivots, paint matrices, summary stats as JSON.
 
-Column pivots, log/symlog normalization, summary stats styling, and per-cell drill-down.
+Rendering (colors, money formatting, stats cell styling) lives in the React SPA.
 """
 
 from __future__ import annotations
 
-import html
 import json
 import logging
 import os
@@ -14,16 +13,11 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal
-from urllib.parse import parse_qs
 
-import matplotlib as mpl
-import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 
 import config
-
-from . import control_nav
 
 log = logging.getLogger(__name__)
 
@@ -289,124 +283,32 @@ def _calculate_stats(
     }
 
 
-def _style_stats_table(stats_df: pd.DataFrame, report_type: ReportType) -> str:
-    if stats_df.empty:
-        return "<p class='no-data'>No statistics to display.</p>"
-    if report_type == "net":
-        cm_seq = "RdBu"
-    elif report_type == "income":
-        cm_seq = "Greens"
-    else:
-        cm_seq = "Reds"
-    cm_variance = "Oranges"
-    cm_count = "Purples"
-
-    if report_type == "net":
-
-        def transform(x: Any) -> Any:
-            v = float(x)
-            return np.sign(v) * np.log1p(abs(v))
-
-    else:
-        transform = np.log1p
-
-    def _text_color_for_bg(bg_hex: str) -> str:
-        """Return readable foreground color for a hex background."""
-        try:
-            r, g, b = mcolors.to_rgb(bg_hex)
-        except ValueError:
-            return "#f4f6fb"
-        luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-        return "#111318" if luminance > 0.58 else "#f4f6fb"
-
-    def _apply_color_to_series(series: pd.Series, cmap_name: str, transform_func: Any) -> list[str]:
-        series_transformed = series.astype(float).map(transform_func)
-        min_val, max_val = series_transformed.min(), series_transformed.max()
-        if min_val == max_val:
-            return [""] * len(series)
-        norm = mcolors.Normalize(vmin=min_val, vmax=max_val)
-        cmap = mpl.colormaps.get_cmap(cmap_name)
-        colors = series_transformed.map(
-            lambda x: mcolors.to_hex(cmap(norm(x))) if pd.notna(x) else ""
-        )
-        return [
-            (f"background-color: {c}; color: {_text_color_for_bg(c)}; text-shadow: none;" if c else "")
-            for c in colors
-        ]
-
-    seq_cols = [
-        "סך הכל (Total)",
-        "ממוצע חודשי (Avg)",
-        "ממוצע לקטגוריה (Avg)",
-        "חציון (Median)",
-        "מקסימום (Max)",
-        "מינימום (Min)",
-        "אחוזון 75 (75th Pctl)",
-        "אחוזון 25 (25th Pctl)",
-    ]
-    valid_seq_cols = [c for c in seq_cols if c in stats_df.columns]
-    styling_dict = {col: "{:,.2f}₪" for col in valid_seq_cols}
-    styler = stats_df.style
-    if valid_seq_cols:
-        styler = styler.apply(
-            _apply_color_to_series,
-            cmap_name=cm_seq,
-            transform_func=transform,
-            subset=valid_seq_cols,
-            axis=0,
-        )
-    if "סטיית תקן (Std Dev)" in stats_df.columns:
-        styler = styler.apply(
-            _apply_color_to_series,
-            cmap_name=cm_variance,
-            transform_func=transform,
-            subset=["סטיית תקן (Std Dev)"],
-            axis=0,
-        )
-    if "ספירה (Count > 0)" in stats_df.columns:
-        styler = styler.apply(
-            _apply_color_to_series,
-            cmap_name=cm_count,
-            transform_func=transform,
-            subset=["ספירה (Count > 0)"],
-            axis=0,
-        )
-    styler = styler.format(styling_dict)
-    styler = styler.set_table_attributes('class="styled-table"')
-    return styler.to_html()
-
-
-def _heatmap_cell_colors(z_paint: np.ndarray, cmap_name: str, center: float | None) -> list[list[str]]:
-    """Return hex background colors for each cell; z_paint same shape as pivot (rows=months, cols=cats)."""
-    flat = z_paint.astype(float).ravel()
-    flat = flat[np.isfinite(flat)]
-    if flat.size == 0:
-        return [["#333337" for _ in range(z_paint.shape[1])] for _ in range(z_paint.shape[0])]
-    vmin, vmax = float(np.nanmin(flat)), float(np.nanmax(flat))
-    cmap = mpl.colormaps.get_cmap(cmap_name)
-    if center is not None and vmin < center < vmax:
-        norm: mcolors.Normalize = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=center, vmax=vmax)
-    else:
-        norm = mcolors.Normalize(vmin=vmin, vmax=vmax if vmax != vmin else vmin + 1.0)
-    out: list[list[str]] = []
-    for i in range(z_paint.shape[0]):
-        row: list[str] = []
-        for j in range(z_paint.shape[1]):
-            v = z_paint[i, j]
-            if not np.isfinite(v):
-                row.append("#333337")
-            else:
-                row.append(mcolors.to_hex(cmap(norm(v))))
+def _matrix_to_json(arr: np.ndarray) -> list[list[float | None]]:
+    """2D numeric matrix for JSON; non-finite → null."""
+    a = np.asarray(arr, dtype=float)
+    out: list[list[float | None]] = []
+    for i in range(a.shape[0]):
+        row: list[float | None] = []
+        for j in range(a.shape[1]):
+            v = float(a[i, j])
+            row.append(None if not np.isfinite(v) else v)
         out.append(row)
     return out
 
 
-def _format_cell_money(v: float) -> str:
-    sign = "-" if v < 0 else ""
-    a = abs(v)
-    if abs(a - round(a)) < 0.01:
-        return f"{sign}{a:,.0f}₪"
-    return f"{sign}{a:,.2f}₪"
+def _stats_df_to_tabular(stats_df: pd.DataFrame, index_label: str) -> dict[str, Any]:
+    """Stats pivot as columns + row records (frontend applies heat coloring)."""
+    if stats_df.empty:
+        return {"columns": [], "rows": []}
+    cols = [index_label] + [str(c) for c in stats_df.columns]
+    rows: list[dict[str, Any]] = []
+    for idx, row in stats_df.iterrows():
+        rec: dict[str, Any] = {index_label: str(idx)}
+        for c in stats_df.columns:
+            v = row[c]
+            rec[str(c)] = None if pd.isna(v) else float(v)
+        rows.append(rec)
+    return {"columns": cols, "rows": rows}
 
 
 @dataclass
@@ -580,7 +482,7 @@ def get_bundle() -> HeatmapBundle | None:
 
 
 def _view_payload(
-    bundle: HeatmapBundle,
+    _bundle: HeatmapBundle,
     pivot: pd.DataFrame,
     z_paint: pd.DataFrame,
     cmap: str,
@@ -588,40 +490,11 @@ def _view_payload(
     report_type: ReportType,
     title: str,
 ) -> dict[str, Any]:
+    """Serialize one heatmap view: raw matrices + color scale metadata for the SPA."""
     months = [str(x) for x in pivot.index.tolist()]
     categories = [str(x) for x in pivot.columns.tolist()]
     z = z_paint.values
     display = pivot.values.astype(float)
-    colors = _heatmap_cell_colors(z, cmap, zcenter)
-    fg_colors: list[list[str]] = []
-    for i in range(len(months)):
-        row_fg: list[str] = []
-        for j in range(len(categories)):
-            bg = colors[i][j] if i < len(colors) and j < len(colors[i]) else "#333337"
-            try:
-                r, g, b = mcolors.to_rgb(bg)
-                lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
-                row_fg.append("#111318" if lum > 0.58 else "#f4f6fb")
-            except ValueError:
-                row_fg.append("#f4f6fb")
-        fg_colors.append(row_fg)
-    clickable: list[list[bool]] = []
-    for i, ym in enumerate(months):
-        row_b: list[bool] = []
-        for j, cat in enumerate(categories):
-            v = display[i, j] if i < display.shape[0] and j < display.shape[1] else 0.0
-            if report_type == "net":
-                row_b.append(bool(v != 0))
-            else:
-                row_b.append(bool(v > 0))
-        clickable.append(row_b)
-    labels = [[_format_cell_money(display[i, j]) for j in range(len(categories))] for i in range(len(months))]
-    column_totals = [_format_cell_money(float(pivot[c].sum())) for c in pivot.columns]
-    column_averages = [
-        _format_cell_money(category_mean_recent_active(pivot[c], report_type)) for c in pivot.columns
-    ]
-    row_totals = [_format_cell_money(float(pivot.loc[mi].sum())) for mi in pivot.index]
-    row_averages = [_format_cell_money(float(pivot.loc[mi].mean())) for mi in pivot.index]
 
     # Monthly aggregate series for YTD and rolling-12 metrics.
     row_totals_numeric = pivot.sum(axis=1).astype(float)
@@ -641,27 +514,25 @@ def _view_payload(
     l12_sum_map = pd.Series(l12_sum_numeric.values, index=ym_lookup)
     l12_avg_map = pd.Series(l12_avg_numeric.values, index=ym_lookup)
 
-    ytd_sums = [_format_cell_money(float(ytd_sum_map.get(mi, 0.0))) for mi in pivot.index]
-    ytd_averages = [_format_cell_money(float(ytd_avg_map.get(mi, 0.0))) for mi in pivot.index]
-    rolling12_sums = [_format_cell_money(float(l12_sum_map.get(mi, 0.0))) for mi in pivot.index]
-    rolling12_averages = [_format_cell_money(float(l12_avg_map.get(mi, 0.0))) for mi in pivot.index]
     return {
         "title": title,
         "reportType": report_type,
         "months": months,
         "categories": categories,
-        "labels": labels,
-        "cellBg": colors,
-        "cellFg": fg_colors,
-        "clickable": clickable,
-        "columnTotals": column_totals,
-        "columnAverages": column_averages,
-        "rowTotals": row_totals,
-        "rowAverages": row_averages,
-        "rowYtdSums": ytd_sums,
-        "rowYtdAverages": ytd_averages,
-        "rowRolling12Sums": rolling12_sums,
-        "rowRolling12Averages": rolling12_averages,
+        "values": _matrix_to_json(display),
+        "zPaint": _matrix_to_json(z),
+        "colorScale": {
+            "scheme": cmap,
+            "center": None if zcenter is None else float(zcenter),
+        },
+        "columnTotals": [float(pivot[c].sum()) for c in pivot.columns],
+        "columnAverages": [float(category_mean_recent_active(pivot[c], report_type)) for c in pivot.columns],
+        "rowTotals": [float(pivot.loc[mi].sum()) for mi in pivot.index],
+        "rowAverages": [float(pivot.loc[mi].mean()) for mi in pivot.index],
+        "rowYtdSums": [float(ytd_sum_map.get(mi, 0.0)) for mi in pivot.index],
+        "rowYtdAverages": [float(ytd_avg_map.get(mi, 0.0)) for mi in pivot.index],
+        "rowRolling12Sums": [float(l12_sum_map.get(mi, 0.0)) for mi in pivot.index],
+        "rowRolling12Averages": [float(l12_avg_map.get(mi, 0.0)) for mi in pivot.index],
     }
 
 
@@ -681,7 +552,7 @@ def api_snapshot() -> dict[str, Any]:
             "message": msg,
             "sourceStatus": source_status,
             "views": {},
-            "statsHtml": {},
+            "statsTables": {},
         }
     views = {
         "expense": _view_payload(
@@ -712,18 +583,18 @@ def api_snapshot() -> dict[str, Any]:
             "הכנסות נטו (הכנסות פחות הוצאות) לפי קטגוריה",
         ),
     }
-    stats_html = {
+    stats_tables = {
         "expense": {
-            "byCategory": _style_stats_table(bundle.expense_summary["by_category"], "expense"),
-            "byMonth": _style_stats_table(bundle.expense_summary["by_month"], "expense"),
+            "byCategory": _stats_df_to_tabular(bundle.expense_summary["by_category"], "קטגוריה"),
+            "byMonth": _stats_df_to_tabular(bundle.expense_summary["by_month"], "חודש"),
         },
         "income": {
-            "byCategory": _style_stats_table(bundle.income_summary["by_category"], "income"),
-            "byMonth": _style_stats_table(bundle.income_summary["by_month"], "income"),
+            "byCategory": _stats_df_to_tabular(bundle.income_summary["by_category"], "קטגוריה"),
+            "byMonth": _stats_df_to_tabular(bundle.income_summary["by_month"], "חודש"),
         },
         "net": {
-            "byCategory": _style_stats_table(bundle.net_summary["by_category"], "net"),
-            "byMonth": _style_stats_table(bundle.net_summary["by_month"], "net"),
+            "byCategory": _stats_df_to_tabular(bundle.net_summary["by_category"], "קטגוריה"),
+            "byMonth": _stats_df_to_tabular(bundle.net_summary["by_month"], "חודש"),
         },
     }
     return {
@@ -733,7 +604,7 @@ def api_snapshot() -> dict[str, Any]:
         "source": bundle.source_path,
         "sourceStatus": source_status,
         "views": views,
-        "statsHtml": stats_html,
+        "statsTables": stats_tables,
     }
 
 
@@ -1122,24 +993,6 @@ def build_detail_frames_from_qs(
     return None
 
 
-def detail_page_html_from_qs(bundle: HeatmapBundle, qs: dict[str, list[str]]) -> str | None:
-    """Full HTML document for legacy browser loads."""
-    built = build_detail_frames_from_qs(bundle, qs)
-    if built is None:
-        return None
-    title, frames = built
-    parts = [f"<h1>{html.escape(title)}</h1>"]
-    for sub, frame in frames:
-        if sub:
-            parts.append(f"<h2>{html.escape(sub)}</h2>")
-        if frame.empty:
-            parts.append("<p class='no-data'>אין נתונים</p>")
-        else:
-            html_frame = frame.drop(columns=["id"], errors="ignore")
-            parts.append(html_frame.to_html(index=False, classes="styled-table", float_format="%.2f"))
-    return _wrap_detail_document("".join(parts))
-
-
 def detail_api_payload(qs: dict[str, list[str]]) -> tuple[int, dict[str, Any]]:
     """JSON body and suggested HTTP status for ``GET /heatmap/api/detail``."""
     bundle = get_bundle()
@@ -1207,210 +1060,3 @@ def ledger_transaction_patch_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     if result.get("ok"):
         invalidate_bundle_cache()
     return _ledger_patch_http_status(result), result
-
-
-def _wrap_detail_document(inner_body: str) -> str:
-    return f"""<!DOCTYPE html>
-<html lang="he">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>פירוט תנועות</title>
-  {_heatmap_shared_css()}
-</head>
-<body class="detail-page">
-  {control_nav.control_topnav_html()}
-  {inner_body}
-  <p class="hint"><a href="/heatmap/">חזרה למפת חום</a></p>
-</body>
-</html>
-"""
-
-
-def _heatmap_shared_css() -> str:
-    return (
-        "<style>"
-        + control_nav.control_topnav_css()
-        + """
-      :root {
-        font-family: system-ui, "Segoe UI", Roboto, sans-serif;
-        background: #121316;
-        color: #e8e8ec;
-        line-height: 1.45;
-      }
-      body { margin: 0; padding: 1rem 1rem 2rem; direction: rtl; }
-      body.detail-page { max-width: 56rem; margin: 0 auto; }
-      h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.75rem 0; color: #f1f1f4; }
-      h2 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 0.5rem 0; color: #c8cad4;
-           border-bottom: 1px solid #2b2c33; padding-bottom: 0.35rem; }
-      .hint { font-size: 0.85rem; opacity: 0.75; margin-top: 1.5rem; }
-      .no-data { text-align: center; color: #888; margin: 0.75rem 0; }
-      table.styled-table { border-collapse: collapse; width: 100%; margin: 0.75rem 0;
-        font-size: 0.88rem; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
-      .styled-table th, .styled-table td { padding: 8px 10px; text-align: right;
-        border: 1px solid #2b2c33; }
-      .stats-table-container .styled-table td {
-        direction: ltr;
-        unicode-bidi: isolate;
-        text-align: right;
-      }
-      .styled-table thead th { background: #2d4a2f; color: #e8f5e9; }
-      .stats-table-container .styled-table thead th {
-        position: sticky;
-        top: 0;
-        z-index: 2;
-      }
-      .styled-table tbody tr:hover { background: #1e1f24 !important; }
-      .tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.5rem 0 1rem; }
-      .tabs button {
-        font: inherit; cursor: pointer; padding: 0.4rem 0.75rem; border-radius: 8px;
-        border: 1px solid #3a3b44; background: #1c1d22; color: #c8cad4;
-      }
-      .tabs button.active { border-color: #4c6ef5; background: #2a2f4a; color: #e8e8ec; }
-      .heatmap-title { font-size: 1.1rem; font-weight: 600; margin: 0.25rem 0 0.75rem; }
-      .heatmap-wrap { overflow: auto; max-width: 100%; margin-bottom: 1.5rem;
-        max-height: 78vh; border: 1px solid #2b2c33; border-radius: 8px; background: #0b0c0f; }
-      table.hm-grid { border-collapse: separate; border-spacing: 1px;
-        font-size: 0.74rem; margin: 0; table-layout: auto; width: max-content; }
-      table.hm-grid {
-        --hm-month-col-w: 7.3rem;
-        --hm-metric-col-w: 4.6rem;
-      }
-      table.hm-grid th, table.hm-grid td {
-        min-width: 4.15rem; padding: 5px 7px; text-align: center;
-        vertical-align: middle; white-space: nowrap;
-      }
-      table.hm-grid th { background: #1c1d22; color: #aeb4c0; font-weight: 600;
-        position: sticky; top: 0; z-index: 2; }
-      table.hm-grid th.row-h {
-        position: sticky; right: 0; z-index: 3; background: #16171c;
-        min-width: var(--hm-month-col-w); text-align: right; padding-inline: 0.55rem;
-      }
-      table.hm-grid th.corner { z-index: 4; right: 0; top: 0; background: #14151a; }
-      table.hm-grid thead th.hm-colsum {
-        top: 0; z-index: 3; background: #25262e; color: #dce0ea; font-size: 0.68rem;
-        font-weight: 600; border-bottom: 1px solid #3a3b44;
-      }
-      table.hm-grid thead th.hm-colsum .colsum-wrap {
-        display: grid; grid-template-rows: auto auto; gap: 0.15rem;
-      }
-      table.hm-grid thead th.hm-colsum .colsum-wrap > div {
-        display: flex; align-items: baseline; justify-content: space-between; gap: 0.4rem;
-      }
-      table.hm-grid thead th.hm-colsum .metric-label {
-        color: #aeb4c0; font-size: 0.64rem; letter-spacing: 0.02em;
-      }
-      table.hm-grid thead th.hm-colsum .metric-val {
-        color: #e6e9f0; font-size: 0.7rem; direction: ltr; unicode-bidi: isolate;
-      }
-      table.hm-grid thead tr:nth-child(2) th {
-        top: 2.35rem; z-index: 2; background: #1c1d22;
-      }
-      table.hm-grid thead th.hm-metric-h {
-        top: 0; z-index: 5; background: #1a1b20; color: #c4c8d4;
-        min-width: var(--hm-metric-col-w); vertical-align: middle; line-height: 1.2;
-      }
-      table.hm-grid th.hm-rowsum-h, table.hm-grid td.hm-rowtot {
-        right: var(--hm-month-col-w);
-      }
-      table.hm-grid th.hm-rowavg-h, table.hm-grid td.hm-rowavg {
-        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 1));
-      }
-      table.hm-grid th.hm-ytdsum-h, table.hm-grid td.hm-ytdsum {
-        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 2));
-      }
-      table.hm-grid th.hm-ytdavg-h, table.hm-grid td.hm-ytdavg {
-        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 3));
-      }
-      table.hm-grid th.hm-l12sum-h, table.hm-grid td.hm-l12sum {
-        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 4));
-      }
-      table.hm-grid th.hm-l12avg-h, table.hm-grid td.hm-l12avg {
-        right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 5));
-      }
-      table.hm-grid tbody td.hm-rowtot {
-        position: sticky; z-index: 3; background: #1a1b20; color: #dce0ea;
-        font-weight: 600; font-size: 0.7rem; border: 1px solid #2b2c33;
-      }
-      table.hm-grid tbody td.hm-rowmetric {
-        position: sticky; z-index: 3; background: #191a1f; color: #dce0ea;
-        font-weight: 600; font-size: 0.69rem; border: 1px solid #2b2c33;
-      }
-      table.hm-grid tbody tr:nth-child(even) th.row-h {
-        background: #1a1b22;
-      }
-      table.hm-grid tbody tr:nth-child(even) td.hm-rowmetric {
-        background: #1c1d24;
-      }
-      table.hm-grid tbody tr:nth-child(even) td.cell {
-        box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.025);
-      }
-      table.hm-grid tbody tr:hover th.row-h {
-        box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.075);
-      }
-      table.hm-grid tbody tr:hover td.hm-rowmetric {
-        box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.075);
-      }
-      table.hm-grid tbody tr:hover td.cell {
-        box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.09);
-      }
-      table.hm-grid tbody tr.year-start th.row-h {
-        border-top: 2px solid #5d7cff;
-      }
-      table.hm-grid tbody tr.group-boundary th.row-h {
-        border-top: 2px dashed #4a4d57;
-      }
-      table.hm-grid th.row-h .l12-chip {
-        font-size: 0.61rem; color: #9da3b7; background: #262a33;
-        border: 1px dashed #4a4d57; border-radius: 999px; padding: 0.06rem 0.3rem;
-      }
-      table.hm-grid th.row-h .month-markers {
-        display: inline-flex; flex-wrap: wrap; gap: 0.22rem; margin-left: 0.35rem;
-      }
-      table.hm-grid th.row-h .month-label {
-        color: #d9deea;
-      }
-      table.hm-grid tbody th.row-h { z-index: 4; }
-      table.hm-grid td.cell {
-        cursor: default; color: #f4f6fb; font-weight: 600; text-shadow: none;
-        direction: ltr; unicode-bidi: isolate;
-      }
-      table.hm-grid td.hm-rowtot, table.hm-grid th.hm-colsum {
-        direction: ltr; unicode-bidi: isolate;
-      }
-      table.hm-grid td.cell.clickable { cursor: pointer; }
-      table.hm-grid td.cell.clickable:hover { filter: brightness(1.12); outline: 1px solid #fff8; }
-      .stats-container { display: flex; flex-wrap: wrap; gap: 1.25rem; margin-top: 0.5rem; }
-      .stats-table-container { flex: 1; min-width: min(100%, 22rem); overflow-x: auto; }
-      .err-banner {
-        background: #3a1f1f; border: 1px solid #6b2a2a; color: #ffb4b4;
-        padding: 0.75rem 1rem; border-radius: 8px; margin: 0.5rem 0 1rem;
-      }
-      .subtle { font-size: 0.82rem; opacity: 0.65; margin-bottom: 0.35rem; }
-      .heatmap-toolbar {
-        display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
-        margin: 0.25rem 0 0.85rem;
-      }
-      .heatmap-toolbar button#btn-refresh {
-        font: inherit; cursor: pointer; padding: 0.45rem 0.8rem; border-radius: 8px;
-        border: 1px solid #4c6ef5; background: #4c6ef5; color: #fff;
-      }
-      .heatmap-toolbar button#btn-refresh:disabled {
-        opacity: 0.45; cursor: not-allowed;
-      }
-      .heatmap-toolbar #refresh-status { font-size: 0.82rem; opacity: 0.8; max-width: 42rem; }
-    </style>
-"""
-    )
-
-
-def handle_detail_query(query: str) -> tuple[int, bytes, str]:
-    """Legacy full-page HTML drill-down (see ``/heatmap/legacy-detail``)."""
-    qs = parse_qs(query, keep_blank_values=True)
-    bundle = get_bundle()
-    if bundle is None:
-        return 503, b"Data not available", "text/plain; charset=utf-8"
-    page = detail_page_html_from_qs(bundle, qs)
-    if page is None:
-        return 404, b"Not found", "text/plain; charset=utf-8"
-    return 200, page.encode("utf-8"), "text/html; charset=utf-8"

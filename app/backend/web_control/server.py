@@ -70,8 +70,8 @@ _SPA_DEV_FALLBACK = (
     <pre><code>cd app/frontend
 npm install
 npm run dev</code></pre>
-    Vite proxies <code>/api</code>, <code>/heatmap/api</code>, <code>/heatmap/legacy-detail</code>,
-    and the built SPA assets through its dev/prod setup (see <code>app/frontend/vite.config.ts</code>).
+    Vite proxies <code>/api</code>, <code>/heatmap/api</code>, <code>/categorize</code>,
+    <code>/holdings</code>, and the built SPA assets (see <code>app/frontend/vite.config.ts</code>).
   </div>
   <div class="card">
     <strong>Prod:</strong> build once and reload this page:
@@ -293,7 +293,7 @@ def make_handler_class(state: ControlState):
                         "message": "Heatmap snapshot failed (see server log).",
                         "sourceStatus": {},
                         "views": {},
-                        "statsHtml": {},
+                        "statsTables": {},
                     }
                     body = _json_bytes_strict(err)
                 self._send(200, body, "application/json; charset=utf-8")
@@ -312,11 +312,6 @@ def make_handler_class(state: ControlState):
                     )
                     status = 500
                 self._send(status, body, "application/json; charset=utf-8")
-                return
-
-            if path == "/heatmap/legacy-detail":
-                code, body, ct = heatmap.handle_detail_query(parsed.query)
-                self._send(code, body, ct)
                 return
 
             if path.startswith("/categorize"):

@@ -1,5 +1,4 @@
-/* Heatmap page styles. Ported 1:1 from web_control.heatmap._heatmap_shared_css and
-   scoped to `.heatmap-page` so RTL + table styles don't leak to other SPA routes. */
+/* Heatmap page — RTL + grid/stats tables scoped under `.heatmap-page`. */
 
 .heatmap-page {
   direction: rtl;
@@ -125,7 +124,7 @@
   margin: 0.75rem 0;
 }
 
-/* Stats tables (pre-rendered colored HTML from pandas Styler) injected via dangerouslySetInnerHTML */
+/* Summary stats tables (React-rendered; heat coloring from `heatmapColors.statsColumnStyles`) */
 .heatmap-page table.styled-table {
   border-collapse: collapse;
   width: 100%;

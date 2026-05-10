@@ -10,8 +10,6 @@ Routes:
 - **`/holdings/`** — Holdings timeline and manual ingest. Uses `/api/holdings/*`.
 - **`/categorize/`** — Category queue. Uses `/categorize/api/*`.
 
-Some legacy flows may still open Python-rendered HTML (e.g. older heatmap drill links); prefer in-app routes above.
-
 ## Prerequisites
 
 - Node.js 20+ (matches Vite 6 requirement; tested on 22).
@@ -57,7 +55,7 @@ app/frontend/
 │   ├── main.tsx               # React root
 │   ├── App.tsx                # Router
 │   ├── styles/theme.css       # Dark palette shared by all pages
-│   ├── components/TopNav.tsx  # Top nav (mirrors web_control/control_nav.py)
+│   ├── components/TopNav.tsx  # Top nav
 │   ├── lib/
 │   │   ├── api.ts             # fetchJson, formatMoney, formatPct
 │   │   ├── useEventStream.ts  # SSE hook for /api/events

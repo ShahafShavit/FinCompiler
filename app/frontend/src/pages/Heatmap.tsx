@@ -1,32 +1,33 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { HeatmapStatsTables, type StatsTabular } from '../components/HeatmapStatsTables';
 import { fetchJson } from '../lib/api';
+import { heatmapGridColors, type HeatmapScheme } from '../lib/heatmapColors';
+import { formatCellMoney } from '../lib/heatmapFormat';
 
 import './Heatmap.css';
 
 type ReportType = 'expense' | 'income' | 'net';
 
+/** Payload slice from ``GET /heatmap/api/data`` (numeric matrices; colors computed client-side). */
 type HeatmapView = {
   title: string;
   reportType: ReportType;
   months: string[];
   categories: string[];
-  labels: string[][];
-  cellBg: string[][];
-  cellFg: string[][];
-  clickable: boolean[][];
-  columnTotals: string[];
-  columnAverages: string[];
-  rowTotals: string[];
-  rowAverages: string[];
-  rowYtdSums: string[];
-  rowYtdAverages: string[];
-  rowRolling12Sums: string[];
-  rowRolling12Averages: string[];
+  values: (number | null)[][];
+  zPaint: (number | null)[][];
+  colorScale: { scheme: HeatmapScheme; center: number | null };
+  columnTotals: number[];
+  columnAverages: number[];
+  rowTotals: number[];
+  rowAverages: number[];
+  rowYtdSums: number[];
+  rowYtdAverages: number[];
+  rowRolling12Sums: number[];
+  rowRolling12Averages: number[];
 };
-
-type HeatmapStatsHtml = { byCategory?: string; byMonth?: string };
 
 type HeatmapSnapshot = {
   ok: boolean;
@@ -34,7 +35,9 @@ type HeatmapSnapshot = {
   source?: string;
   sourceStatus?: { ledger_path?: string; ledger_exists?: boolean; transaction_count?: number };
   views?: Partial<Record<ReportType, HeatmapView>>;
-  statsHtml?: Partial<Record<ReportType, HeatmapStatsHtml>>;
+  statsTables?: Partial<
+    Record<ReportType, { byCategory: StatsTabular; byMonth: StatsTabular }>
+  >;
 };
 
 const VIEW_TABS: Array<{ key: ReportType; label: string }> = [
@@ -43,10 +46,23 @@ const VIEW_TABS: Array<{ key: ReportType; label: string }> = [
   { key: 'net', label: 'נטו' },
 ];
 
+function cellClickable(v: number, reportType: ReportType): boolean {
+  if (!Number.isFinite(v)) return false;
+  if (reportType === 'net') return v !== 0;
+  return v > 0;
+}
+
 function HeatmapGrid({ view }: { view: HeatmapView }) {
   const navigate = useNavigate();
   const months = view.months;
   const cats = view.categories;
+
+  const { cellBg, cellFg } = useMemo(
+    () =>
+      heatmapGridColors(view.zPaint, view.colorScale.scheme, view.colorScale.center),
+    [view.zPaint, view.colorScale.scheme, view.colorScale.center],
+  );
+
   const onCellClick = (ym: string, cat: string) => {
     navigate({
       pathname: '/heatmap/detail',
@@ -59,6 +75,7 @@ function HeatmapGrid({ view }: { view: HeatmapView }) {
         }).toString(),
     });
   };
+
   return (
     <table className="hm-grid">
       <thead>
@@ -97,8 +114,8 @@ function HeatmapGrid({ view }: { view: HeatmapView }) {
             ממוצע
           </th>
           {cats.map((_, c) => {
-            const t = view.columnTotals?.[c] ?? '';
-            const a = view.columnAverages?.[c] ?? '';
+            const t = formatCellMoney(view.columnTotals?.[c] ?? 0);
+            const a = formatCellMoney(view.columnAverages?.[c] ?? 0);
             return (
               <th key={c} className="hm-colsum">
                 <div className="colsum-wrap">
@@ -138,17 +155,31 @@ function HeatmapGrid({ view }: { view: HeatmapView }) {
                 </span>
                 <span className="month-label">{monthRaw}</span>
               </th>
-              <td className="hm-rowtot hm-rowmetric">{view.rowTotals?.[i] ?? ''}</td>
-              <td className="hm-rowavg hm-rowmetric">{view.rowAverages?.[i] ?? ''}</td>
-              <td className="hm-ytdsum hm-rowmetric">{view.rowYtdSums?.[i] ?? ''}</td>
-              <td className="hm-ytdavg hm-rowmetric">{view.rowYtdAverages?.[i] ?? ''}</td>
-              <td className="hm-l12sum hm-rowmetric">{view.rowRolling12Sums?.[i] ?? ''}</td>
-              <td className="hm-l12avg hm-rowmetric">{view.rowRolling12Averages?.[i] ?? ''}</td>
+              <td className="hm-rowtot hm-rowmetric">
+                {formatCellMoney(view.rowTotals?.[i] ?? 0)}
+              </td>
+              <td className="hm-rowavg hm-rowmetric">
+                {formatCellMoney(view.rowAverages?.[i] ?? 0)}
+              </td>
+              <td className="hm-ytdsum hm-rowmetric">
+                {formatCellMoney(view.rowYtdSums?.[i] ?? 0)}
+              </td>
+              <td className="hm-ytdavg hm-rowmetric">
+                {formatCellMoney(view.rowYtdAverages?.[i] ?? 0)}
+              </td>
+              <td className="hm-l12sum hm-rowmetric">
+                {formatCellMoney(view.rowRolling12Sums?.[i] ?? 0)}
+              </td>
+              <td className="hm-l12avg hm-rowmetric">
+                {formatCellMoney(view.rowRolling12Averages?.[i] ?? 0)}
+              </td>
               {cats.map((cat, j) => {
-                const lab = view.labels?.[i]?.[j] ?? '';
-                const bg = view.cellBg?.[i]?.[j] ?? '#333';
-                const fg = view.cellFg?.[i]?.[j] ?? '#f4f6fb';
-                const isClickable = !!view.clickable?.[i]?.[j];
+                const raw = view.values?.[i]?.[j];
+                const v = raw == null || !Number.isFinite(raw) ? NaN : Number(raw);
+                const lab = Number.isFinite(v) ? formatCellMoney(v) : '';
+                const bg = cellBg?.[i]?.[j] ?? '#333337';
+                const fg = cellFg?.[i]?.[j] ?? '#f4f6fb';
+                const isClickable = Number.isFinite(v) && cellClickable(v, view.reportType);
                 const cls = isClickable ? 'cell clickable' : 'cell';
                 const ym = months[i];
                 const handleClick = isClickable ? () => onCellClick(ym, cat) : undefined;
@@ -196,9 +227,10 @@ export default function Heatmap() {
       }
       setErr('');
       const st = data.sourceStatus || {};
-      const cnt = typeof st.transaction_count === 'number' && st.transaction_count >= 0
-        ? ` · ${st.transaction_count} rows`
-        : '';
+      const cnt =
+        typeof st.transaction_count === 'number' && st.transaction_count >= 0
+          ? ` · ${st.transaction_count} rows`
+          : '';
       setRefreshStatus(`Ledger: ${st.ledger_path || data.source || ''}${cnt}`);
     } catch (e) {
       setErr('שגיאת רשת: ' + (e instanceof Error ? e.message : String(e)));
@@ -239,7 +271,7 @@ export default function Heatmap() {
 
   const ledgerExists = snapshot?.sourceStatus?.ledger_exists !== false;
   const currentView = snapshot?.views?.[view] ?? null;
-  const stats = snapshot?.statsHtml?.[view] ?? null;
+  const statsTab = snapshot?.statsTables?.[view];
 
   return (
     <div className="heatmap-page">
@@ -288,14 +320,24 @@ export default function Heatmap() {
         )}
       </div>
       <div className="stats-container">
-        <div className="stats-table-container">
-          <h2>סיכום לפי קטגוריה</h2>
-          <div dangerouslySetInnerHTML={{ __html: stats?.byCategory ?? '' }} />
-        </div>
-        <div className="stats-table-container">
-          <h2>סיכום לפי חודש</h2>
-          <div dangerouslySetInnerHTML={{ __html: stats?.byMonth ?? '' }} />
-        </div>
+        {statsTab ? (
+          <HeatmapStatsTables
+            reportType={view}
+            byCategory={statsTab.byCategory}
+            byMonth={statsTab.byMonth}
+          />
+        ) : (
+          <>
+            <div className="stats-table-container">
+              <h2>סיכום לפי קטגוריה</h2>
+              <p className="no-data">אין נתונים</p>
+            </div>
+            <div className="stats-table-container">
+              <h2>סיכום לפי חודש</h2>
+              <p className="no-data">אין נתונים</p>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
