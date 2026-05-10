@@ -38,6 +38,8 @@
   ·
   <a href="#quick-start">Quick start</a>
   ·
+  <a href="#configuration">Configuration</a>
+  ·
   <a href="#run-the-web-app">Web app</a>
   ·
   <a href="#spa-development-hot-reload">Frontend dev</a>
@@ -63,7 +65,7 @@
 - **`app/backend`** — `pipeline`, `categorization`, `web_control`, [`config.py`](app/backend/config.py), [`logger.py`](app/backend/logger.py), [`schema`](app/backend/schema), [`scripts`](app/backend/scripts).
 - **`app/frontend`** — Vite + React + TypeScript ([frontend README](app/frontend/README.md)).
 
-Optional portal fetch and Sheets-related flows use **`config`** / **`pipeline`** and secrets in **`.env`**.
+Optional portal fetch and Sheets-related flows use **`config`** / **`pipeline`** and secrets in **`.env`** (start from **`.env.example`**).
 
 ## Screenshots
 
@@ -157,7 +159,15 @@ Output: **`app/frontend/dist/`**. Re-run **`npm run build`** after frontend chan
 
 ### 4. Configure
 
-Create **`.env`** in the project root with portal credentials as required by **`config`** / **`pipeline.portal_fetch`**. See [Configuration](#configuration).
+Copy the template and edit locally (never commit **`.env`**):
+
+```bash
+cp .env.example .env
+```
+
+**Windows PowerShell:** `Copy-Item .env.example .env`
+
+See **[Environment variables](#environment-variables)** for every key. You only need the subset that matches what you run (for example, dashboard-only uses **no** bank secrets until you run portal fetch).
 
 ### 5. Run
 
@@ -189,15 +199,66 @@ $env:PYTHONPATH = "app/backend"
 
 ## Configuration
 
-- **`.env`** — Secrets for **`config`** / pipeline fetch. Never commit.
-- **`FINANCE_WORKSPACE_ROOT`** — Optional alternate tree containing **`data/`** (and optional workspace **`web/`**). See [`app/backend/config.py`](app/backend/config.py).
+The backend reads **`app/backend/config.py`**, which calls **`load_dotenv()`** for a **`.env`** file in the **repository root** (current working directory when you start the process).
 
-Optional bind/port for **`web_control`**:
+- **`.env`** — Your secrets and overrides. **Gitignored**; do not commit.
+- **`.env.example`** — Safe template with placeholders and the same variable names. Copy to **`.env`** and fill in values.
+
+### Environment variables
+
+**Workspace**
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `FINANCE_WORKSPACE_ROOT` | No | *(empty)* | If set, **`data/`** and workspace **`web/`** resolve under this directory instead of the repo root—useful for tests or an isolated data tree. |
+
+**`web_control` HTTP bind**
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `FINANCE_CONTROL_HTTP_HOST` | `127.0.0.1` | Bind address |
 | `FINANCE_CONTROL_HTTP_PORT` | `8780` | Port |
+
+**Bank / portal fetch** (used when running pipeline steps that download via Selenium; see [`pipeline/portal_fetch.py`](app/backend/pipeline/portal_fetch.py))
+
+| Variable | Purpose |
+|----------|---------|
+| `bank_username` | Bank portal login id |
+| `bank_password` | Bank portal password |
+| `credit_username` | Optional—credit card portal |
+| `credit_last6` | Optional |
+| `credit_password` | Optional |
+| `max_username` | Optional—additional institution |
+| `max_password` | Optional |
+
+**Google Sheets**
+
+| Variable | Purpose |
+|----------|---------|
+| `GOOGLE_API_USER` | Path to the **service account JSON** file (for example under **`data/static/`**) |
+| `GOOGLE_WORKSHEET_ID` | Target spreadsheet id |
+
+**Sheet tab titles** (optional overrides; defaults are chosen in [`config.py`](app/backend/config.py))
+
+| Variable | Purpose |
+|----------|---------|
+| `FINANCE_TOTALS_SHEET_NAME` | Tab name for totals / heatmap sync (default **`Totals`**) |
+| `FINANCE_DESKTOP_HOLDINGS_SHEET` | Override for holdings push tab (default includes calendar year) |
+| `FINANCE_DESKTOP_TOTALS_SHEET` | Override for full-ledger / totals push tab |
+
+**Debugging**
+
+| Variable | When set | Purpose |
+|----------|-----------|---------|
+| `PIPELINE_DEBUG_DUMP` | `1`, `true`, `yes`, `on` | Mirror legacy cleaned CSVs under pipeline dirs for inspection |
+| `FINANCE_SELENIUM_DEBUG` | `1`, `true`, `yes` | Extra Selenium logging |
+| `FINANCE_SELENIUM_PAUSE` | `1`, `true`, `yes` | Pause after each scripted pause point (interactive) |
+
+**Misc**
+
+| Variable | Purpose |
+|----------|---------|
+| `FINANCE_PYTHON_EXE` | Optional Python path for [`web_control_restart.py`](app/backend/scripts/web_control_restart.py) |
 
 ## Run the web app
 
