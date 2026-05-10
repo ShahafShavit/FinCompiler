@@ -45,7 +45,8 @@ def create_critical_paths_backup(
     Copy minimum critical paths into ``parent_dir / <local_timestamp> /``.
 
     Includes (when present): ``data/export/compiled/``, ``data/static/``,
-    ``web/data/`` (heatmap totals dir). Does not copy ``.env`` or ad-hoc secrets.
+    ``data/private/`` (UI-managed providers + Google path config), ``web/data/``
+    (heatmap totals dir). Does not copy ``.env``.
 
     Returns ``(backup_root_dir, manifest_dict)`` and writes ``snapshot_manifest.json``
     inside the backup root.
@@ -59,6 +60,11 @@ def create_critical_paths_backup(
     specs: list[tuple[str, str, str]] = [
         (config.compiled_dir.rstrip(os.sep), os.path.join(root, "data", "export", "compiled"), "data/export/compiled"),
         (config.static_dir.rstrip(os.sep), os.path.join(root, "data", "static"), "data/static"),
+        (
+            config.private_dir,
+            os.path.join(root, "data", "private"),
+            "data/private",
+        ),
         (
             os.path.join(config.web_dir.rstrip(os.sep), "data"),
             os.path.join(root, "web", "data"),

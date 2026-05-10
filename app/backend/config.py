@@ -72,18 +72,13 @@ transaction_category_file = os.path.join(_compiled_root, "bak", "transaction_cat
 _static_root = _w("data", "static")
 static_dir = _static_root + os.sep
 
+# UI-managed secrets (portal + Google Sheets path/id). See ``providers_store``.
+private_dir = _data("private")
+providers_file = os.path.join(private_dir, "providers.json")
+
 # Timestamped pipeline snapshots (MIG-B). Lives under data/ (see .gitignore /data/).
 backup_parent_dir = _data("_backups")
 stores_to_categories_file = os.path.join(_static_root, "stores_to_categories.csv")
-bank_username = os.getenv("bank_username")
-bank_password = os.getenv("bank_password")
-credit_username = os.getenv("credit_username")
-credit_last6 = os.getenv("credit_last6")
-credit_password = os.getenv("credit_password")
-max_username = os.getenv("max_username")
-max_password = os.getenv("max_password")
-GOOGLE_API_USER = os.getenv("GOOGLE_API_USER")
-GOOGLE_WORKSHEET_ID = os.getenv("GOOGLE_WORKSHEET_ID")
 fingerprint_db_file = os.path.join(_static_root, "fingerprint_db.csv")
 _web_root = _w("web")
 web_dir = _web_root + os.sep

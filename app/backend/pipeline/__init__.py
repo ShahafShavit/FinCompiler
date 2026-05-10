@@ -21,6 +21,9 @@ from . import inbox_router
 from . import portal_fetch
 from . import spreadsheet_ingest
 
+import providers_registry
+import providers_store
+
 log = logging.getLogger(__name__)
 
 # Column drops for bank/credit transaction workbooks (same as default web/CLI full profile)
@@ -119,9 +122,14 @@ def route_inbox(*, dry_run: bool = False, sink: Optional[Callable[[str], None]] 
 
 def fetch_holdings(*, sink: Optional[Callable[[str], None]] = None) -> None:
     _notify("FETCH: bank holdings export", sink)
+    p = providers_store.get_resolved()
+    if not p.bank_username or not p.bank_password:
+        _notify("FETCH: bank credentials not configured — open Settings → Providers", sink)
+        return
+    BankCls = providers_registry.bank_class(p.bank_provider)
     b: portal_fetch.Bank | None = None
     try:
-        b = portal_fetch.Bank(config.bank_username, config.bank_password)
+        b = BankCls(p.bank_username, p.bank_password)
         b.download("holdings")
     finally:
         if b is not None:
@@ -138,9 +146,14 @@ def fetch_transactions_bank_credit_and_osh(
 ) -> None:
     """Single Leumi session: optional credit card exports + optional osh (bank transactions)."""
     _notify("FETCH: bank session (credit / osh as requested)", sink)
+    p = providers_store.get_resolved()
+    if not p.bank_username or not p.bank_password:
+        _notify("FETCH: bank credentials not configured — open Settings → Providers", sink)
+        return
+    BankCls = providers_registry.bank_class(p.bank_provider)
     downloader: portal_fetch.Bank | None = None
     try:
-        downloader = portal_fetch.Bank(config.bank_username, config.bank_password)
+        downloader = BankCls(p.bank_username, p.bank_password)
         if credit:
             _notify("FETCH: credit (via bank portal)", sink)
             downloader.download("credit")
@@ -182,43 +195,66 @@ def run_portal_fetches(
         )
 
 
-def fetch_transactions_max_isracard(*, sink: Optional[Callable[[str], None]] = None) -> None:
-    """Standalone Max + Isracard downloads (legacy Process type 'credit')."""
-    _notify("FETCH: Max credit cards", sink)
+def _fetch_one_credit_portal(
+    *,
+    card_id: str,
+    sink: Optional[Callable[[str], None]],
+) -> None:
+    p = providers_store.get_resolved()
+    cls = providers_registry.CREDIT_PROVIDERS.get(card_id)
+    if cls is None:
+        _notify(f"FETCH: unknown credit provider {card_id!r}", sink)
+        return
+    if card_id == "max":
+        if not p.credit_max_enabled:
+            return
+        if not p.max_username or not p.max_password:
+            _notify("FETCH: Max skipped (credentials not configured in Settings → Providers)", sink)
+            return
+        user, pw, last6 = p.max_username, p.max_password, None
+    elif card_id == "isracard":
+        if not p.credit_isracard_enabled:
+            return
+        if not p.isracard_username or not p.isracard_password or not p.isracard_last6:
+            _notify("FETCH: Isracard skipped (credentials not configured in Settings → Providers)", sink)
+            return
+        user, pw, last6 = p.isracard_username, p.isracard_password, p.isracard_last6
+    else:
+        return
+
+    label = "Max credit cards" if card_id == "max" else "Isracard"
+    _notify(f"FETCH: {label}", sink)
     failed = True
     importer = None
     while failed:
         try:
-            importer = portal_fetch.MaxCredit(config.max_username, config.max_password)
+            if card_id == "isracard":
+                importer = cls(user, pw, last6)
+            else:
+                importer = cls(user, pw)
             try:
                 importer.download()
                 failed = False
             except FileNotFoundError as e:
-                _notify(f"Max retry: {e}", sink)
+                _notify(f"{label} retry: {e}", sink)
         except Exception as e:
-            _notify(f"Max error, retrying: {e}", sink)
+            _notify(f"{label} error, retrying: {e}", sink)
     if importer is not None:
         del importer
 
-    failed = True
-    importer = None
-    _notify("FETCH: Isracard", sink)
-    while failed:
-        try:
-            importer = portal_fetch.IsracardCredit(
-                config.credit_username,
-                config.credit_password,
-                config.credit_last6,
-            )
-            try:
-                importer.download()
-                failed = False
-            except FileNotFoundError as e:
-                _notify(f"Isracard retry: {e}", sink)
-        except Exception as e:
-            _notify(f"Isracard error, retrying: {e}", sink)
-    if importer is not None:
-        del importer
+
+def fetch_transactions_max_isracard(*, sink: Optional[Callable[[str], None]] = None) -> None:
+    """Download enabled credit portals in ``providers.json`` order (max, then isracard)."""
+    doc = providers_store.load_document()
+    for card in doc.get("credit_cards") or []:
+        if not isinstance(card, dict):
+            continue
+        cid = str(card.get("id") or "").strip().lower()
+        if cid not in providers_registry.CREDIT_PROVIDERS:
+            continue
+        if not bool(card.get("enabled")):
+            continue
+        _fetch_one_credit_portal(card_id=cid, sink=sink)
 
 
 def ingest_holdings_inbox(*, sink: Optional[Callable[[str], None]] = None) -> list[str]:

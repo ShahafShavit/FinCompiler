@@ -7,6 +7,8 @@ export default function TopNav() {
         Dashboard
       </NavLink>
       <span className="sep">·</span>
+      <NavLink to="/settings">Settings</NavLink>
+      <span className="sep">·</span>
       <NavLink to="/pipeline">Pipeline</NavLink>
       <span className="sep">·</span>
       <NavLink to="/heatmap">Heatmap</NavLink>

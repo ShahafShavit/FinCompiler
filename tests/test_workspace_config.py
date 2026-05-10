@@ -47,6 +47,7 @@ class WorkspaceRootTests(unittest.TestCase):
                     config_mod.download_inbox_dir,
                     config_mod.compiled_file,
                     config_mod.ledger_db_file,
+                    config_mod.providers_file,
                     config_mod.stores_to_categories_file,
                     config_mod.fingerprint_db_file,
                     os.path.join(config_mod.web_dir.rstrip(os.sep), "data"),

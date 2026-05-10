@@ -352,7 +352,7 @@ class GSLink:
 #         "Totals2": df_totals,
 #         "Holdings2": df_holdings
 #     }
-#     GoogleAPI = GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
+#     GoogleAPI = GoogleSheetsHandler(<path from Settings/providers.json>, <worksheet id>)
 #     new_df = GoogleAPI.get_sheet("Holdings2", "A1:M")
 #     cols = new_df.columns.drop('תאריך')
 #     new_df[cols] = new_df[cols].apply(pd.to_numeric)
@@ -489,7 +489,9 @@ def push_monthly_look(gsh):
     update_sheet_with_headers(spreadsheet, headers, data, 'מבט חודשי')
     print("Pushed updated monthly look.")
 if __name__ == "__main__":
-    gsh = GoogleSheetsHandler(config.GOOGLE_API_USER, config.GOOGLE_WORKSHEET_ID)
+    from providers_store import google_api_user_path, google_worksheet_id
+
+    gsh = GoogleSheetsHandler(google_api_user_path(), google_worksheet_id())
 
     gslink = GSLink(gsh)
     # gslink.update_cloud(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])

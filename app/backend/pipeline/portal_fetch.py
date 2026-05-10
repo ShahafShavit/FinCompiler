@@ -1124,7 +1124,10 @@ if __name__ == "__main__":
 
     # maxCard = MaxCredit(config.max_username, config.max_password)
     # maxCard.download()
-    b = Bank(config.bank_username, config.bank_password)
+    from providers_store import get_resolved
+
+    pr = get_resolved()
+    b = Bank(pr.bank_username, pr.bank_password)
     # b.download("holdings")
     # b.download("osh")
     b.download('credit')

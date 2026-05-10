@@ -24,14 +24,18 @@ class BackupManifestTests(unittest.TestCase):
             try:
                 compiled = os.path.join(tmp, "data", "export", "compiled")
                 static = os.path.join(tmp, "data", "static")
+                private = os.path.join(tmp, "data", "private")
                 webdata = os.path.join(tmp, "web", "data")
                 os.makedirs(compiled, exist_ok=True)
                 os.makedirs(static, exist_ok=True)
+                os.makedirs(private, exist_ok=True)
                 os.makedirs(webdata, exist_ok=True)
                 with open(os.path.join(compiled, "compiled.csv"), "w", encoding="utf-8") as f:
                     f.write("a,b\n1,2\n")
                 with open(os.path.join(static, "stores_to_categories.csv"), "w", encoding="utf-8") as f:
                     f.write("store,category\nx,y\n")
+                with open(os.path.join(private, "providers.json"), "w", encoding="utf-8") as f:
+                    f.write('{"version":1}\n')
                 with open(os.path.join(webdata, "placeholder.txt"), "w", encoding="utf-8") as f:
                     f.write("k\n1\n")
 
@@ -46,6 +50,7 @@ class BackupManifestTests(unittest.TestCase):
                 self.assertEqual(loaded["schema_version"], manifest["schema_version"])
                 self.assertIn("data/export/compiled", loaded["included_top_level"])
                 self.assertIn("data/static", loaded["included_top_level"])
+                self.assertIn("data/private", loaded["included_top_level"])
                 self.assertIn("web/data", loaded["included_top_level"])
                 self.assertGreaterEqual(int(loaded.get("total_bytes", 0)), 1)
 

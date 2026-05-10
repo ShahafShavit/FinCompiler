@@ -1,0 +1,91 @@
+.settings-loading-banner {
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  margin: 0.5rem 0 0.75rem;
+}
+
+.settings-page .settings-hint {
+  font-size: 0.9rem;
+  opacity: 0.92;
+  line-height: 1.45;
+  max-width: 44rem;
+}
+
+.settings-page .settings-path {
+  font-size: 0.85rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.settings-page .muted {
+  opacity: 0.75;
+  font-size: 0.88em;
+}
+
+.settings-section {
+  margin-top: 1rem;
+}
+
+.settings-section h2 {
+  margin-top: 0;
+  font-size: 1.05rem;
+}
+
+.settings-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.65rem 0;
+  font-size: 0.9rem;
+}
+
+.settings-input-wide {
+  max-width: 28rem !important;
+}
+
+.settings-input-narrow {
+  max-width: 8rem !important;
+}
+
+.settings-error {
+  color: #f87171;
+  font-size: 0.9rem;
+}
+
+.settings-msg {
+  color: #86efac;
+  font-size: 0.9rem;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1.25rem 0 2rem;
+}
+
+.settings-btn-primary,
+.settings-btn-secondary {
+  padding: 0.45rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.settings-btn-primary {
+  background: #3730a3;
+  border-color: #4f46e5;
+  color: #eef2ff;
+}
+
+.settings-btn-primary:hover {
+  filter: brightness(1.08);
+}
+
+.settings-btn-secondary:hover {
+  filter: brightness(1.06);
+}

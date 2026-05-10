@@ -2,13 +2,14 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import TopNav from './components/TopNav';
+import Categorize from './pages/Categorize';
 import Dashboard from './pages/Dashboard';
 import DataIntegrity from './pages/DataIntegrity';
-import Pipeline from './pages/Pipeline';
 import Heatmap from './pages/Heatmap';
 import HeatmapDetail from './pages/HeatmapDetail';
-import Categorize from './pages/Categorize';
 import Holdings from './pages/Holdings';
+import Pipeline from './pages/Pipeline';
+import Settings from './pages/Settings';
 
 type EBState = { error: Error | null };
 class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
@@ -43,6 +44,8 @@ export default function App() {
       <ErrorBoundary>
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/settings" element={<Navigate to="/settings/" replace />} />
+          <Route path="/settings/" element={<Settings />} />
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/heatmap" element={<Heatmap />} />
           <Route path="/heatmap/detail" element={<HeatmapDetail />} />

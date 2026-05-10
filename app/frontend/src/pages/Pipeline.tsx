@@ -187,7 +187,7 @@ export default function Pipeline() {
         if (cancelled) return;
         if (!j.configured) {
           setSheetsStatusText(
-            'Google Sheets: not configured (set GOOGLE_API_USER and GOOGLE_WORKSHEET_ID).',
+            'Google Sheets: not configured — set service account path and spreadsheet id under Settings → Providers.',
           );
         } else {
           setSheetsStatusText(
@@ -240,7 +240,7 @@ export default function Pipeline() {
           const j = await getJson<SheetsStatus>('/api/sheets/status');
           if (!j.configured) {
             setSheetsStatusText(
-              'Google Sheets: not configured (set GOOGLE_API_USER and GOOGLE_WORKSHEET_ID).',
+              'Google Sheets: not configured — set service account path and spreadsheet id under Settings → Providers.',
             );
           } else {
             setSheetsStatusText(

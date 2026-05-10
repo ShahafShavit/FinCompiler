@@ -199,12 +199,24 @@ $env:PYTHONPATH = "app/backend"
 
 ## Configuration
 
-The backend reads **`app/backend/config.py`**, which calls **`load_dotenv()`** for a **`.env`** file in the **repository root** (current working directory when you start the process).
+The backend reads **`app/backend/config.py`**, which calls **`load_dotenv()`** for a **`.env`** file in the **repository root** for **non-secret** operational settings only.
 
-- **`.env`** — Your secrets and overrides. **Gitignored**; do not commit.
-- **`.env.example`** — Safe template with placeholders and the same variable names. Copy to **`.env`** and fill in values.
+### Secrets and integrations (bank, cards, Google Sheets)
 
-### Environment variables
+Portal logins, Max/Isracard credentials, and Google Sheets **service account JSON path** + **spreadsheet id** are **not** read from the environment at runtime. They live in **`data/private/providers.json`**, which is created when you save from the control UI:
+
+- Open **[Settings](http://127.0.0.1:8780/settings)** (or **Settings** in the top nav) and fill in the forms. Password fields left blank keep the previous value.
+- The file is under **`data/`** (gitignored with the rest of `data/`). Optional workspace override: set **`FINANCE_WORKSPACE_ROOT`** so **`data/private/providers.json`** resolves under that root.
+
+**Migrating from an older `.env`:** keep your legacy `bank_*`, `credit_*`, `max_*`, `GOOGLE_API_USER`, and `GOOGLE_WORKSHEET_ID` lines temporarily, run:
+
+```bash
+PYTHONPATH=app/backend python -m providers_migrate_env
+```
+
+(or use **Import from .env** on the Settings page), verify the UI, then **remove those secret lines** from `.env`.
+
+### Environment variables (non-secret only)
 
 **Workspace**
 
@@ -218,25 +230,6 @@ The backend reads **`app/backend/config.py`**, which calls **`load_dotenv()`** f
 |----------|---------|---------|
 | `FINANCE_CONTROL_HTTP_HOST` | `127.0.0.1` | Bind address |
 | `FINANCE_CONTROL_HTTP_PORT` | `8780` | Port |
-
-**Bank / portal fetch** (used when running pipeline steps that download via Selenium; see [`pipeline/portal_fetch.py`](app/backend/pipeline/portal_fetch.py))
-
-| Variable | Purpose |
-|----------|---------|
-| `bank_username` | Bank portal login id |
-| `bank_password` | Bank portal password |
-| `credit_username` | Optional—credit card portal |
-| `credit_last6` | Optional |
-| `credit_password` | Optional |
-| `max_username` | Optional—additional institution |
-| `max_password` | Optional |
-
-**Google Sheets**
-
-| Variable | Purpose |
-|----------|---------|
-| `GOOGLE_API_USER` | Path to the **service account JSON** file (for example under **`data/static/`**) |
-| `GOOGLE_WORKSHEET_ID` | Target spreadsheet id |
 
 **Sheet tab titles** (optional overrides; defaults are chosen in [`config.py`](app/backend/config.py))
 
@@ -260,6 +253,10 @@ The backend reads **`app/backend/config.py`**, which calls **`load_dotenv()`** f
 |----------|---------|
 | `FINANCE_PYTHON_EXE` | Optional Python path for [`web_control_restart.py`](app/backend/scripts/web_control_restart.py) |
 
+### Optional: encryption at rest
+
+`providers.json` is **plaintext on disk** like most local tools; protection usually comes from **full-disk encryption**, **not exposing the control server beyond localhost**, and **careful backups**. If you need stronger at-rest protection later, consider OS keyring, encrypting the file with a key kept outside the repo, or a startup passphrase—each trades convenience for where key material lives.
+
 ## Run the web app
 
 ```bash
@@ -278,6 +275,7 @@ set PYTHONPATH=app\backend
 | Page | URL |
 |------|-----|
 | Dashboard | [http://127.0.0.1:8780/](http://127.0.0.1:8780/) |
+| Settings (providers & secrets) | [http://127.0.0.1:8780/settings](http://127.0.0.1:8780/settings) |
 | Pipeline | [http://127.0.0.1:8780/pipeline](http://127.0.0.1:8780/pipeline) |
 | Heatmap | [http://127.0.0.1:8780/heatmap](http://127.0.0.1:8780/heatmap) |
 | Holdings | [http://127.0.0.1:8780/holdings/](http://127.0.0.1:8780/holdings/) |

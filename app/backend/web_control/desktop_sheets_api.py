@@ -10,6 +10,7 @@ from typing import Any, Iterator
 
 import config
 from integrations.google_sheets import GSLink, GoogleSheetsHandler
+from providers_store import google_api_user_path, google_worksheet_id
 from web_control.totals_sheet_sync import is_sheets_configured
 
 log = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ def api_status() -> dict[str, Any]:
     return {
         "configured": is_sheets_configured(),
         "pairs": pairs,
-        "worksheet_id_set": bool((config.GOOGLE_WORKSHEET_ID or "").strip()),
+        "worksheet_id_set": bool((google_worksheet_id() or "").strip()),
         "totals_push_source": "ledger_sqlite"
         if os.path.isfile(config.ledger_db_file)
         else "compiled_csv",
@@ -62,8 +63,8 @@ def _desktop_sync_sheet_paths() -> Iterator[tuple[list[str], list[str]]]:
 
 
 def _handler() -> GoogleSheetsHandler:
-    cred = os.path.expanduser((config.GOOGLE_API_USER or "").strip())
-    sid = (config.GOOGLE_WORKSHEET_ID or "").strip()
+    cred = os.path.expanduser((google_api_user_path() or "").strip())
+    sid = (google_worksheet_id() or "").strip()
     return GoogleSheetsHandler(cred, sid)
 
 
@@ -72,7 +73,7 @@ def api_preview() -> dict[str, Any]:
         return {
             "ok": False,
             "error": "not_configured",
-            "message": "Set GOOGLE_API_USER and GOOGLE_WORKSHEET_ID (and a valid service-account JSON path).",
+            "message": "Configure Google Sheets in Settings → Providers (service account JSON path and spreadsheet id).",
         }
     with _desktop_sync_sheet_paths() as (sheets, paths):
         link = GSLink(_handler())
@@ -84,7 +85,7 @@ def api_push(*, force: bool) -> tuple[bool, str, dict[str, Any] | None]:
     if not is_sheets_configured():
         return (
             False,
-            "Google Sheets not configured (GOOGLE_API_USER / GOOGLE_WORKSHEET_ID).",
+            "Google Sheets not configured — use Settings → Providers.",
             None,
         )
     with _desktop_sync_sheet_paths() as (sheets, paths):

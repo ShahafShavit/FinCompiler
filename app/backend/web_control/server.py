@@ -126,6 +126,8 @@ def _content_type_for(path: Path) -> str:
 _SPA_ROUTES: tuple[str, ...] = (
     "/",
     "/index.html",
+    "/settings",
+    "/settings/",
     "/pipeline",
     "/pipeline/",
     "/heatmap",
@@ -431,6 +433,16 @@ def make_handler_class(state: ControlState):
                 self._send(200, body, "application/json; charset=utf-8")
                 return
 
+            if path == "/api/providers-config":
+                from web_control import providers_api
+
+                self._send(
+                    200,
+                    _json_bytes_strict(providers_api.api_get()),
+                    "application/json; charset=utf-8",
+                )
+                return
+
             if path == "/api/holdings/meta":
                 from pipeline.holdings_csv_import import get_holdings_meta
 
@@ -730,6 +742,16 @@ def make_handler_class(state: ControlState):
                 self._send(code, _json_bytes_strict(payload), "application/json; charset=utf-8")
                 return
 
+            if path == "/api/providers/import-env":
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                if clen > 0:
+                    self.rfile.read(clen)
+                from web_control import providers_api
+
+                status, payload = providers_api.api_import_env()
+                self._send(status, _json_bytes_strict(payload), "application/json; charset=utf-8")
+                return
+
             if path != "/api/jobs/run":
                 self._send(404, b"Not Found", "text/plain")
                 return
@@ -778,6 +800,21 @@ def make_handler_class(state: ControlState):
                 _json_bytes({"ok": True, "job_id": job_id}),
                 "application/json; charset=utf-8",
             )
+
+        def do_PUT(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            path = _normalize_http_path(parsed.path)
+
+            if path == "/api/providers-config":
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(clen) if clen > 0 else b"{}"
+                from web_control import providers_api
+
+                status, payload = providers_api.api_put(raw)
+                self._send(status, _json_bytes_strict(payload), "application/json; charset=utf-8")
+                return
+
+            self._send(404, b"Not Found", "text/plain")
 
         def do_PATCH(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
