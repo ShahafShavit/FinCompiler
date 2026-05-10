@@ -32,6 +32,8 @@
 <p align="center">
   <a href="#overview">Overview</a>
   ·
+  <a href="#screenshots">Screenshots</a>
+  ·
   <a href="#architecture">Architecture</a>
   ·
   <a href="#quick-start">Quick start</a>
@@ -62,6 +64,32 @@
 - **`app/frontend`** — Vite + React + TypeScript ([frontend README](app/frontend/README.md)).
 
 Optional portal fetch and Sheets-related flows use **`config`** / **`pipeline`** and secrets in **`.env`**.
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/1.png" alt="Dashboard — KPI cards, holdings allocation, net worth over time" width="900">
+</p>
+
+<p align="center"><strong>Dashboard</strong> — KPIs, holdings allocation, and net worth.</p>
+
+<p align="center">
+  <img src="docs/images/2.png" alt="Monthly cash flow chart and category overview" width="900">
+</p>
+
+<p align="center"><strong>Cash flow &amp; categories</strong> — Monthly cash flow (24 months) and category overview.</p>
+
+<p align="center">
+  <img src="docs/images/3.png" alt="Category overview table with filters" width="900">
+</p>
+
+<p align="center"><strong>Category overview</strong> — Ranked categories with table/chart toggle (sample figures redacted).</p>
+
+<p align="center">
+  <img src="docs/images/4.png" alt="Expense heatmap by category and month" width="900">
+</p>
+
+<p align="center"><strong>Heatmap</strong> — Monthly amounts by category (click a cell for drill-down).</p>
 
 ## Architecture
 
@@ -211,7 +239,7 @@ cd app/frontend
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/). Vite proxies **`/api`**, **`/heatmap/api`**, **`/heatmap/legacy-detail`**, **`/heatmap/heatmap_page_script.js`**, **`/categorize`**, and **`/holdings`** to Python on **8780** ([`vite.config.ts`](app/frontend/vite.config.ts)).
+Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/). Vite proxies **`/api`**, **`/heatmap/api`**, **`/categorize`**, and **`/holdings`** to Python on **8780** ([`vite.config.ts`](app/frontend/vite.config.ts)).
 
 More detail: [`app/frontend/README.md`](app/frontend/README.md).
 
@@ -275,7 +303,3 @@ Additional scripts: [`app/backend/scripts`](app/backend/scripts).
 ## License
 
 Released under the [MIT License](LICENSE).
-
-## Screenshots
-
-None bundled yet. PRs with anonymized UI captures under something like **`docs/images/`** (no real account data) are welcome.
