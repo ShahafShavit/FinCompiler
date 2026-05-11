@@ -8,6 +8,7 @@ from typing import Any, Callable, Optional
 
 import config
 import pipeline
+from pipeline.trade_portfolio_import import import_newest_trade_portfolio
 
 log = logging.getLogger(__name__)
 
@@ -33,23 +34,26 @@ def run_action(
 ) -> None:
     """
     ``options`` keys (all optional unless noted):
-      fetch_holdings, fetch_max_isracard, fetch_bank_credit, fetch_bank_osh (bools)
+      fetch_holdings, fetch_trade_portfolio, fetch_max_isracard, fetch_bank_credit, fetch_bank_osh (bools)
+      process_holdings, process_transactions, process_trade_portfolio (bools)
       from_date, to_date (osh)
       auto_categorize, no_fetch (bools)
-      backup_first (bool) — snapshot compiled/static/web data before compile-oriented jobs
+      backup_first (bool) — snapshot compiled/static/web data before compile- or trade-portfolio-import jobs
     """
     if action == "pipeline":
         dl = bool(options.get("download_enabled", False))
         if dl:
             h = bool(options.get("fetch_holdings", False))
+            ftp = bool(options.get("fetch_trade_portfolio", False))
             mi = bool(options.get("fetch_max_isracard", False))
             bc = bool(options.get("fetch_bank_credit", False))
             bo = bool(options.get("fetch_bank_osh", False))
-            if not (h or mi or bc or bo):
+            if not (h or ftp or mi or bc or bo):
                 sink("PIPELINE: browser download is on — pick at least one source (holdings, cards, …)")
                 return
             pipeline.run_portal_fetches(
                 holdings=h,
+                trade_portfolio=ftp,
                 max_isracard=mi,
                 bank_credit=bc,
                 bank_osh=bo,
@@ -60,10 +64,11 @@ def run_action(
         route = bool(options.get("route_inbox", True))
         proc_h = bool(options.get("process_holdings", False))
         proc_t = bool(options.get("process_transactions", False))
-        if not dl and not route and not proc_h and not proc_t:
+        proc_tp = bool(options.get("process_trade_portfolio", False))
+        if not dl and not route and not proc_h and not proc_t and not proc_tp:
             sink("PIPELINE: enable at least one step below")
             return
-        if bool(options.get("backup_first")) and (proc_h or proc_t):
+        if bool(options.get("backup_first")) and (proc_h or proc_t or proc_tp):
             _maybe_backup_first(options, sink)
         if route:
             pipeline.route_inbox(sink=sink)
@@ -72,6 +77,8 @@ def run_action(
                 "PIPELINE: warning — inbox routing is off; new downloads stay in data/input/ "
                 "until you route or enable “Route inbox”"
             )
+        if proc_tp:
+            import_newest_trade_portfolio(sink=sink, db_path=config.ledger_db_file)
         if proc_h:
             pipeline.run_holdings_pipeline(fetch=False, route=False, sink=sink)
         if proc_t:
@@ -84,14 +91,16 @@ def run_action(
 
     if action == "fetch":
         h = bool(options.get("fetch_holdings"))
+        ftp = bool(options.get("fetch_trade_portfolio"))
         mi = bool(options.get("fetch_max_isracard"))
         bc = bool(options.get("fetch_bank_credit"))
         bo = bool(options.get("fetch_bank_osh"))
-        if not (h or mi or bc or bo):
+        if not (h or ftp or mi or bc or bo):
             sink("FETCH: no sources selected; enable at least one checkbox")
             return
         pipeline.run_portal_fetches(
             holdings=h,
+            trade_portfolio=ftp,
             max_isracard=mi,
             bank_credit=bc,
             bank_osh=bo,
@@ -122,6 +131,7 @@ def run_action(
             fetch_max_isracard=bool(options.get("fetch_max_isracard")),
             fetch_bank_credit=bool(options.get("fetch_bank_credit")),
             fetch_bank_osh=bool(options.get("fetch_bank_osh")),
+            fetch_lti_portfolio=bool(options.get("fetch_trade_portfolio")),
             from_date=options.get("from_date") or None,
             to_date=options.get("to_date") or None,
             route=not bool(options.get("no_route")),
@@ -151,14 +161,16 @@ def run_action(
         _maybe_backup_first(options, sink)
         if not bool(options.get("no_fetch")):
             h = bool(options.get("fetch_holdings", True))
+            ftp = bool(options.get("fetch_trade_portfolio", False))
             mi = bool(options.get("fetch_max_isracard", True))
             bc = bool(options.get("fetch_bank_credit", True))
             bo = bool(options.get("fetch_bank_osh", True))
-            if not (h or mi or bc or bo):
+            if not (h or ftp or mi or bc or bo):
                 sink("FULL PIPELINE: no fetch sources selected; skipping browser downloads")
             else:
                 pipeline.run_portal_fetches(
                     holdings=h,
+                    trade_portfolio=ftp,
                     max_isracard=mi,
                     bank_credit=bc,
                     bank_osh=bo,

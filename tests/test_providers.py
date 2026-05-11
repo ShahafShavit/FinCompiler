@@ -45,6 +45,20 @@ class ProvidersTests(unittest.TestCase):
         out = ps.document_for_api_get(doc)
         self.assertTrue(out["bank"]["credentials"]["password_set"])
         self.assertNotIn("password", out["bank"]["credentials"])
+        self.assertIn("investment_portfolio", out)
+        self.assertTrue(out["investment_portfolio"]["enabled"])
+
+    def test_investment_portfolio_normalize_and_merge(self) -> None:
+        import providers as ps
+
+        doc = ps.default_document()
+        self.assertTrue(doc["investment_portfolio"]["enabled"])
+        raw = ps.normalize_document({"investment_portfolio": {"enabled": False}})
+        self.assertFalse(raw["investment_portfolio"]["enabled"])
+        merged = ps.merge_put_update(raw, {"investment_portfolio": {"enabled": True}})
+        self.assertTrue(merged["investment_portfolio"]["enabled"])
+        r = ps.resolve_document(merged)
+        self.assertTrue(r.investment_portfolio_enabled)
 
     def test_providers_file_respects_workspace(self) -> None:
         import config as config_mod

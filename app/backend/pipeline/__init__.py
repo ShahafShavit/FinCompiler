@@ -43,6 +43,7 @@ def _pipeline_debug_dump() -> bool:
 
 def ensure_pipeline_dirs() -> None:
     for d in (
+        config.trade_portfolio_inbox_dir,
         config.holdings_inbox_dir,
         config.holdings_raw_dir,
         config.holdings_clean_dir,
@@ -61,7 +62,8 @@ def route_inbox(*, dry_run: bool = False, sink: Optional[Callable[[str], None]] 
     _notify("INBOX ROUTE: classifying shared downloads into pipeline inboxes", sink)
     stats = route_inbox_mod.route_shared_download_inbox(dry_run=dry_run)
     _notify(
-        f"INBOX ROUTE done: holdings={stats['moved_holdings']} "
+        f"INBOX ROUTE done: trade_portfolio={stats['moved_trade_portfolio']} "
+        f"holdings={stats['moved_holdings']} "
         f"transactions={stats['moved_transactions']} "
         f"unknown={stats['moved_unknown']} skipped={stats['skipped']}",
         sink,
@@ -80,6 +82,26 @@ def fetch_holdings(*, sink: Optional[Callable[[str], None]] = None) -> None:
     try:
         b = BankCls(p.bank_username, p.bank_password)
         b.download("holdings")
+    finally:
+        if b is not None:
+            b.close()
+
+
+def fetch_trade_portfolio(*, sink: Optional[Callable[[str], None]] = None) -> None:
+    """Leumi LTI trade portfolio Excel export (separate browser session)."""
+    _notify("FETCH: Leumi LTI trade portfolio (Excel)", sink)
+    p = providers.get_resolved()
+    if not p.investment_portfolio_enabled:
+        _notify("FETCH: LTI trade portfolio skipped (disabled in providers.json)", sink)
+        return
+    if not p.bank_username or not p.bank_password:
+        _notify("FETCH: bank credentials not configured — open Settings → Providers", sink)
+        return
+    BankCls = providers.bank_class(p.bank_provider)
+    b: fetch.Bank | None = None
+    try:
+        b = BankCls(p.bank_username, p.bank_password)
+        b.download("trade_portfolio")
     finally:
         if b is not None:
             b.close()
@@ -117,6 +139,7 @@ def fetch_transactions_bank_credit_and_osh(
 def run_portal_fetches(
     *,
     holdings: bool = False,
+    trade_portfolio: bool = False,
     max_isracard: bool = False,
     bank_credit: bool = False,
     bank_osh: bool = False,
@@ -127,11 +150,13 @@ def run_portal_fetches(
     """
     Run only the selected Selenium downloads into the shared inbox (``data/input/``).
 
-    Order matches ``run_pipeline.py all``: holdings, then Max/Isracard, then one Leumi
-    session for the requested credit/osh exports.
+    Order matches ``run_pipeline.py all``: holdings, LTI trade portfolio (optional), Max/Isracard,
+    then one Leumi session for the requested credit/osh exports.
     """
     if holdings:
         fetch_holdings(sink=sink)
+    if trade_portfolio:
+        fetch_trade_portfolio(sink=sink)
     if max_isracard:
         fetch_transactions_max_isracard(sink=sink)
     if bank_credit or bank_osh:
@@ -275,6 +300,7 @@ def run_transactions_pipeline(
     *,
     fetch_bank_credit: bool = False,
     fetch_bank_osh: bool = False,
+    fetch_lti_portfolio: bool = False,
     fetch_max_isracard: bool = False,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
@@ -285,6 +311,8 @@ def run_transactions_pipeline(
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
     ensure_pipeline_dirs()
+    if fetch_lti_portfolio:
+        fetch_trade_portfolio(sink=sink)
     if fetch_max_isracard:
         fetch_transactions_max_isracard(sink=sink)
     if fetch_bank_credit or fetch_bank_osh:
@@ -306,6 +334,28 @@ def run_transactions_pipeline(
             run_auto_categorize=auto_categorize,
             sink=sink,
         )
+
+
+def clean_trade_portfolio_workspace(
+    *,
+    include_inbox: bool = False,
+    sink: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Remove files under the trade-portfolio inbox (optional) — raw/clean dirs reserved for future use."""
+    folders: list[tuple[str, str]] = []
+    if include_inbox:
+        folders.append(("trade portfolio inbox", config.trade_portfolio_inbox_dir))
+    for label, folder in folders:
+        if not os.path.isdir(folder):
+            continue
+        for name in os.listdir(folder):
+            path = os.path.join(folder, name)
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                    _notify(f"clean trade portfolio: removed {path}", sink)
+                except OSError as e:
+                    log.warning("Could not remove %s: %s", path, e)
 
 
 def clean_holdings_workspace(

@@ -14,6 +14,13 @@ import logging
 import os
 import sys
 import textwrap
+from pathlib import Path
+
+# Same layout as repo-root ``run_pipeline.py``: allow running this file directly
+# (``python app/backend/apps/pipeline_cli.py …``) with imports resolving to ``app/backend``.
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
 
 import config
 import pipeline
@@ -53,6 +60,8 @@ Pick a COMMAND below. Every command has its own options - use:
 MAIN_EPILOG = """\
 commands:
   route          Classify files in data/input/*.xls* and MOVE them into pipeline inboxes.
+  fetch-lti      Browser only: download Leumi LTI trade portfolio Excel into data/input/ (no route/compile).
+  import-trade-portfolio  Parse SpreadsheetML אחזקות export -> data/ledger.sqlite (trade_portfolio_position)
   holdings       Balances: ingest -> normalize -> merge into data/ledger.sqlite (holdings_balance)
   transactions   Spending/income lines: ingest -> normalize -> upsert into data/ledger.sqlite
   all            Optional browser downloads, then route, then BOTH pipelines in one go.
@@ -68,11 +77,13 @@ typical workflows:
 
   # Or explicitly: sort downloads, then run each side
   python run_pipeline.py route
+  python run_pipeline.py fetch-lti            # LTI portfolio Excel only -> data/input/
   python run_pipeline.py holdings --no-route
   python run_pipeline.py transactions --no-route
 
 classification rule for route:
-  - Filename contains the bank balances marker (see pipeline.route_inbox.HOLDINGS_MARKERS) -> holdings inbox
+  - Filename contains trade-portfolio markers (אחזקות, trade-portfolio) -> data/pipeline/trade_portfolio/inbox
+  - Filename contains bank balances marker (יתרות) -> holdings inbox
   - Any other .xls / .xlsx / .xlsm -> transactions inbox
   - Anything else -> data/input/unclassified/
 """
@@ -89,6 +100,22 @@ ROUTE_EPILOG = """\
 examples:
   python run_pipeline.py route
   python run_pipeline.py route --dry-run    # show what would move, change nothing
+"""
+
+
+FETCH_LTI_DESCRIPTION = """\
+Open one Leumi browser session, log in with providers.json bank credentials, download the
+LTI trade portfolio Excel export into the shared download folder (data/input/ by default).
+
+Does not route, ingest, or compile. Disable the fetch in Settings (investment portfolio) or
+providers.json ``investment_portfolio.enabled`` if you want to skip without editing code.
+"""
+
+FETCH_LTI_EPILOG = """\
+examples:
+  python run_pipeline.py fetch-lti
+
+Requires Chrome and Selenium; same credentials as other Leumi fetches.
 """
 
 
@@ -128,6 +155,8 @@ Steps (each can be skipped with --no-*):
 TRANSACTIONS_EPILOG = """\
 notes:
   - Bank credit + bank osh can run in one Leumi session (enable both flags).
+  - --fetch-trade-portfolio opens a separate Leumi session for the LTI portfolio Excel export
+    (use ``fetch-lti`` if you want download-only, no transactions pipeline).
   - --from-date / --to-date only affect --fetch-bank-osh (same strings as in the bank UI).
   - Row-drop rules for normalize live in ``data/private/transaction_drop_rules.json`` (Settings in the web app).
   - --categorize: after compile, run auto categorization; finish in the browser at /categorize/ (run ``python -m api.main``).
@@ -135,6 +164,8 @@ notes:
 examples:
   python run_pipeline.py transactions
   python run_pipeline.py transactions --fetch-bank-credit --fetch-bank-osh
+  python run_pipeline.py transactions --fetch-trade-portfolio   # also runs pipeline steps
+  python run_pipeline.py fetch-lti                              download only (no compile)
   python run_pipeline.py transactions --fetch-max-isracard
   python run_pipeline.py transactions --no-route --auto-categorize
   python run_pipeline.py transactions --categorize
@@ -146,8 +177,8 @@ Full portal downloads (unless --no-fetch), then one shared route, then BOTH pipe
 
 Order:
   1. By default: download holdings, Max/Isracard exports, and Leumi credit + osh (one session
-     for the bank flags). Use --no-fetch to skip all browsers (same as placing files in
-     data/input/ yourself).
+     for the bank flags). Use --fetch-trade-portfolio for an extra Leumi session (LTI trade portfolio Excel).
+     Use --no-fetch to skip all browsers (same as placing files in data/input/ yourself).
   2. route - split everything in data/input into holdings vs transactions inboxes.
   3. Full holdings pipeline (no second route).
   4. Full transactions pipeline (no second route).
@@ -156,6 +187,7 @@ Order:
 
 ALL_EPILOG = """\
   python run_pipeline.py all
+  python run_pipeline.py all --fetch-trade-portfolio
   python run_pipeline.py all --no-fetch
   python run_pipeline.py all --categorize
   python run_pipeline.py all --no-fetch --categorize
@@ -220,12 +252,38 @@ def _build_parser() -> argparse.ArgumentParser:
         description=textwrap.dedent(ROUTE_DESCRIPTION),
         epilog=textwrap.dedent(ROUTE_EPILOG),
         formatter_class=fmt,
-        help="Sort downloads in data/input into holdings/transactions pipeline inboxes.",
+        help="Sort downloads in data/input into trade-portfolio, holdings, and transactions inboxes.",
     )
     r.add_argument(
         "--dry-run",
         action="store_true",
         help="Print which moves would happen; do not move any files.",
+    )
+
+    # --- import-trade-portfolio ---
+    itp = sub.add_parser(
+        "import-trade-portfolio",
+        description=(
+            "Read a trade-portfolio SpreadsheetML workbook (.xls XML) and upsert rows into "
+            "data/ledger.sqlite table trade_portfolio_position (replace snapshot)."
+        ),
+        formatter_class=fmt,
+        help="Import אחזקות / trade-portfolio export -> SQLite trade_portfolio_position.",
+    )
+    itp.add_argument(
+        "--path",
+        metavar="FILE",
+        default=None,
+        help="Workbook path. Default: newest SpreadsheetML .xls* in trade_portfolio inbox, then data/input.",
+    )
+
+    # --- fetch-lti (LTI trade portfolio download only) ---
+    sub.add_parser(
+        "fetch-lti",
+        description=textwrap.dedent(FETCH_LTI_DESCRIPTION),
+        epilog=textwrap.dedent(FETCH_LTI_EPILOG),
+        formatter_class=fmt,
+        help="Browser: Leumi LTI trade portfolio Excel -> data/input/ only (no pipeline).",
     )
 
     # --- holdings ---
@@ -282,6 +340,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--fetch-bank-osh",
         action="store_true",
         help="After Leumi login, download account transaction export (osh).",
+    )
+    tg_fetch.add_argument(
+        "--fetch-trade-portfolio",
+        action="store_true",
+        help="Separate Leumi session: download LTI trade portfolio Excel export.",
     )
     tg_fetch.add_argument(
         "--from-date",
@@ -354,6 +417,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Leumi osh export: end date (optional).",
     )
+    ag.add_argument(
+        "--fetch-trade-portfolio",
+        action="store_true",
+        help="Also download Leumi LTI trade portfolio Excel (extra Leumi browser session after holdings).",
+    )
     ag2 = a.add_argument_group("after route + pipelines")
     ag2.add_argument(
         "--auto-categorize",
@@ -413,6 +481,33 @@ def main(argv: list[str] | None = None) -> int:
         pipeline.route_inbox(dry_run=getattr(args, "dry_run", False))
         return 0
 
+    if args.command == "import-trade-portfolio":
+        from pipeline.trade_portfolio_import import import_trade_portfolio_file, resolve_default_trade_portfolio_path
+
+        path: str | None = args.path
+        if not path:
+            path = resolve_default_trade_portfolio_path()
+        if not path:
+            log.error(
+                "import-trade-portfolio: no SpreadsheetML workbook found under %s or %s",
+                config.trade_portfolio_inbox_dir,
+                config.download_inbox_dir,
+            )
+            return 1
+        rep = import_trade_portfolio_file(path)
+        log.info(
+            "import-trade-portfolio: inserted=%s deleted_prior=%s snapshot=%s portfolio=%s",
+            rep["inserted"],
+            rep["deleted"],
+            rep["snapshot_date"],
+            rep["portfolio_account"],
+        )
+        return 0
+
+    if args.command == "fetch-lti":
+        pipeline.fetch_trade_portfolio()
+        return 0
+
     if args.command == "holdings":
         pipeline.run_holdings_pipeline(
             fetch=args.fetch,
@@ -430,6 +525,7 @@ def main(argv: list[str] | None = None) -> int:
             fetch_max_isracard=args.fetch_max_isracard,
             fetch_bank_credit=args.fetch_bank_credit,
             fetch_bank_osh=args.fetch_bank_osh,
+            fetch_lti_portfolio=args.fetch_trade_portfolio,
             from_date=args.from_date,
             to_date=args.to_date,
             route=not args.no_route,
@@ -445,10 +541,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.backup_first:
             _run_cli_backup_first()
         if not args.no_fetch:
-            pipeline.fetch_holdings()
-            pipeline.fetch_transactions_max_isracard()
-            pipeline.fetch_transactions_bank_credit_and_osh(
-                credit=True,
+            pipeline.run_portal_fetches(
+                holdings=True,
+                trade_portfolio=args.fetch_trade_portfolio,
+                max_isracard=True,
+                bank_credit=True,
                 bank_osh=True,
                 from_date=args.from_date,
                 to_date=args.to_date,

@@ -53,6 +53,12 @@ def _abs_download_inbox() -> str:
 download_dir = _abs_download_inbox()
 log.debug("Portal download directory resolved to %s", download_dir)
 
+# Leumi LTI (investment) trade portfolio — Excel from Angular shell (`trade-portfolio`).
+LTI_TRADE_PORTFOLIO_URL = "https://hb2.bankleumi.co.il/lti/lti-app/trade/portfolio"
+LTI_PORTFOLIO_EXPORT_TO_EXCEL_XPATH = (
+    "//a[contains(@class,'export') and contains(normalize-space(.),'ייצוא לאקסל')]"
+)
+
 # Set FINANCE_SELENIUM_DEBUG=1 to print optional-click outcomes and pause hints.
 # Set FINANCE_SELENIUM_PAUSE=1 to wait for Enter after each flow_debug_pause(...) call.
 
@@ -150,6 +156,9 @@ def _leumi_post_login_ready(driver) -> bool:
             return True
         u = (driver.current_url or "").lower()
         if "/ebanking/" in u and "login.html" not in u:
+            return True
+        # Logged-in LTI trade app (SSO) — same session as e-banking.
+        if "/lti/" in u:
             return True
     except Exception:
         return False
@@ -759,7 +768,46 @@ class Bank:
                         )
             log.info("Bank: credit — finished card iteration")
             return True
-        raise ValueError(f"Unknown Bank.download kind {file!r} (use holdings, osh, or credit).")
+        elif file.lower() in ("trade_portfolio", "lti_portfolio"):
+            log.info("Bank: LTI trade portfolio — open portfolio page")
+            try:
+                if len(self.__driver.window_handles) > 1:
+                    self.__driver.switch_to.window(self.__driver.window_handles[0])
+            except Exception:
+                pass
+            self.__driver.get(LTI_TRADE_PORTFOLIO_URL)
+            time.sleep(1.5)
+            optional_click(
+                self.__driver,
+                (By.CSS_SELECTOR, "button.app-close-cookies-btn"),
+                timeout=10,
+                description="Leumi LTI portfolio — cookie banner close",
+            )
+            WebDriverWait(self.__driver, 45).until(
+                EC.presence_of_element_located((By.XPATH, LTI_PORTFOLIO_EXPORT_TO_EXCEL_XPATH))
+            )
+            baseline = set(os.listdir(download_dir))
+            log.info(
+                "Bank: LTI trade portfolio — baseline download dir (%s file(s)); starting Excel export",
+                len(baseline),
+            )
+            wait_click(
+                self.__driver,
+                (By.XPATH, LTI_PORTFOLIO_EXPORT_TO_EXCEL_XPATH),
+                20,
+                "Leumi LTI portfolio — ייצוא לאקסל",
+            )
+            ok, new_name = verify_download(
+                download_dir, poll_interval=1.5, timeout=120, baseline_names=baseline
+            )
+            if not ok:
+                log.error("Bank: LTI trade portfolio — verify_download failed")
+                raise FileNotFoundError("Failed to download LTI trade portfolio export.")
+            log.info("Bank: LTI trade portfolio — saved as %r", new_name)
+            return True
+        raise ValueError(
+            f"Unknown Bank.download kind {file!r} (use holdings, osh, credit, or trade_portfolio)."
+        )
 
     def __del__(self):
         try:

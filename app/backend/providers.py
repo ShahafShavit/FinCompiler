@@ -78,6 +78,7 @@ def default_document() -> dict[str, Any]:
             },
         ],
         "google_sheets": {"service_account_json_path": "", "worksheet_id": ""},
+        "investment_portfolio": {"enabled": True},
     }
 
 
@@ -151,6 +152,9 @@ def normalize_document(doc: dict[str, Any]) -> dict[str, Any]:
     base["google_sheets"]["service_account_json_path"] = str(gs.get("service_account_json_path") or "")
     base["google_sheets"]["worksheet_id"] = str(gs.get("worksheet_id") or "")
 
+    inv = doc.get("investment_portfolio") if isinstance(doc.get("investment_portfolio"), dict) else {}
+    base["investment_portfolio"]["enabled"] = bool(inv.get("enabled", True))
+
     base["version"] = PROVIDERS_VERSION
     return base
 
@@ -190,6 +194,7 @@ class ResolvedProviders:
     isracard_username: Optional[str]
     isracard_password: Optional[str]
     isracard_last6: Optional[str]
+    investment_portfolio_enabled: bool
     google_service_account_json_path: Optional[str]
     google_worksheet_id: Optional[str]
 
@@ -215,6 +220,8 @@ def resolve_document(doc: dict[str, Any]) -> ResolvedProviders:
             il = _nonempty(c.get("last6"))
     gs = doc["google_sheets"]
     gpath = _nonempty(gs.get("service_account_json_path"))
+    inv_doc = doc.get("investment_portfolio") if isinstance(doc.get("investment_portfolio"), dict) else {}
+    inv_enabled = bool(inv_doc.get("enabled", True))
     return ResolvedProviders(
         bank_provider=str(bank.get("provider") or "leumi").strip() or "leumi",
         bank_username=_nonempty(bc.get("username")),
@@ -226,6 +233,7 @@ def resolve_document(doc: dict[str, Any]) -> ResolvedProviders:
         isracard_username=iu,
         isracard_password=ip,
         isracard_last6=il,
+        investment_portfolio_enabled=inv_enabled,
         google_service_account_json_path=_expand_path(gpath) if gpath else None,
         google_worksheet_id=_nonempty(gs.get("worksheet_id")),
     )
@@ -309,6 +317,10 @@ def merge_put_update(current: dict[str, Any], body: dict[str, Any]) -> dict[str,
         if "worksheet_id" in gs_in:
             gs["worksheet_id"] = str(gs_in.get("worksheet_id") or "")
 
+    ip_in = body.get("investment_portfolio")
+    if isinstance(ip_in, dict) and "enabled" in ip_in:
+        out["investment_portfolio"]["enabled"] = bool(ip_in.get("enabled"))
+
     return out
 
 
@@ -333,10 +345,12 @@ def document_for_api_get(doc: dict[str, Any]) -> dict[str, Any]:
             co["last6_set"] = bool(str(c.get("last6") or "").strip())
         cards_out.append({"id": card["id"], "enabled": bool(card.get("enabled")), "credentials": co})
     gs = doc["google_sheets"]
+    inv = doc.get("investment_portfolio") if isinstance(doc.get("investment_portfolio"), dict) else {}
     return {
         "version": doc["version"],
         "bank": bank_out,
         "credit_cards": cards_out,
+        "investment_portfolio": {"enabled": bool(inv.get("enabled", True))},
         "google_sheets": {
             "service_account_json_path": gs.get("service_account_json_path") or "",
             "worksheet_id": gs.get("worksheet_id") or "",

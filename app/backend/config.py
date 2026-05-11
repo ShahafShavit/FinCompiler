@@ -47,6 +47,9 @@ holdings_inbox_dir = _data("pipeline", "holdings", "inbox")
 holdings_raw_dir = _data("pipeline", "holdings", "raw")
 holdings_clean_dir = _data("pipeline", "holdings", "clean")
 
+# Trade portfolio pipeline (securities / אחזקות snapshot workbooks — not balance pivots)
+trade_portfolio_inbox_dir = _data("pipeline", "trade_portfolio", "inbox")
+
 # Transactions pipeline (everything that is not classified as holdings)
 transactions_inbox_dir = _data("pipeline", "transactions", "inbox")
 transactions_raw_dir = _data("pipeline", "transactions", "raw")

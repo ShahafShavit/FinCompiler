@@ -85,6 +85,10 @@ def register_routes(app: FastAPI) -> None:
     async def redirect_holdings() -> RedirectResponse:
         return RedirectResponse("/holdings/", status_code=302)
 
+    @r.get("/portfolio", include_in_schema=False)
+    async def redirect_portfolio() -> RedirectResponse:
+        return RedirectResponse("/portfolio/", status_code=302)
+
     cat = APIRouter()
 
     @cat.get("/api/summary", include_in_schema=False)
@@ -538,6 +542,70 @@ def register_routes(app: FastAPI) -> None:
                     {"ok": False, "error": "invalid_request", "message": str(e)}
                 ),
                 status_code=400,
+                media_type="application/json; charset=utf-8",
+            )
+
+    @r.get("/api/portfolio/meta", include_in_schema=False)
+    async def portfolio_meta() -> Response:
+        from pipeline.trade_portfolio_queries import get_trade_portfolio_meta
+
+        try:
+            payload = get_trade_portfolio_meta(config.ledger_db_file)
+        except Exception:  # noqa: BLE001
+            log.exception("GET /api/portfolio/meta failed")
+            payload = {
+                "ok": False,
+                "ledger_exists": False,
+                "error": "server_error",
+                "instruments": [],
+                "portfolio_accounts": [],
+            }
+        return Response(
+            content=json_bytes_strict(payload),
+            media_type="application/json; charset=utf-8",
+        )
+
+    @r.get("/api/portfolio/timeseries", include_in_schema=False)
+    async def portfolio_timeseries(request: Request) -> Response:
+        from urllib.parse import parse_qs, urlparse
+
+        from pipeline.trade_portfolio_queries import query_trade_portfolio_timeseries
+
+        parsed = urlparse(str(request.url))
+        qs = parse_qs(parsed.query, keep_blank_values=False)
+        from_date = (qs.get("from") or [None])[0]
+        to_date = (qs.get("to") or [None])[0]
+        account = (qs.get("account") or [None])[0]
+        metric = (qs.get("metric") or [None])[0]
+        series_params = [str(x) for x in (qs.get("series") or []) if str(x).strip()]
+        try:
+            payload = query_trade_portfolio_timeseries(
+                config.ledger_db_file,
+                start_date=str(from_date).strip() if from_date else None,
+                end_date=str(to_date).strip() if to_date else None,
+                portfolio_account=str(account).strip() if account else None,
+                metric=str(metric).strip() if metric else None,
+                series_ids=series_params if series_params else None,
+            )
+            return Response(
+                content=json_bytes_strict(payload),
+                media_type="application/json; charset=utf-8",
+            )
+        except ValueError as e:
+            return Response(
+                content=json_bytes_strict(
+                    {"ok": False, "error": "invalid_request", "message": str(e)}
+                ),
+                status_code=400,
+                media_type="application/json; charset=utf-8",
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("GET /api/portfolio/timeseries failed")
+            return Response(
+                content=json_bytes_strict(
+                    {"ok": False, "error": "server_error", "message": "query failed"}
+                ),
+                status_code=500,
                 media_type="application/json; charset=utf-8",
             )
 

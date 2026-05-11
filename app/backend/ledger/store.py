@@ -19,6 +19,8 @@ merge duplicate rows.
 **v14** — ``excluded_from_calculations`` (0/1): rows set to 1 are kept in the DB but omitted from
 heatmap, dashboard aggregates, categorize queue, and integrity anomaly checks.
 
+**v15** — ``trade_portfolio_position``: securities snapshot lines (SpreadsheetML trade-portfolio exports).
+
 Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile upsert implements MIG-E2.
 """
 from __future__ import annotations
@@ -687,6 +689,34 @@ def migrate_ledger_db(db_path: str | None = None) -> None:
                 _recreate_v_ledger_uncategorized_view(conn)
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (14, 'ledger_excluded_from_calculations')"
+            )
+            ver = _current_schema_version(conn)
+            if ver < 15:
+                conn.executescript(
+                    """
+CREATE TABLE IF NOT EXISTS trade_portfolio_position (
+    snapshot_date       TEXT NOT NULL CHECK (date(snapshot_date) = snapshot_date),
+    portfolio_account   TEXT NOT NULL,
+    security_number     TEXT NOT NULL,
+    security_name       TEXT,
+    avg_purchase_price  REAL,
+    quantity            REAL,
+    last_price          REAL,
+    value_ils           REAL,
+    daily_change_pct    REAL,
+    profit_pct          REAL,
+    profit_ils          REAL,
+    pct_of_portfolio    REAL,
+    basis_price         REAL,
+    imported_at         TEXT NOT NULL CHECK (datetime(imported_at) IS NOT NULL),
+    PRIMARY KEY (snapshot_date, portfolio_account, security_number)
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_trade_portfolio_snapshot ON trade_portfolio_position (snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_trade_portfolio_account ON trade_portfolio_position (portfolio_account);
+"""
+                )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (15, 'add_trade_portfolio_position')"
             )
             conn.commit()
         finally:

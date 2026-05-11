@@ -18,6 +18,7 @@ type ControlConfig = { categorize_url_hint?: string };
 type PipelineOptions = {
   download_enabled: boolean;
   fetch_holdings: boolean;
+  fetch_trade_portfolio: boolean;
   fetch_max_isracard: boolean;
   fetch_bank_credit: boolean;
   fetch_bank_osh: boolean;
@@ -26,6 +27,7 @@ type PipelineOptions = {
   route_inbox: boolean;
   process_holdings: boolean;
   process_transactions: boolean;
+  process_trade_portfolio: boolean;
   backup_first: boolean;
   auto_categorize: boolean;
 };
@@ -37,12 +39,14 @@ export default function Pipeline() {
   const [dlM, setDlM] = useState(false);
   const [dlBc, setDlBc] = useState(false);
   const [dlOsh, setDlOsh] = useState(false);
+  const [dlTp, setDlTp] = useState(false);
   const [fromD, setFromD] = useState('');
   const [toD, setToD] = useState('');
   const dlPrimedRef = useRef(false);
   const [route, setRoute] = useState(true);
   const [procH, setProcH] = useState(false);
   const [procT, setProcT] = useState(false);
+  const [ingestTp, setIngestTp] = useState(false);
   const [backup, setBackup] = useState(false);
   const [auto, setAuto] = useState(false);
 
@@ -69,7 +73,7 @@ export default function Pipeline() {
 
   // Derived dependencies (mirrors `syncPipelineDeps` from the legacy HTML page).
   const dlChildrenDisabled = !dl;
-  const backupDisabled = !(procT || procH);
+  const backupDisabled = !(procT || procH || ingestTp);
   const autoDisabled = !procT;
   const routeForcedOn = procH || procT;
 
@@ -280,13 +284,16 @@ export default function Pipeline() {
   }
 
   async function runPipeline() {
-    if (!dl && !route && !procH && !procT) {
-      setStatusText('Choose at least one step (download, route, or a compile option).');
+    if (!dl && !route && !procH && !procT && !ingestTp) {
+      setStatusText(
+        'Choose at least one step (download, route, or a compile option).',
+      );
       return;
     }
     const opts: PipelineOptions = {
       download_enabled: dl,
       fetch_holdings: dlH,
+      fetch_trade_portfolio: dlTp,
       fetch_max_isracard: dlM,
       fetch_bank_credit: dlBc,
       fetch_bank_osh: dlOsh,
@@ -295,6 +302,7 @@ export default function Pipeline() {
       route_inbox: route,
       process_holdings: procH,
       process_transactions: procT,
+      process_trade_portfolio: ingestTp,
       backup_first: backup,
       auto_categorize: auto,
     };
@@ -322,8 +330,8 @@ export default function Pipeline() {
         <h2>Pipeline</h2>
         <p className="hint">
           Check what this run should do, then click <strong>Run pipeline</strong>. Order is always:
-          optional downloads → optional route → compile holdings (if checked) → compile transactions
-          (if checked).
+          optional downloads → optional route → compile portfolio (if checked) → compile holdings (if
+          checked) → compile transactions (if checked).
         </p>
 
         <label className="pipe-row">
@@ -367,6 +375,15 @@ export default function Pipeline() {
               onChange={(e) => setDlOsh(e.target.checked)}
             />{' '}
             Leumi account (osh)
+          </label>
+          <label className="pipe-row">
+            <input
+              type="checkbox"
+              checked={dlTp}
+              disabled={dlChildrenDisabled}
+              onChange={(e) => setDlTp(e.target.checked)}
+            />{' '}
+            Leumi LTI trade portfolio (Excel)
           </label>
           <div className="pipe-grid2" style={{ marginTop: '0.5rem' }}>
             <div>
@@ -415,6 +432,15 @@ export default function Pipeline() {
           Automatically stays on when you compile (so new downloads reach the right pipeline
           folders).
         </p>
+
+        <label className="pipe-row">
+          <input
+            type="checkbox"
+            checked={ingestTp}
+            onChange={(e) => setIngestTp(e.target.checked)}
+          />
+          <strong>Compile portfolio</strong> → <code>data/ledger.sqlite</code> (trade_portfolio_position)
+        </label>
 
         <label className="pipe-row">
           <input type="checkbox" checked={procH} onChange={(e) => setProcH(e.target.checked)} />

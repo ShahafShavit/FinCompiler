@@ -1,0 +1,281 @@
+
+        <?xml version="1.0"?>
+        <?mso-application progid="Excel.Sheet"?>
+        <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+        xmlns:o="urn:schemas-microsoft-com:office:office"
+        xmlns:x="urn:schemas-microsoft-com:office:excel"
+        xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+        xmlns:html="http://www.w3.org/TR/REC-html40">
+         <ExcelWorkbook xmlns="urn:schemas-microsoft-com:office:excel">
+          <ProtectStructure>False</ProtectStructure>
+          <ProtectWindows>False</ProtectWindows>
+         </ExcelWorkbook>
+          
+            <Styles>
+                <Style ss:ID="Default" ss:Name="Normal">
+                <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>
+                <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#000000"/>
+                <Borders/>
+                </Style>
+                    <Style ss:ID="titleTbl">
+                        <Alignment ss:Horizontal="Right" ss:Vertical="Bottom" ss:WrapText="0"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="12" ss:Color="#000155" ss:Bold="1"/>
+                    </Style>
+                    <Style ss:ID="titleTblCenter">
+                    <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>
+                    <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="12" ss:Color="#000155" ss:Bold="1"/>
+                </Style>
+                    <Style ss:ID="noDataTbl">
+                    <Alignment ss:Horizontal="Right" ss:Vertical="Bottom" ss:WrapText="1"/>
+                    <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#000155" ss:Bold="1"/>
+                </Style>
+                    <Style ss:ID="titleTblNoWrap">
+                    <Alignment ss:Horizontal="Right" ss:Vertical="Bottom" ss:WrapText="0"/>
+                    <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="12" ss:Color="#000155" ss:Bold="1"/>
+                </Style>
+                <Style ss:ID="subTitleRightNoWrap">
+                <Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="0"/>
+                <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#000000"/>
+               </Style>
+               <Style ss:ID="subTitleRightNoWrapBold">
+                        <Alignment ss:Horizontal="Right" ss:Vertical="Bottom" ss:WrapText="1"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#000155" ss:Bold="1"/>
+                    </Style>
+                    <Style ss:ID="subTitleRight">
+                    <Alignment ss:Horizontal="Right" ss:Vertical="Bottom" ss:WrapText="0"/>
+                    <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#000000"/>
+                   </Style>
+                   <Style ss:ID="subTitleLeft">
+                        <Alignment ss:Horizontal="Left" ss:Vertical="Bottom" ss:WrapText="0"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#000000"/>
+                    </Style>
+                    <Style ss:ID="subTitleRightBold">
+                        <Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="0"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#000000" ss:Bold="1"/>
+                    </Style>                 
+                    <Style ss:ID="subTitleLeftBold">
+                        <Alignment ss:Horizontal="Left" ss:Vertical="Center" ss:WrapText="0"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#000000" ss:Bold="1"/>
+                    </Style>
+                    <Style ss:ID="titleRight">
+                        <Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="0"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#FFFFFF"/>
+                        <Interior ss:Color="#000155" ss:Pattern="Solid"/>
+                    </Style>
+                    <Style ss:ID="titleCenter">
+                        <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="0"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#FFFFFF"/>
+                        <Interior ss:Color="#000155" ss:Pattern="Solid"/>
+                    </Style>
+                    <Style ss:ID="txtLeft">
+                        <Alignment ss:Horizontal="Left" ss:Vertical="Bottom" />
+                        <Borders>
+                       <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                       <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                       <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                       <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                   </Borders>
+                    </Style>
+                    <Style ss:ID="txtRight">
+                        <Alignment ss:Horizontal="Right" ss:Vertical="Bottom" />
+                        <Borders>
+                       <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                       <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                       <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                       <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                   </Borders>
+                    </Style>
+                    <Style ss:ID="subTitleLeftBorder">
+                    <Alignment ss:Horizontal="Left" ss:Vertical="Center" ss:WrapText="0"/>
+                    <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#000000" ss:Bold="1"/>
+                    <Borders>
+                       <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                       <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                       <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                       <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                   </Borders>
+                  </Style>
+                  <Style ss:ID="subTitleRightBorder">
+                  <Alignment ss:Horizontal="Right" ss:Vertical="Center" ss:WrapText="0"/>
+                  <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="11" ss:Color="#000000" ss:Bold="1"/>
+                  <Borders>
+                     <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                     <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                     <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                     <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                 </Borders>
+                </Style>
+                    <Style ss:ID="numberBlack">
+                        <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="0"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#00000"/>
+                        <NumberFormat ss:Format="#,###;@"/>
+                        <Borders>
+                            <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        </Borders>
+                    </Style>
+                    <Style ss:ID="numberFloatBlack">
+                    <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="0"/>
+                    <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#00000"/>
+                    <NumberFormat ss:Format="#,###.00??????"/>
+                    <Borders>
+                        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                    </Borders>
+                </Style>
+                    <Style ss:ID="numberZeroBlack">
+                    <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="0"/>
+                    <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#00000"/>
+                    <NumberFormat ss:Format="Standard"/>
+                    <Borders>
+                        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                    </Borders>
+                </Style>
+                <Style ss:ID="numberZeroFloatBlack">
+                <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="0"/>
+                <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#00000"/>
+                <NumberFormat ss:Format="0.00??????"/>
+                <Borders>
+                    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                </Borders>
+            </Style>
+                    <Style ss:ID="stringBlack">
+                        <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="0"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#00000"/>
+                        <Borders>
+                            <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        </Borders>
+                    </Style>
+                    <Style ss:ID="numberNegative">
+                        <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#D62161"/>
+                        <NumberFormat ss:Format="Standard"/>
+                        <Borders>
+                            <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        </Borders>
+                    </Style>
+                    <Style ss:ID="numberPositive">
+                        <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#008000"/>
+                        <NumberFormat ss:Format="Standard"/>
+                        <Borders>
+                            <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        </Borders>
+                    </Style>
+                    <Style ss:ID="numberNegativePercent">
+                       <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#D62161"/>
+                        <NumberFormat ss:Format="Percent"/>
+                        <Borders>
+                            <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        </Borders>
+                    </Style>
+                    <Style ss:ID="numberPositivePercent">
+                        <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="1"/>
+                        <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#008000"/>
+                        <NumberFormat ss:Format="Percent"/>
+                        <Borders>
+                            <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                            <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        </Borders>
+                    </Style>
+                    <Style ss:ID="numberZeroPercent">
+                    <Alignment ss:Horizontal="Center" ss:Vertical="Bottom" ss:WrapText="0"/>
+                    <Font ss:FontName="Arial" x:Family="Swiss" ss:Size="9" ss:Color="#000000"/>
+                    <NumberFormat ss:Format="Percent"/>
+                    <Borders>
+                        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                    </Borders>
+                </Style>
+                    <Style ss:ID="dateTime">
+                     <NumberFormat ss:Format="General Date"/>
+                     <Borders>
+                        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#000000"/>
+                    </Borders>
+                   </Style>
+           </Styles>
+        
+         <Worksheet ss:Name="Sheet1" ss:RightToLeft="1">
+          <Table x:FullColumns="1" x:FullRows="1" ss:DefaultColumnWidth="0" ss:DefaultRowHeight="0"><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Column ss:Width="200"/><Row ss:AutoFitHeight="0" ss:Height="15">
+            <Cell ss:StyleID="titleTbl"><Data  ss:Type="String">מבט אישי - האחזקות שלי</Data></Cell></Row><Row ss:AutoFitHeight="0" ss:Height="15">
+       <Cell ss:StyleID="subTitleRightBold"><Data ss:Type="String">תאריך:</Data></Cell>
+       <Cell ss:StyleID="subTitleRight"><Data ss:Type="String">01.01.26</Data></Cell>
+       <Cell ss:StyleID="subTitleRightBold"><Data  ss:Type="String">תיק:</Data></Cell>
+       <Cell ss:StyleID="subTitleRight"><Data  ss:Type="String">123-123123/12</Data></Cell>
+       </Row><Row ss:AutoFitHeight="0" ss:Height="15">
+            <Cell ss:StyleID="subTitleRightBold"><Data  ss:Type="String">מס' ניירות:</Data></Cell>
+            <Cell ss:StyleID="subTitleRight"><Data  ss:Type="String">8</Data></Cell>
+            <Cell ss:StyleID="subTitleRightBold"><Data  ss:Type="String">שווי תיק עדכני ב₪</Data></Cell>
+             <Cell ss:StyleID="subTitleRight"><Data  ss:Type="String">12,123.12</Data></Cell>
+            <Cell ss:StyleID="subTitleRightBold"><Data  ss:Type="String">% שינוי יומי</Data></Cell>
+            <Cell ss:StyleID="subTitleRight"><Data  ss:Type="String">0.40%</Data></Cell>
+            <Cell ss:StyleID="subTitleRightBold"><Data  ss:Type="String">שינוי יומי ב₪</Data></Cell>
+            <Cell ss:StyleID="subTitleRight"><Data  ss:Type="String">12.12</Data></Cell>
+            <Cell ss:StyleID="subTitleRightBold"><Data  ss:Type="String">שינוי מקניה ב₪</Data></Cell>
+            <Cell ss:StyleID="subTitleRight"><Data  ss:Type="String">12,123.12</Data></Cell>
+            <Cell ss:StyleID="subTitleRightBold"><Data  ss:Type="String">תקרת קניה ב₪</Data></Cell>
+            <Cell ss:StyleID="subTitleRight"><Data  ss:Type="String">1,123.12</Data></Cell>
+            </Row><Row ss:AutoFitHeight="0" ss:Height="15">
+                                
+                                
+                                
+                                </Row><Row ss:AutoFitHeight="0" ss:Height="15"><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">מספר נייר</Data>
+                            </Cell><Cell ss:StyleID="titleRight">
+                                <Data ss:Type="String">שם הנייר</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">שער קניה ממוצע</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">כמות אחזקה</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">שער אחרון</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">שווי אחזקה ב ₪</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">% שינוי יומי</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">רווח ב-%</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">רווח ב ₪</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">%  מהתיק</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">שער בסיס</Data>
+                            </Cell><Cell ss:StyleID="titleCenter">
+                                <Data ss:Type="String">מס התיק</Data>
+                            </Cell></Row><Row ss:AutoFitHeight="0" ss:Height="15"><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">1231231</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">AABBCCDD</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">12312.12</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">123.12</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">12312.12</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">12312.12</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.0033</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.301</Data></Cell><Cell ss:StyleID="numberPositive"><Data ss:Type="Number">1231.00</Data></Cell><Cell ss:StyleID="numberZeroPercent"><Data ss:Type="Number">0.31370000000000003</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">12312.00</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">123-123123/12</Data></Cell></Row><Row ss:AutoFitHeight="0" ss:Height="15"><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">1231231</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">AAAABBBBCCCCC</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">1231.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">12.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">1231.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">123.12</Data></Cell><Cell ss:StyleID="numberNegativePercent"><Data ss:Type="Number">-0.0265</Data></Cell><Cell ss:StyleID="numberNegativePercent"><Data ss:Type="Number">-0.0641</Data></Cell><Cell ss:StyleID="numberNegative"><Data ss:Type="Number">-12.12</Data></Cell><Cell ss:StyleID="numberZeroPercent"><Data ss:Type="Number">0.0068000000000000005</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">3400.00</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">123-123123/12</Data></Cell></Row><Row ss:AutoFitHeight="0" ss:Height="15"><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">1231233</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">EEEEFFFF</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">100.50</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">9200.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">100.60</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">10000.50</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.0004</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.0008</Data></Cell><Cell ss:StyleID="numberPositive"><Data ss:Type="Number">9.00</Data></Cell><Cell ss:StyleID="numberZeroPercent"><Data ss:Type="Number">0.1436</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">100.50</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">123-123123/12</Data></Cell></Row><Row ss:AutoFitHeight="0" ss:Height="15"><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">1231234</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">GGGGHHHHIIII</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">130.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">230.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">187.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">430.00</Data></Cell><Cell ss:StyleID="numberBlack"><Data ss:Type="Number"></Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.4341</Data></Cell><Cell ss:StyleID="numberPositive"><Data ss:Type="Number">130.00</Data></Cell><Cell ss:StyleID="numberZeroPercent"><Data ss:Type="Number">0.0062</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">187.00</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">123-123123/12</Data></Cell></Row><Row ss:AutoFitHeight="0" ss:Height="15"><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">1231235</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">(JJJJ) KKKK</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">31.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">16.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">128.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">5950.00</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.023700000000000002</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">3.0882</Data></Cell><Cell ss:StyleID="numberPositive"><Data ss:Type="Number">4500.00</Data></Cell><Cell ss:StyleID="numberZeroPercent"><Data ss:Type="Number">0.08539999999999999</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">125.00</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">123-123123/12</Data></Cell></Row><Row ss:AutoFitHeight="0" ss:Height="15"><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">1231236</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">(LLLL) MMMM</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">13.30</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">15.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">14.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">607.00</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.08539999999999999</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.047400000000000005</Data></Cell><Cell ss:StyleID="numberPositive"><Data ss:Type="Number">27.50</Data></Cell><Cell ss:StyleID="numberZeroPercent"><Data ss:Type="Number">0.0087</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">12.80</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">123-123123/12</Data></Cell></Row><Row ss:AutoFitHeight="0" ss:Height="15"><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">1231237</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">(NNNN) OOOO</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">439.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">13.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">738.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">27920.00</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.0008</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.6829999999999999</Data></Cell><Cell ss:StyleID="numberPositive"><Data ss:Type="Number">11330.00</Data></Cell><Cell ss:StyleID="numberZeroPercent"><Data ss:Type="Number">0.4006</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">738.00</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">123-123123/12</Data></Cell></Row><Row ss:AutoFitHeight="0" ss:Height="15"><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">1231238</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">(PPPP QQQQ) RRRR</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">48.50</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">6.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">140.00</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">2437.00</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">0.0028000000000000004</Data></Cell><Cell ss:StyleID="numberPositivePercent"><Data ss:Type="Number">1.8822999999999999</Data></Cell><Cell ss:StyleID="numberPositive"><Data ss:Type="Number">1591.00</Data></Cell><Cell ss:StyleID="numberZeroPercent"><Data ss:Type="Number">0.035</Data></Cell><Cell ss:StyleID="numberFloatBlack"><Data ss:Type="Number">139.00</Data></Cell><Cell ss:StyleID="stringBlack"> <Data ss:Type="String">123-123123/12</Data></Cell></Row></Table>
+          <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+           <ZeroHeight/>
+           <Selected/>
+           <DisplayRightToLeft/>
+           <AutoFit />
+          </WorksheetOptions>
+         </Worksheet>
+        </Workbook>
+        

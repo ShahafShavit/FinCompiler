@@ -8,6 +8,7 @@ import DataIntegrity from './pages/DataIntegrity';
 import Heatmap from './pages/Heatmap';
 import HeatmapDetail from './pages/HeatmapDetail';
 import Holdings from './pages/Holdings';
+import Portfolio from './pages/Portfolio';
 import Pipeline from './pages/Pipeline';
 import Settings from './pages/Settings';
 
@@ -54,6 +55,8 @@ export default function App() {
           <Route path="/categorize/" element={<Categorize />} />
           <Route path="/holdings" element={<Navigate to="/holdings/" replace />} />
           <Route path="/holdings/" element={<Holdings />} />
+          <Route path="/portfolio" element={<Navigate to="/portfolio/" replace />} />
+          <Route path="/portfolio/" element={<Portfolio />} />
           <Route path="/heatmap/index.html" element={<Navigate to="/heatmap" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

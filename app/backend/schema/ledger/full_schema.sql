@@ -41,6 +41,7 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (11, 'fingerprint
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (12, 'fingerprint_iso_date_parse_match_compiler');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (13, 'drop_similar_category_pair');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (14, 'ledger_excluded_from_calculations');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (15, 'add_trade_portfolio_position');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -160,6 +161,32 @@ CREATE TABLE IF NOT EXISTS holdings_balance (
 
 CREATE INDEX IF NOT EXISTS idx_holdings_balance_date ON holdings_balance (as_of_date);
 CREATE INDEX IF NOT EXISTS idx_holdings_balance_type ON holdings_balance (activity_type);
+
+-- -----------------------------------------------------------------------------
+-- Trade portfolio (securities snapshot exports; often SpreadsheetML .xls)
+-- -----------------------------------------------------------------------------
+-- One row per position per snapshot. Percents stored as fractions (e.g. 0.0033).
+-- Identity: (snapshot_date, portfolio_account, security_number).
+CREATE TABLE IF NOT EXISTS trade_portfolio_position (
+    snapshot_date       TEXT NOT NULL CHECK (date(snapshot_date) = snapshot_date),
+    portfolio_account   TEXT NOT NULL,
+    security_number     TEXT NOT NULL,
+    security_name       TEXT,
+    avg_purchase_price  REAL,
+    quantity            REAL,
+    last_price          REAL,
+    value_ils           REAL,
+    daily_change_pct    REAL,
+    profit_pct          REAL,
+    profit_ils          REAL,
+    pct_of_portfolio    REAL,
+    basis_price         REAL,
+    imported_at         TEXT NOT NULL CHECK (datetime(imported_at) IS NOT NULL),
+    PRIMARY KEY (snapshot_date, portfolio_account, security_number)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_trade_portfolio_snapshot ON trade_portfolio_position (snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_trade_portfolio_account ON trade_portfolio_position (portfolio_account);
 
 -- =============================================================================
 -- Triggers: timestamps (evaluation Section 13.9)

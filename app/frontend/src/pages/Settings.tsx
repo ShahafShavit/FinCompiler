@@ -15,6 +15,7 @@ type ProvidersApi = {
   version: number;
   bank: { provider: string; credentials: CredApi };
   credit_cards: Array<{ id: string; enabled: boolean; credentials: CredApi }>;
+  investment_portfolio?: { enabled: boolean };
   google_sheets: { service_account_json_path: string; worksheet_id: string };
   providers_file?: string;
 };
@@ -98,6 +99,7 @@ export default function Settings() {
 
   const [gPath, setGPath] = useState('');
   const [gSheet, setGSheet] = useState('');
+  const [invPortEn, setInvPortEn] = useState(true);
 
   const [dropRulesRows, setDropRulesRows] = useState<DropRuleRow[]>([]);
   const [dropRulesAdvancedJson, setDropRulesAdvancedJson] = useState('');
@@ -144,6 +146,7 @@ export default function Settings() {
       setIsrLast6('');
       setGPath(data.google_sheets.service_account_json_path || '');
       setGSheet(data.google_sheets.worksheet_id || '');
+      setInvPortEn(data.investment_portfolio?.enabled ?? true);
 
       setDropRulesErr(null);
       setDropRulesMsg(null);
@@ -215,6 +218,7 @@ export default function Settings() {
         service_account_json_path: gPath,
         worksheet_id: gSheet,
       },
+      investment_portfolio: { enabled: invPortEn },
     };
 
     const r = await putJson<{ ok?: boolean; error?: string; message?: string; config?: ProvidersApi }>(
@@ -413,6 +417,10 @@ export default function Settings() {
             onChange={(e) => setBankPass(e.target.value)}
             placeholder="leave blank to keep"
           />
+        </label>
+        <label className="pipe-row">
+          <input type="checkbox" checked={invPortEn} onChange={(e) => setInvPortEn(e.target.checked)} />
+          <span>Enable LTI trade portfolio fetch (uses same bank login; separate browser session from holdings)</span>
         </label>
       </section>
 
