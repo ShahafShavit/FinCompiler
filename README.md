@@ -62,7 +62,7 @@
 
 **Repository layout**
 
-- **`app/backend`** — `pipeline`, `categorization`, `api`, [`config.py`](app/backend/config.py), [`logger.py`](app/backend/logger.py), [`schema`](app/backend/schema), [`scripts`](app/backend/scripts). See [docs/backend-imports.md](docs/backend-imports.md) for `PYTHONPATH` and layer boundaries.
+- **`app/backend`** — `pipeline`, `api` (includes categorization), [`config.py`](app/backend/config.py), [`logger.py`](app/backend/logger.py), [`schema`](app/backend/schema), [`scripts`](app/backend/scripts). See [docs/backend-imports.md](docs/backend-imports.md) for `PYTHONPATH` and layer boundaries.
 - **`app/frontend`** — Vite + React + TypeScript ([frontend README](app/frontend/README.md)).
 
 Optional portal fetch and Sheets-related flows use **`config`** / **`pipeline`** and secrets in **`.env`** (start from **`.env.example`**).

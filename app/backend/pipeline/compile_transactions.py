@@ -149,7 +149,7 @@ def compile_transactions_main(
         sink=sink,
     )
     if run_auto_categorize:
-        from categorization.categorizer import CategorizeFile
+        from api.categorize import CategorizeFile
 
         _notify("CATEGORIZE: auto pass on ledger", sink)
         categorizer = CategorizeFile(ledger_db_path=config.ledger_db_file)

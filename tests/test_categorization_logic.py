@@ -1,5 +1,5 @@
 """
-Automated tests for categorize_storename() branches (mock UI, temp files).
+Automated tests for categorization (auto pass, web-queue prompt/apply, temp files).
 
 Run from repo root:
   python -m unittest tests.test_categorization_logic -v
@@ -20,8 +20,8 @@ import numpy as np
 import pandas as pd
 
 import config
-from categorization.categorizer import CategorizeFile
-from categorization.interactive.prompts import (
+from api.categorize import (
+    CategorizeFile,
     FluidStorePrompt,
     NewStorePrompt,
     ResolveStaticPrompt,
@@ -50,24 +50,6 @@ def _minimal_compiled_row(tid="1", store="TestStore", cat=""):
     }
 
 
-class ScriptedHandler:
-    """Returns queued answers for each prompt type (for deterministic tests)."""
-
-    def __init__(self) -> None:
-        self.fluid: list[str] = []
-        self.resolve: list[int] = []
-        self.new_store: list[tuple[str, int]] = []
-
-    def prompt_fluid_store(self, prompt: FluidStorePrompt) -> str:
-        return self.fluid.pop(0)
-
-    def prompt_resolve_static(self, prompt: ResolveStaticPrompt) -> int:
-        return self.resolve.pop(0)
-
-    def prompt_new_store(self, prompt: NewStorePrompt) -> tuple[str, int]:
-        return self.new_store.pop(0)
-
-
 class CategorizeStorenameTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -81,13 +63,6 @@ class CategorizeStorenameTests(unittest.TestCase):
     def _write_stores(self, rows: list[dict]) -> None:
         df = pd.DataFrame(rows)
         df.to_csv(self.stores_path, index=False)
-
-    def _cat(self, row: dict, handler: ScriptedHandler) -> str:
-        with patch.object(config, "stores_to_categories_file", self.stores_path):
-            self._write_compiled(row)
-            cf = CategorizeFile(self.compiled_path, interaction_handler=handler)
-            cf.load_stores()
-            return cf.categorize_storename(row, method="input", interaction_handler=handler)
 
     def test_load_stores_creates_missing_file(self) -> None:
         missing = os.path.join(self._tmp.name, "nested", "stores_to_categories.csv")
@@ -104,14 +79,16 @@ class CategorizeStorenameTests(unittest.TestCase):
         self.assertEqual(len(cf.stores_df), 0)
 
     def test_static_store_returns_category_without_prompt(self) -> None:
-        h = ScriptedHandler()
         self._write_stores(
             [{"store_name": "StoreA", "category": "Rent", "is_static": 1}]
         )
         row = _minimal_compiled_row(store="StoreA")
-        out = self._cat(row, h)
+        with patch.object(config, "stores_to_categories_file", self.stores_path):
+            self._write_compiled(row)
+            cf = CategorizeFile(self.compiled_path)
+            cf.load_stores()
+            out = cf.categorize_storename(row, method="auto")
         self.assertEqual(out, "Rent")
-        self.assertFalse(h.fluid and h.resolve and h.new_store)
 
     def test_auto_finds_static_store_not_only_first_row(self) -> None:
         """Regression: auto mode must scan the full stores table, not stop after row 0."""
@@ -124,14 +101,12 @@ class CategorizeStorenameTests(unittest.TestCase):
         row = _minimal_compiled_row(store="TargetStore")
         with patch.object(config, "stores_to_categories_file", self.stores_path):
             self._write_compiled(row)
-            cf = CategorizeFile(self.compiled_path, interaction_handler=ScriptedHandler())
+            cf = CategorizeFile(self.compiled_path)
             cf.load_stores()
             out = cf.categorize_storename(row, method="auto")
         self.assertEqual(out, "Fuel")
 
     def test_fluid_store_picks_existing_dynamic_category(self) -> None:
-        h = ScriptedHandler()
-        h.fluid.append("Food")
         self._write_stores(
             [
                 {"store_name": "FluidShop", "category": "Food", "is_static": 0},
@@ -139,48 +114,68 @@ class CategorizeStorenameTests(unittest.TestCase):
             ]
         )
         row = _minimal_compiled_row(store="FluidShop")
-        out = self._cat(row, h)
-        self.assertEqual(out, "Food")
+        with patch.object(config, "stores_to_categories_file", self.stores_path):
+            self._write_compiled(row)
+            cf = CategorizeFile(self.compiled_path)
+            cf.load_stores()
+            p = cf.build_manual_prompt_for_row(row)
+            self.assertIsInstance(p, FluidStorePrompt)
+            cf.apply_manual_http_response(row, "fluid", {"category": "Food"})
+        out_df = pd.read_csv(self.compiled_path)
+        self.assertEqual(str(out_df.loc[0, "קטגוריה"]), "Food")
 
     def test_fluid_store_adds_new_category_row(self) -> None:
-        h = ScriptedHandler()
-        h.fluid.append("BrandNew")
         self._write_stores(
             [{"store_name": "FluidOnly", "category": "Old", "is_static": 0}],
         )
         row = _minimal_compiled_row(store="FluidOnly")
-        out = self._cat(row, h)
-        self.assertEqual(out, "BrandNew")
+        with patch.object(config, "stores_to_categories_file", self.stores_path):
+            self._write_compiled(row)
+            cf = CategorizeFile(self.compiled_path)
+            cf.load_stores()
+            cf.apply_manual_http_response(row, "fluid", {"category": "BrandNew"})
         after = pd.read_csv(self.stores_path)
         self.assertGreaterEqual(len(after), 2)
         match = after[after["store_name"] == "FluidOnly"]
         self.assertIn("BrandNew", match["category"].tolist())
+        out_df = pd.read_csv(self.compiled_path)
+        self.assertEqual(str(out_df.loc[0, "קטגוריה"]), "BrandNew")
 
     def test_new_store_prompt_adds_row(self) -> None:
-        h = ScriptedHandler()
-        h.new_store.append(("Groceries", 1))
         self._write_stores(
             [{"store_name": "Other", "category": "X", "is_static": 1}],
         )
         row = _minimal_compiled_row(store="UnknownShop")
-        out = self._cat(row, h)
-        self.assertEqual(out, "Groceries")
+        with patch.object(config, "stores_to_categories_file", self.stores_path):
+            self._write_compiled(row)
+            cf = CategorizeFile(self.compiled_path)
+            cf.load_stores()
+            p = cf.build_manual_prompt_for_row(row)
+            self.assertIsInstance(p, NewStorePrompt)
+            cf.apply_manual_http_response(row, "new_store", {"category": "Groceries", "is_static": 1})
         after = pd.read_csv(self.stores_path)
         row_new = after[after["store_name"] == "UnknownShop"]
         self.assertEqual(len(row_new), 1)
         self.assertEqual(int(row_new["is_static"].iloc[0]), 1)
+        out_df = pd.read_csv(self.compiled_path)
+        self.assertEqual(str(out_df.loc[0, "קטגוריה"]), "Groceries")
 
     def test_resolve_ambiguous_is_static(self) -> None:
-        h = ScriptedHandler()
-        h.resolve.append(1)
         self._write_stores(
             [{"store_name": "Weird", "category": "Misc", "is_static": -1}],
         )
         row = _minimal_compiled_row(store="Weird")
-        out = self._cat(row, h)
-        self.assertEqual(out, "Misc")
+        with patch.object(config, "stores_to_categories_file", self.stores_path):
+            self._write_compiled(row)
+            cf = CategorizeFile(self.compiled_path)
+            cf.load_stores()
+            p = cf.build_manual_prompt_for_row(row)
+            self.assertIsInstance(p, ResolveStaticPrompt)
+            cf.apply_manual_http_response(row, "resolve_static", {"is_static": 1})
         after = pd.read_csv(self.stores_path)
         self.assertEqual(int(after.loc[after["store_name"] == "Weird", "is_static"].iloc[0]), 1)
+        out_df = pd.read_csv(self.compiled_path)
+        self.assertEqual(str(out_df.loc[0, "קטגוריה"]), "Misc")
 
     def test_auto_categorize_does_not_read_fingerprint_sidecar_when_ledger_file_exists(self) -> None:
         """MIG-E3: CSV-mode categorizer must not touch fingerprint_db.csv if ledger.sqlite exists."""
@@ -249,4 +244,3 @@ class FluidPromptSerializationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

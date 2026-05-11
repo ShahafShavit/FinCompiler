@@ -80,9 +80,7 @@ class Logger:
     _instance = None
     _lock = threading.Lock()
 
-    PROCESS_NAME_MAP = {
-        "fix_null_category": "FIX NULL CATEGORY",
-    }
+    PROCESS_NAME_MAP: dict[str, str] = {}
 
     STYLE_RESET = "\033[0m"
     STYLE_BOLD = "\033[1m"

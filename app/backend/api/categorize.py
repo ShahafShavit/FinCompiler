@@ -1,24 +1,177 @@
+"""Web-driven transaction categorization and ledger/category persistence.
+
+The control server exposes ``/api/*`` queue endpoints (:mod:`api.categorize_queue`). The
+transactions pipeline imports :class:`CategorizeFile` for a post-compile **auto** pass only
+(:meth:`auto_categorize`); manual answers always go through the HTTP queue.
+"""
+
+from __future__ import annotations
+
 import logging
 import os
 import threading
-import uuid
-from typing import Mapping, Optional, Union
+from dataclasses import dataclass
+from typing import Any, Mapping, Optional, Union
 
 import pandas as pd
 
 import config
-from categorization.interactive.prompts import (
-    FluidStorePrompt,
-    NewStorePrompt,
-    ResolveStaticPrompt,
-)
-from categorization.interactive.terminal import TerminalCategorizationHandler
-from categorization import maintenance as _maintenance
-
-category_store_link_backup = _maintenance.category_store_link_backup
 from pipeline.compiler import update_category_in_fingerprint_db
 
 log = logging.getLogger(__name__)
+
+
+def _scalar_for_json(x: Any) -> Any:
+    """Normalize CSV/pandas cell values so :func:`json.dumps` is browser-safe (no numpy types, no NaN)."""
+    if x is None:
+        return None
+    try:
+        import pandas as pd
+
+        if isinstance(x, pd.Timestamp):
+            if x.hour == 0 and x.minute == 0 and x.second == 0 and x.microsecond == 0:
+                return x.strftime("%Y-%m-%d")
+            return x.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+    try:
+        from datetime import date, datetime
+
+        if isinstance(x, datetime):
+            if x.hour == 0 and x.minute == 0 and x.second == 0 and x.microsecond == 0:
+                return x.date().isoformat()
+            return x.isoformat(timespec="seconds")
+        if isinstance(x, date):
+            return x.isoformat()
+    except Exception:
+        pass
+    try:
+        import numpy as np
+
+        if isinstance(x, np.integer):
+            return int(x)
+        if isinstance(x, np.floating):
+            v = float(x)
+            if v != v or v in (float("inf"), float("-inf")):  # nan / inf
+                return None
+            return v
+        if isinstance(x, np.bool_):
+            return bool(x)
+    except Exception:
+        pass
+    try:
+        import pandas as pd
+
+        if isinstance(x, float) and pd.isna(x):
+            return None
+    except Exception:
+        pass
+    if isinstance(x, float) and (x != x or x in (float("inf"), float("-inf"))):
+        return None
+    try:
+        import pandas as pd
+
+        if pd.isna(x) and not isinstance(x, (str, bytes)):
+            return None
+    except Exception:
+        pass
+    try:
+        import json
+
+        json.dumps(x)
+        return x
+    except (TypeError, ValueError):
+        return str(x)
+
+
+@dataclass(frozen=True)
+class FluidStorePrompt:
+    """Existing store with fluid (non-static) categories — pick or type a category."""
+
+    store_name: str
+    date: Any
+    expense: Any
+    income: Any
+    details: Optional[Any]
+    digits: Optional[Any]
+    dynamic_categories: tuple[str, ...]
+    all_categories: tuple[str, ...]
+    transaction_id: str = ""
+    prompt_id: str = ""
+
+    def to_display_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "fluid",
+            "prompt_id": self.prompt_id,
+            "transaction_id": _scalar_for_json(self.transaction_id),
+            "store_name": _scalar_for_json(self.store_name),
+            "date": _scalar_for_json(self.date),
+            "expense": _scalar_for_json(self.expense),
+            "income": _scalar_for_json(self.income),
+            "details": _scalar_for_json(self.details),
+            "digits": _scalar_for_json(self.digits),
+            "dynamic_categories": list(self.dynamic_categories),
+            "all_categories": list(self.all_categories),
+        }
+
+
+@dataclass(frozen=True)
+class ResolveStaticPrompt:
+    """Ambiguous is_static flag on a store row — user picks 0 (fluid) or 1 (static)."""
+
+    store_name: str
+    category: str
+    date: Any
+    expense: Any
+    income: Any
+    details: Optional[Any]
+    digits: Optional[Any]
+    transaction_id: str = ""
+    prompt_id: str = ""
+
+    def to_display_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "resolve_static",
+            "prompt_id": self.prompt_id,
+            "transaction_id": _scalar_for_json(self.transaction_id),
+            "store_name": _scalar_for_json(self.store_name),
+            "category": _scalar_for_json(self.category),
+            "date": _scalar_for_json(self.date),
+            "expense": _scalar_for_json(self.expense),
+            "income": _scalar_for_json(self.income),
+            "details": _scalar_for_json(self.details),
+            "digits": _scalar_for_json(self.digits),
+        }
+
+
+@dataclass(frozen=True)
+class NewStorePrompt:
+    """Store not in list — choose category and whether mapping is static or fluid."""
+
+    store_name: str
+    date: Any
+    expense: Any
+    income: Any
+    details: Optional[Any]
+    digits: Optional[Any]
+    all_categories: tuple[str, ...]
+    transaction_id: str = ""
+    prompt_id: str = ""
+
+    def to_display_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "new_store",
+            "prompt_id": self.prompt_id,
+            "transaction_id": _scalar_for_json(self.transaction_id),
+            "store_name": _scalar_for_json(self.store_name),
+            "date": _scalar_for_json(self.date),
+            "expense": _scalar_for_json(self.expense),
+            "income": _scalar_for_json(self.income),
+            "details": _scalar_for_json(self.details),
+            "digits": _scalar_for_json(self.digits),
+            "all_categories": list(self.all_categories),
+        }
+
 
 ManualPrompt = Union[FluidStorePrompt, ResolveStaticPrompt, NewStorePrompt]
 
@@ -97,12 +250,12 @@ class CategorizeFile:
     static (``is_static = 1``), forward-fill runs for **other** uncategorized rows for that store
     only (see :func:`pipeline.ledger.forward_fill_uncategorized_for_store_if_static_sql`).
     """
+
     def __init__(
         self,
         file_path=None,
         *,
         ledger_db_path=None,
-        interaction_handler=None,
         materialize_transactions: bool = True,
     ):
         if ledger_db_path and file_path:
@@ -111,7 +264,6 @@ class CategorizeFile:
             raise ValueError("compiled CSV path or ledger_db_path is required")
         self.stores_df = None
         self._ledger_db_path = ledger_db_path
-        self.interaction = interaction_handler or TerminalCategorizationHandler()
         self._io_lock = threading.Lock()
 
         if ledger_db_path:
@@ -149,7 +301,9 @@ class CategorizeFile:
             self._materialize_transactions = True
 
         if "קטגוריה" not in self.transactions_df.columns:
-            self.transactions_df["קטגוריה"] = pd.Series([""] * len(self.transactions_df), dtype=object, index=self.transactions_df.index)
+            self.transactions_df["קטגוריה"] = pd.Series(
+                [""] * len(self.transactions_df), dtype=object, index=self.transactions_df.index
+            )
         else:
             self.transactions_df["קטגוריה"] = (
                 self.transactions_df["קטגוריה"].map(lambda x: "" if pd.isna(x) else str(x)).astype(object)
@@ -249,7 +403,6 @@ class CategorizeFile:
                 if not fp:
                     raise ValueError("transaction has no fingerprint")
                 update_category_by_fingerprint(self._ledger_db_path, fp, new_category)
-                category_store_link_backup(transaction_id, new_category)
                 prev = (previous_category or "").strip()
                 if prev and prev != new_category:
                     sm = self.stores_df["store_name"] == store_name
@@ -270,7 +423,6 @@ class CategorizeFile:
                     if not self._ledger_db_path:
                         update_category_in_fingerprint_db(fingerprint, new_category)
             self.save_progress()
-            category_store_link_backup(transaction_id, new_category)
             prev = (previous_category or "").strip()
             if prev and prev != new_category:
                 sm = self.stores_df["store_name"] == store_name
@@ -304,100 +456,23 @@ class CategorizeFile:
             self.save_stores()
             self._ledger_forward_fill_uncategorized_if_static(store_name, is_static)
 
-    def categorize_storename(self, row_data, method='auto', interaction_handler=None):
-        store_name: str = row_data['מקור עסקה']
-        transaction_id = stable_transaction_key(row_data)
-        date = row_data['תאריך']
-        expense = row_data['בחובה']
-        income = row_data['בזכות']
-        details = None
-        digits = None
-        if 'תאור מורחב' in row_data.keys():
-            details = row_data['תאור מורחב']
-        if '4 ספרות' in row_data.keys():
-            digits = row_data['4 ספרות']
-
-        if method == 'auto':
-            if self.stores_df is None or self.stores_df.empty:
-                return None
-            # Match any static row for this store (must scan full table; a previous bug returned
-            # after the first row only).
-            match = self.stores_df[
-                (self.stores_df["store_name"] == store_name) & (self.stores_df["is_static"] == 1)
-            ]
-            if match.empty:
-                return None
-            return match["category"].iloc[0]
-        elif method == 'input':
-            h = interaction_handler or self.interaction
-            all_categories = set(self.stores_df['category'].tolist())
-            for _, row in self.stores_df.iterrows():
-                recorded_store, category, is_static = row['store_name'], row['category'], row['is_static']
-                if store_name == recorded_store:
-                    if is_static == 1:
-                        return category
-                    if is_static == 0:
-                        dynamic_categories = self.stores_df[self.stores_df['store_name'] == store_name][
-                            'category'].tolist()
-                        prompt = FluidStorePrompt(
-                            store_name=store_name,
-                            date=date,
-                            expense=expense,
-                            income=income,
-                            details=details,
-                            digits=digits,
-                            dynamic_categories=tuple(dynamic_categories),
-                            all_categories=tuple(sorted(all_categories, key=str)),
-                            transaction_id=transaction_id,
-                            prompt_id=uuid.uuid4().hex,
-                        )
-                        category_input = h.prompt_fluid_store(prompt).strip()
-                        if category_input in dynamic_categories:
-                            return category_input
-                        log.info("New category added to store list for existing fluid store")
-                        new_row = {'store_name': store_name, 'category': category_input, 'is_static': is_static}
-                        self.stores_df.loc[len(self.stores_df)] = new_row
-                        self.save_stores()
-                        return category_input
-                    # is_static is ambiguous (-1 or other)
-                    prompt = ResolveStaticPrompt(
-                        store_name=store_name,
-                        category=category,
-                        date=date,
-                        expense=expense,
-                        income=income,
-                        details=details,
-                        digits=digits,
-                        transaction_id=transaction_id,
-                        prompt_id=uuid.uuid4().hex,
-                    )
-                    is_static_new = h.prompt_resolve_static(prompt)
-                    self.stores_df.loc[self.stores_df['store_name'] == store_name, 'is_static'] = is_static_new
-                    self.save_stores()
-                    return category
-            prompt = NewStorePrompt(
-                store_name=store_name,
-                date=date,
-                expense=expense,
-                income=income,
-                details=details,
-                digits=digits,
-                all_categories=tuple(sorted(all_categories, key=str)),
-                transaction_id=transaction_id,
-                prompt_id=uuid.uuid4().hex,
-            )
-            category_input, is_static_input = h.prompt_new_store(prompt)
-            new_row = {'store_name': store_name, 'category': category_input, 'is_static': int(is_static_input)}
-            self.stores_df.loc[len(self.stores_df)] = new_row
-            self.save_stores()
-            return category_input
+    def categorize_storename(self, row_data, method: str = "auto"):
+        """Return category from static store mapping only (``method`` must be ``\"auto\"``)."""
+        if method != "auto":
+            raise ValueError('only method="auto" is supported; use the web queue for manual categorization')
+        store_name: str = row_data["מקור עסקה"]
+        self.load_stores()
+        if self.stores_df is None or self.stores_df.empty:
+            return None
+        match = self.stores_df[
+            (self.stores_df["store_name"] == store_name) & (self.stores_df["is_static"] == 1)
+        ]
+        if match.empty:
+            return None
+        return match["category"].iloc[0]
 
     def build_manual_prompt_for_row(self, row_data) -> ManualPrompt:
-        """
-        Same branching as ``categorize_storename(..., method='input')`` up to the first prompt,
-        but returns the prompt object instead of blocking. ``prompt_id`` is the transaction id
-        so the queue API stays stable across polls.
-        """
+        """Build the next question for ``row_data`` (``prompt_id`` = stable transaction id for the queue API)."""
         self.load_stores()
         store_name = str(row_data["מקור עסקה"])
         transaction_id = stable_transaction_key(row_data)
@@ -411,6 +486,7 @@ class CategorizeFile:
             all_categories: tuple[str, ...] = tuple()
         else:
             all_categories = tuple(sorted(set(self.stores_df["category"].tolist()), key=str))
+
         def _static_flag(s) -> int:
             if s is None or (isinstance(s, float) and pd.isna(s)):
                 return -999
@@ -482,7 +558,6 @@ class CategorizeFile:
                 raise ValueError("transaction has no fingerprint")
             with self._io_lock:
                 update_category_by_fingerprint(self._ledger_db_path, fp, category)
-            category_store_link_backup(transaction_id, category)
             return
 
         row_mask = mask_rows_by_stable_id(self.transactions_df, str(transaction_id))
@@ -495,10 +570,9 @@ class CategorizeFile:
                     if not self._ledger_db_path:
                         update_category_in_fingerprint_db(fingerprint, category)
             self.save_progress()
-        category_store_link_backup(transaction_id, category)
 
     def apply_manual_http_response(self, row_data, kind: str, data: dict) -> None:
-        """Apply one queue answer (first unanswered row only); same side effects as interactive input."""
+        """Apply one queue answer (first unanswered row only)."""
         self.load_stores()
         store_name = str(row_data["מקור עסקה"])
         transaction_id = stable_transaction_key(row_data)
@@ -715,7 +789,7 @@ class CategorizeFile:
 
         k_t = self.load_known_transactions()
         if k_t is None:
-            k_t = pd.DataFrame(columns=['transaction_id', 'category'])
+            k_t = pd.DataFrame(columns=["transaction_id", "category"])
         self.load_stores()
         for index, row in self.transactions_df.iterrows():
             sid = stable_transaction_key(row)
@@ -729,7 +803,6 @@ class CategorizeFile:
                     self._queue_ledger_category(fp, category)
                     progress_dirty = True
                     log.debug("Category from backup for id=%s -> %s", sid, category)
-                    category_store_link_backup(sid, category)
 
             cur = self.transactions_df.loc[index, "קטגוריה"]
             if category_cell_needs_manual(cur):
@@ -743,14 +816,12 @@ class CategorizeFile:
                 if category is not None:
                     if not self._ledger_db_path and "fingerprint" in row.index:
                         update_category_in_fingerprint_db(row["fingerprint"], category)
-                    category_store_link_backup(sid, category)
                 else:
                     if not self._ledger_db_path:
                         self.awaiting_df.loc[len(self.awaiting_df)] = self.transactions_df.loc[index]
             else:
                 if not self._ledger_db_path and "fingerprint" in row.index:
                     update_category_in_fingerprint_db(row["fingerprint"], row["קטגוריה"])
-                category_store_link_backup(sid, row["קטגוריה"])
         if progress_dirty or self._ledger_category_dirty:
             self.save_progress()
         awaiting = len(self.awaiting_df)
@@ -758,71 +829,6 @@ class CategorizeFile:
             log.info("auto_categorize: %s rows still awaiting manual category", awaiting)
         else:
             log.info("auto_categorize: complete (no awaiting rows)")
-
-    def manual_categorizer(self, through="input", interaction_handler=None):
-        if through.lower() != "input":
-            raise ValueError("engine must be 'input'")
-        if self._ledger_db_path:
-            self._manual_categorizer_ledger(through, interaction_handler)
-            return
-
-        log.info("manual_categorizer: engine=%s awaiting rows=%s", through, len(self.awaiting_df))
-        self.load_stores()
-        h = interaction_handler or self.interaction
-        try:
-            for index, row in self.awaiting_df.iterrows():
-                if row['קטגוריה'] == "" or row['קטגוריה'] == "awaiting" or pd.isna(row['קטגוריה']):
-                    category = self.categorize_storename(row, method='input', interaction_handler=h)
-
-                    row_mask = mask_rows_by_stable_id(self.transactions_df, stable_transaction_key(row))
-                    with self._io_lock:
-                        self.transactions_df.loc[row_mask, 'קטגוריה'] = category
-                        if 'fingerprint' in self.transactions_df.columns:
-                            fingerprint = self.transactions_df.loc[row_mask, 'fingerprint'].iloc[0]
-                            if pd.notna(fingerprint):
-                                self._queue_ledger_category(fingerprint, category)
-                                if not self._ledger_db_path:
-                                    update_category_in_fingerprint_db(fingerprint, category)
-                        self.save_progress()
-
-                self.awaiting_df.drop(index=index, inplace=True)
-        finally:
-            closer = getattr(h, "close", None)
-            if callable(closer):
-                closer()
-        log.info("manual_categorizer: loop complete, awaiting_df rows=%s", len(self.awaiting_df))
-
-    def _manual_categorizer_ledger(self, through: str, interaction_handler) -> None:
-        """SQLite: pull next uncategorized row, prompt, ``UPDATE`` — no dataframe staging."""
-        from pipeline.ledger import count_transactions_needing_manual_category
-        from pipeline.ledger import load_first_transaction_needing_manual_category
-        from pipeline.ledger import load_transactions_dataframe_from_ledger
-        from pipeline.ledger import update_category_by_fingerprint
-
-        self.load_stores()
-        h = interaction_handler or self.interaction
-        n_open = count_transactions_needing_manual_category(self._ledger_db_path)
-        log.info("manual_categorizer (ledger): engine=%s rows_needing_category=%s", through, n_open)
-        try:
-            while True:
-                row = load_first_transaction_needing_manual_category(self._ledger_db_path)
-                if row is None:
-                    break
-                category = self.categorize_storename(row, method="input", interaction_handler=h)
-                fp = row.get("fingerprint")
-                if fp is None or (isinstance(fp, float) and pd.isna(fp)) or not str(fp).strip():
-                    log.warning("manual_categorizer: skip row without fingerprint")
-                    continue
-                update_category_by_fingerprint(self._ledger_db_path, str(fp).strip(), category)
-        finally:
-            closer = getattr(h, "close", None)
-            if callable(closer):
-                closer()
-        self.transactions_df = load_transactions_dataframe_from_ledger(self._ledger_db_path)
-        log.info(
-            "manual_categorizer (ledger): complete; remaining=%s",
-            count_transactions_needing_manual_category(self._ledger_db_path),
-        )
 
     def _ledger_forward_fill_uncategorized_if_static(self, store_name: str, is_static: int) -> None:
         """Bulk-fill other uncategorized rows for this store when it is static (never overwrites set categories)."""
@@ -840,11 +846,3 @@ class CategorizeFile:
                 n,
                 store_name,
             )
-
-CategorizeFile.fix_null_category_status = staticmethod(_maintenance.fix_null_category_status)
-CategorizeFile.fix_nan_category = staticmethod(_maintenance.fix_nan_category)
-CategorizeFile.fix_similar_categories_in_file = staticmethod(_maintenance.fix_similar_categories_in_file)
-CategorizeFile.rename_category = staticmethod(_maintenance.rename_category)
-CategorizeFile.category_store_link_backup = staticmethod(_maintenance.category_store_link_backup)
-CategorizeFile.update_store_category = staticmethod(_maintenance.update_store_category)
-CategorizeFile.dupe_seeker = staticmethod(_maintenance.dupe_seeker)

@@ -10,7 +10,6 @@ import pandas as pd
 import tabulate
 from oauth2client.service_account import ServiceAccountCredentials
 import config
-import categorization.categorizer as categorizer
 from pipeline import compiler as compile_handler
 import gspread.utils
 from googleapiclient.discovery import build
@@ -495,7 +494,6 @@ if __name__ == "__main__":
 
     gslink = GSLink(gsh)
     # gslink.update_cloud(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])
-    # categorizer.CategorizeFile.fix_similar_categories_in_file()
     # gslink.sync_check(['Holdings2', 'Totals2'], [config.holdings_file, config.compiled_file])
     # print(tabulate.tabulate(pivoted, headers='keys', showindex=True, tablefmt='plain'))
     # gsh.update_sheet(pivoted, "Monthly Look")

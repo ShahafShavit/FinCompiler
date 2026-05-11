@@ -7,12 +7,12 @@ Run Python with **`PYTHONPATH` including `app/backend`** (repository root as cwd
 
 ## Dependency direction
 
-1. **Delivery** (`api/`) — HTTP only; calls `pipeline`, `categorization`, `providers`, `config`.
+1. **Delivery** (`api/`) — HTTP, JSON handlers, and **categorization** (`api/categorize.py`, `api/categorize_queue.py`); calls `pipeline`, `providers`, `config`.
 2. **Application** (`pipeline/__init__.py` orchestration, `api/jobs.py`) — run steps; no HTTP parsing.
-3. **Domain** (`pipeline/compiler.py`, `categorization/`) — rules and transforms.
+3. **Domain** (`pipeline/compiler.py`, `pipeline/ledger.py`, …) — rules and transforms.
 4. **Infrastructure** — `pipeline/fetch.py` (Selenium), `pipeline/ledger.py` (SQLite), `integrations/`, `providers` (JSON).
 
-Do not import `api` from `pipeline` or `ledger`.
+Avoid importing `api` from `pipeline` **except** `api.categorize` (shared **auto** categorization pass after compile). Do not import `api` from `ledger`.
 
 ## Package map (pipeline)
 

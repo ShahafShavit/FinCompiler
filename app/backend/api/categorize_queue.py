@@ -6,7 +6,7 @@
 next uncategorized row for the UI.
 
 ``/api/respond`` — one ``UPDATE`` for the answered transaction; forward-fill for other empty
-rows for that store runs inside :meth:`categorization.categorizer.CategorizeFile.apply_manual_http_response`
+rows for that store runs inside :meth:`api.categorize.CategorizeFile.apply_manual_http_response`
 when ``is_static = 1``.
 
 ``/api/revise`` — corrections only (no global forward-fill here).
@@ -21,17 +21,12 @@ import threading
 from typing import Any, Optional
 
 import config
-from categorization.categorizer import CategorizeFile, stable_transaction_key
-from categorization.interactive.terminal import TerminalCategorizationHandler
+from api.categorize import CategorizeFile, stable_transaction_key
 from .json_safe import json_bytes_strict
 
 log = logging.getLogger(__name__)
 
 _lock = threading.Lock()
-
-
-def _terminal_handler() -> TerminalCategorizationHandler:
-    return TerminalCategorizationHandler()
 
 
 def _session_categories(cf: CategorizeFile) -> list[str]:
@@ -58,7 +53,6 @@ def _ledger_queue_categorize_file() -> CategorizeFile:
     """Lightweight: stores + SQL helpers only (no full ``ledger_transaction`` dataframe)."""
     return CategorizeFile(
         ledger_db_path=config.ledger_db_file,
-        interaction_handler=_terminal_handler(),
         materialize_transactions=False,
     )
 

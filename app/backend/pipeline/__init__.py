@@ -217,8 +217,7 @@ def run_auto_categorize_with_web_remainder(
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
     """Auto-pass on the SQLite ledger; rows that still need a category are handled in the browser at ``/categorize/``."""
-    from categorization.categorizer import CategorizeFile
-    from categorization.interactive.terminal import TerminalCategorizationHandler
+    from api.categorize import CategorizeFile
 
     from pipeline.ledger import migrate_ledger_db
 
@@ -226,7 +225,6 @@ def run_auto_categorize_with_web_remainder(
     _notify("CATEGORIZE: running auto pass (remaining questions → web app)", sink)
     cf = CategorizeFile(
         ledger_db_path=config.ledger_db_file,
-        interaction_handler=TerminalCategorizationHandler(),
     )
     cf.auto_categorize()
     n = cf.count_rows_needing_category()

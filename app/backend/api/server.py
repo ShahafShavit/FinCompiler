@@ -32,7 +32,7 @@ _JOB_SSE_LOGGERS = [
     "pipeline.workbook_normalize",
     "pipeline.fingerprint",
     "pipeline.compiler",
-    "categorization.categorizer",
+    "api.categorize",
 ]
 
 log = logging.getLogger(__name__)
