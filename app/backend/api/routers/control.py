@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from api import categorize_queue, dashboard, heatmap, integrity, jobs, providers_config, sheets
 from api.utils import (
     StateDep,
+    SPA_INDEX_MISSING_BYTES,
     SPA_ROUTES,
     content_type_for,
     json_bytes_strict,
@@ -30,6 +31,23 @@ from ledger import migrate_ledger_db
 from logger import attach_sink_log_handlers, detach_sink_log_handlers
 
 log = logging.getLogger(__name__)
+
+
+def _spa_index_response() -> Response:
+    body = spa_index_bytes()
+    if body is None:
+        return Response(
+            content=SPA_INDEX_MISSING_BYTES,
+            status_code=503,
+            media_type="text/plain; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
+    return Response(
+        content=body,
+        media_type="text/html; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
+
 
 _JOB_SSE_LOGGERS = [
     "pipeline.fetch",
@@ -652,11 +670,7 @@ def register_routes(app: FastAPI) -> None:
 
     @r.get("/", include_in_schema=False)
     async def spa_root() -> Response:
-        return Response(
-            content=spa_index_bytes(),
-            media_type="text/html; charset=utf-8",
-            headers={"Cache-Control": "no-store"},
-        )
+        return _spa_index_response()
 
     @r.get("/vite.svg", include_in_schema=False)
     @r.get("/favicon.ico", include_in_schema=False)
@@ -675,11 +689,7 @@ def register_routes(app: FastAPI) -> None:
     async def spa_shell_or_404(request: Request, path: str) -> Response:
         p = normalize_http_path("/" + path if path else "/")
         if p in SPA_ROUTES or p == "/index.html":
-            return Response(
-                content=spa_index_bytes(),
-                media_type="text/html; charset=utf-8",
-                headers={"Cache-Control": "no-store"},
-            )
+            return _spa_index_response()
         if (
             p.startswith("/api/")
             or p.startswith("/heatmap/api/")
@@ -688,10 +698,6 @@ def register_routes(app: FastAPI) -> None:
             if "/heatmap" in p:
                 log.warning("control HTTP 404 GET heatmap-like raw=%r path=%r", request.url, p)
             return Response(content=b"Not Found", status_code=404, media_type="text/plain")
-        return Response(
-            content=spa_index_bytes(),
-            media_type="text/html; charset=utf-8",
-            headers={"Cache-Control": "no-store"},
-        )
+        return _spa_index_response()
 
     app.include_router(r)

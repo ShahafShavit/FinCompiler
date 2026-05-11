@@ -159,45 +159,12 @@ _SPA_DIST_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 _SPA_INDEX_FILE = _SPA_DIST_DIR / "index.html"
 _SPA_ASSETS_DIR = _SPA_DIST_DIR / "assets"
 
-_SPA_DEV_FALLBACK = (
-    """<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>finance compiler control — SPA build missing</title>
-  <style>
-    body { font-family: system-ui, Segoe UI, Roboto, sans-serif; background:#121316; color:#e8e8ec;
-           max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem; line-height: 1.5; }
-    code { background:#1c1d22; border:1px solid #2b2c33; padding:0.1rem 0.35rem; border-radius:6px; }
-    a { color:#a5b4fc; }
-    h1 { font-size: 1.2rem; }
-    .card { background:#1c1d22; border:1px solid #2b2c33; border-radius:10px; padding:1rem 1.15rem; margin:1rem 0; }
-  </style>
-</head>
-<body>
-  <h1>SPA bundle not built</h1>
-  <p>The control server expected <code>app/frontend/dist/index.html</code> but it is missing.</p>
-  <div class="card">
-    <strong>Dev:</strong> run the Vite dev server in a second terminal and open
-    <a href="http://127.0.0.1:5173/">http://127.0.0.1:5173/</a>:
-    <pre><code>cd app/frontend
-npm install
-npm run dev</code></pre>
-    Vite proxies <code>/api</code>, <code>/heatmap/api</code>, <code>/categorize</code>,
-    <code>/holdings</code>, and the built SPA assets (see <code>app/frontend/vite.config.ts</code>).
-  </div>
-  <div class="card">
-    <strong>Prod:</strong> build once and reload this page:
-    <pre><code>cd app/frontend
-npm install
-npm run build</code></pre>
-  </div>
-  <p>With <code>PYTHONPATH=app/backend python -m api.main</code> (from repo root) you get APIs and static assets; the UI is the React app (built or Vite dev).</p>
-</body>
-</html>
-"""
-)
+SPA_INDEX_MISSING_BYTES = (
+    "SPA index missing: app/frontend/dist/index.html not found.\n"
+    "Build: cd app/frontend && npm install && npm run build\n"
+    "Dev UI: cd app/frontend && npm run dev (Vite proxies API routes; see app/frontend/vite.config.ts).\n"
+    "APIs still run from this server; only the bundled UI is unavailable until the file exists.\n"
+).encode("utf-8")
 
 SPA_ROUTES: frozenset[str] = frozenset(
     {
@@ -232,10 +199,10 @@ def spa_assets_dir() -> Path:
     return _SPA_ASSETS_DIR
 
 
-def spa_index_bytes() -> bytes:
+def spa_index_bytes() -> bytes | None:
     if _SPA_INDEX_FILE.is_file():
         return _SPA_INDEX_FILE.read_bytes()
-    return _SPA_DEV_FALLBACK.encode("utf-8")
+    return None
 
 
 def safe_subpath(root: Path, rel: str) -> Path | None:
