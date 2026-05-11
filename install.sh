@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Create .venv and install dependencies from requirements.txt.
+# Create .venv, install Python deps (requirements.txt), and frontend deps (npm).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-python -m venv .venv
+# Only create the venv when missing. Re-running `python -m venv` on an existing
+# .venv tries to replace Scripts/python.exe; on Windows that fails with Errno 13
+# if that interpreter is in use or locked.
+if [[ ! -f .venv/Scripts/activate && ! -f .venv/bin/activate ]]; then
+  python -m venv .venv
+fi
 if [[ -f .venv/Scripts/activate ]]; then
   # Git Bash / Windows
   # shellcheck source=/dev/null
@@ -19,4 +24,11 @@ fi
 
 python -m pip install -U pip
 python -m pip install -r requirements.txt
-echo "Done. Activate with: source .venv/Scripts/activate (or .venv\\Scripts\\activate on Windows)"
+
+if [[ -f app/frontend/package.json ]]; then
+  (cd app/frontend && npm install --no-fund --no-audit)
+else
+  echo "Skipping npm install: app/frontend/package.json not found." >&2
+fi
+
+echo "Done. Activate Python venv: source .venv/Scripts/activate (or .venv\\Scripts\\activate on Windows). SPA: cd app/frontend && npm run dev"
