@@ -30,10 +30,10 @@ class BackupManifestTests(unittest.TestCase):
                 os.makedirs(static, exist_ok=True)
                 os.makedirs(private, exist_ok=True)
                 os.makedirs(webdata, exist_ok=True)
-                with open(os.path.join(compiled, "compiled.csv"), "w", encoding="utf-8") as f:
-                    f.write("a,b\n1,2\n")
-                with open(os.path.join(static, "stores_to_categories.csv"), "w", encoding="utf-8") as f:
-                    f.write("store,category\nx,y\n")
+                with open(os.path.join(compiled, "export_marker.txt"), "w", encoding="utf-8") as f:
+                    f.write("ok\n")
+                with open(os.path.join(static, "static_marker.txt"), "w", encoding="utf-8") as f:
+                    f.write("ok\n")
                 with open(os.path.join(private, "providers.json"), "w", encoding="utf-8") as f:
                     f.write('{"version":1}\n')
                 with open(os.path.join(webdata, "placeholder.txt"), "w", encoding="utf-8") as f:
@@ -55,7 +55,7 @@ class BackupManifestTests(unittest.TestCase):
                 self.assertGreaterEqual(int(loaded.get("total_bytes", 0)), 1)
 
                 self.assertTrue(
-                    os.path.isfile(os.path.join(root, "data", "export", "compiled", "compiled.csv"))
+                    os.path.isfile(os.path.join(root, "data", "export", "compiled", "export_marker.txt"))
                 )
             finally:
                 os.environ.pop("FINANCE_WORKSPACE_ROOT", None)

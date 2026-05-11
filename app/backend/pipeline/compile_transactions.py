@@ -83,22 +83,27 @@ def ingest_transactions_inbox(*, sink: Optional[Callable[[str], None]] = None) -
     return paths
 
 
-def csv_from_raw_transactions(
+def pickle_from_raw_transactions(
     *,
     drop_profile: str = "full",
     drop_sources: Optional[Iterable[tuple[str, str]]] = None,
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
-    """Write legacy cleaned CSVs (debug / compatibility). Normal pipeline uses in-memory ingest only."""
+    """Write normalized transaction frames as pickle (``PIPELINE_DEBUG_DUMP=1`` only)."""
     files = glob.glob(os.path.join(config.transactions_raw_dir, "*.xls*"))
-    _notify(f"CSV TRANSACTIONS: {len(files)} workbook(s) -> {config.transactions_clean_dir}", sink)
+    _notify(f"DEBUG TRANSACTIONS: {len(files)} workbook(s) -> {config.transactions_clean_dir} (*.pkl)", sink)
     pairs = transaction_drop_pairs(drop_profile, drop_sources)
+    os.makedirs(config.transactions_clean_dir, exist_ok=True)
     for path in files:
-        f = workbook_normalize.TransactionFile(path)
-        f.drop_columns(TRANSACTION_DROP_COLUMNS)
-        for col, val in pairs:
-            f.drop_by_column_and_value(col, val)
-        f.to_csv(output_clean_dir=config.transactions_clean_dir)
+        df = workbook_normalize.load_transaction_clean_dataframe(
+            path,
+            drop_columns=TRANSACTION_DROP_COLUMNS,
+            drop_sources=pairs,
+        )
+        stem = os.path.splitext(os.path.basename(path))[0]
+        out = os.path.join(config.transactions_clean_dir, f"{stem}_clean.pkl")
+        df.to_pickle(out)
+        log.info("debug dump: wrote %s rows=%s", out, len(df))
 
 
 def ingest_transactions_to_ledger(

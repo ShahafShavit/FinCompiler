@@ -1,11 +1,11 @@
 """
-Regression tests for ledger date parsing (ISO vs regional) after CSV round-trip.
+Regression tests for ledger date parsing (ISO vs regional).
 
 See :func:`pipeline.compiler.parse_post_ingest_date_scalar`: ISO ``YYYY-MM-DD`` uses a fixed
 format; other shapes use ``dayfirst=True`` + ``format=\"mixed\"``.
 
 Historical note: pandas 3.0.x + ``dayfirst=True`` + ``format=\"mixed\"`` on ISO strings could
-swap month/day (see pandas issue #58859). The ISO branch avoids that for normal compiled output.
+swap month/day (see pandas issue #58859). The ISO branch avoids that for normal ledger output.
 """
 
 from __future__ import annotations
@@ -117,13 +117,13 @@ class PipelineDateRoundtripTests(unittest.TestCase):
         parsed = _compile_stage_parse(s)
         self.assertEqual(parsed.strftime("%Y-%m-%d"), "2026-12-01")
 
-    def test_to_csv_read_csv_iso_string_stays_jan_12(self) -> None:
+    def test_pickle_roundtrip_iso_string_stays_jan_12(self) -> None:
         ts = pd.Timestamp("2026-01-12")
         df = pd.DataFrame({"תאריך": [ts]})
-        buf = io.StringIO()
-        df.to_csv(buf, index=False)
+        buf = io.BytesIO()
+        df.to_pickle(buf)
         buf.seek(0)
-        back = pd.read_csv(buf)
+        back = pd.read_pickle(buf)
         cell = back["תאריך"].iloc[0]
         parsed = parse_post_ingest_date_scalar(cell)
         self.assertEqual(parsed.strftime("%Y-%m-%d"), "2026-01-12")

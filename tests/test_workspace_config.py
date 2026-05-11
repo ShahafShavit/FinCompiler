@@ -32,7 +32,7 @@ class WorkspaceRootTests(unittest.TestCase):
         self.assertEqual(root, "")
         # No FINANCE_WORKSPACE_ROOT: paths are normalized but not anchored to another drive
         self.assertIn("data", config_mod.download_inbox_dir.replace("\\", "/"))
-        norm = config_mod.compiled_file.replace("\\", "/")
+        norm = config_mod.export_dir.replace("\\", "/")
         self.assertIn("data/export", norm)
 
     def test_custom_root_prefixes_all_major_paths(self) -> None:
@@ -45,11 +45,10 @@ class WorkspaceRootTests(unittest.TestCase):
                 norm_tmp = os.path.abspath(os.path.normpath(tmp))
                 for path in (
                     config_mod.download_inbox_dir,
-                    config_mod.compiled_file,
+                    config_mod.export_dir,
                     config_mod.ledger_db_file,
                     config_mod.providers_file,
-                    config_mod.stores_to_categories_file,
-                    config_mod.fingerprint_db_file,
+                    config_mod.static_dir,
                     os.path.join(config_mod.web_dir.rstrip(os.sep), "data"),
                     config_mod.backup_parent_dir,
                     config_mod.holdings_inbox_dir,

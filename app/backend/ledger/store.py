@@ -23,7 +23,7 @@ Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile up
 """
 from __future__ import annotations
 
-import csv
+import json
 import logging
 import math
 import os
@@ -1263,7 +1263,7 @@ def load_first_transaction_needing_manual_category(db_path: str) -> pd.Series | 
         conn.close()
     if df.empty:
         return None
-    row = df.iloc[0]
+    row = df.iloc[0].copy()
     if "קטגוריה" in row.index:
         row["קטגוריה"] = "" if pd.isna(row["קטגוריה"]) else str(row["קטגוריה"])
     if "fingerprint" in row.index:
@@ -1290,24 +1290,12 @@ def load_ledger_transaction_by_stable_id(db_path: str, stable_id: str) -> pd.Ser
         conn.close()
     if df.empty:
         return None
-    row = df.iloc[0]
+    row = df.iloc[0].copy()
     if "קטגוריה" in row.index:
         row["קטגוריה"] = "" if pd.isna(row["קטגוריה"]) else str(row["קטגוריה"])
     if "fingerprint" in row.index:
         row["fingerprint"] = "" if pd.isna(row["fingerprint"]) else str(row["fingerprint"])
     return row
-
-
-def export_transactions_dataframe_to_csv(db_path: str, dest_path: str) -> str:
-    """Materialize the ledger to a CSV (e.g. Google Sheets push). Creates parent dirs."""
-    df = load_transactions_dataframe_from_ledger(db_path)
-    parent = os.path.dirname(os.path.abspath(dest_path))
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    out = df.drop(columns=["ingested_at", "statement_month"], errors="ignore")
-    out.to_csv(dest_path, index=False)
-    log.info("Exported %s ledger rows -> %s", len(out), dest_path)
-    return dest_path
 
 
 def load_stores_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
@@ -1670,11 +1658,11 @@ def _coerce_is_static(val: Any) -> int:
     return 1 if i == 1 else 0
 
 
-def load_stores_to_categories_dataframe(csv_path: str) -> pd.DataFrame:
-    df = pd.read_csv(csv_path)
+def normalize_stores_to_categories_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate and normalize store/category columns (same rules as legacy static import)."""
     missing = [c for c in _STORE_COLS if c not in df.columns]
     if missing:
-        raise ValueError(f"CSV missing columns: {missing}; expected {_STORE_COLS}")
+        raise ValueError(f"DataFrame missing columns: {missing}; expected {_STORE_COLS}")
     df = df.copy()
     # Drop null store/category before str coercion — NaN must not become the literal "nan"
     # (groupby excludes NA keys; iterrows would still emit them and break store_category FKs).
@@ -1688,24 +1676,23 @@ def load_stores_to_categories_dataframe(csv_path: str) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def import_stores_to_ledger(
-    csv_path: str | None = None,
+def import_stores_to_ledger_from_dataframe(
+    df: pd.DataFrame,
     db_path: str | None = None,
     *,
     replace: bool = True,
 ) -> dict[str, Any]:
     """
-    Load store/category mappings into the ledger DB.
+    Load store/category mappings into the ledger DB from an in-memory DataFrame.
 
     Runs ``migrate_ledger_db`` first. If ``replace`` is True, deletes all ``store`` rows
     (``store_category`` cascades) before insert.
     """
-    path = csv_path if csv_path is not None else config.stores_to_categories_file
     db = db_path if db_path is not None else config.ledger_db_file
     migrate_ledger_db(db)
 
     warnings: list[str] = []
-    df = load_stores_to_categories_dataframe(path)
+    df = normalize_stores_to_categories_dataframe(df)
 
     if df.empty:
         conn = sqlite3.connect(db)
@@ -1718,7 +1705,6 @@ def import_stores_to_ledger(
             conn.close()
         return {
             "ok": True,
-            "csv_path": path,
             "db_path": db,
             "stores_inserted": 0,
             "store_category_rows_inserted": 0,
@@ -1770,7 +1756,6 @@ def import_stores_to_ledger(
     log.info("static import: %s stores, %s store_category → %s", n_store, n_sc, db)
     return {
         "ok": True,
-        "csv_path": path,
         "db_path": db,
         "stores_inserted": int(n_store),
         "store_category_rows_inserted": int(n_sc),
@@ -1781,7 +1766,7 @@ def import_stores_to_ledger(
 
 def sync_stores_to_ledger_from_dataframe(db_path: str, df: pd.DataFrame) -> None:
     """
-    Replace ``store`` / ``store_category`` from an in-memory frame (same columns as the CSV).
+    Replace ``store`` / ``store_category`` from an in-memory frame (``store_name``, ``category``, ``is_static``).
     """
     migrate_ledger_db(db_path)
     conn = sqlite3.connect(db_path)
@@ -1975,7 +1960,7 @@ def upsert_compiled_dataframe_to_ledger(
 
 _INSTALLMENT_RE = re.compile(r"תשלום\s*(\d+)\s*מתוך\s*(\d+)")
 
-_INSTALLMENT_CSV_FIELDNAMES = [
+_INSTALLMENT_PREVIEW_KEYS = [
     "id",
     "מקור עסקה",
     "תאריך",
@@ -2007,10 +1992,9 @@ class _InstallmentRow:
     y: int
 
 
-def default_installment_preview_csv_path() -> str:
-    """``data/export/installment_statement_month_preview.csv`` (beside ``compiled/``)."""
-    export_dir = os.path.dirname(os.path.dirname(config.compiled_file))
-    return os.path.normpath(os.path.join(export_dir, "installment_statement_month_preview.csv"))
+def default_installment_preview_json_path() -> str:
+    """``data/export/installment_statement_month_preview.json``."""
+    return os.path.normpath(os.path.join(config.export_dir.rstrip(os.sep), "installment_statement_month_preview.json"))
 
 
 def _parse_installment_detail(detail: str) -> tuple[int, int] | None:
@@ -2177,16 +2161,18 @@ def run_installment_statement_month_fill(
     *,
     dry_run: bool = False,
     amount_tol: float = 10.0,
-    output_csv: str | None = None,
+    output_preview: str | None = None,
     sink: Optional[Callable[[str], None]] = None,
 ) -> dict[str, Any]:
     """
     Compute installment ``statement_month`` values and optionally apply (NULL rows only).
 
-    Writes a preview CSV to ``output_csv`` or :func:`default_installment_preview_csv_path`.
+    Writes a preview JSON array to ``output_preview`` or :func:`default_installment_preview_json_path`.
     """
     path = db_path if db_path is not None else config.ledger_db_file
-    out_path = os.path.abspath(output_csv if output_csv is not None else default_installment_preview_csv_path())
+    out_path = os.path.abspath(
+        output_preview if output_preview is not None else default_installment_preview_json_path()
+    )
 
     if not os.path.isfile(path):
         log.warning("installment_statement_month: no ledger DB at %s (skip)", path)
@@ -2218,11 +2204,13 @@ def run_installment_statement_month_fill(
         _parent = os.path.dirname(out_path)
         if _parent:
             os.makedirs(_parent, exist_ok=True)
-        with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
-            wr = csv.DictWriter(f, fieldnames=_INSTALLMENT_CSV_FIELDNAMES, extrasaction="ignore")
-            wr.writeheader()
-            for row in proposed:
-                wr.writerow({**row, "applied": "0"})
+        preview_rows: list[dict[str, Any]] = []
+        for row in proposed:
+            entry = {k: row.get(k, "") for k in _INSTALLMENT_PREVIEW_KEYS if k != "applied"}
+            entry["applied"] = "0"
+            preview_rows.append(entry)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(preview_rows, f, ensure_ascii=False, indent=2)
 
         log.info(
             "installment_statement_month: wrote %s row(s) preview to %s",
@@ -2242,7 +2230,7 @@ def run_installment_statement_month_fill(
                 "proposed_count": len(proposed),
                 "warnings": warnings,
                 "cluster_stats": cluster_stats,
-                "output_csv": out_path,
+                "preview_path": out_path,
             }
 
         for row in proposed:
@@ -2257,11 +2245,13 @@ def run_installment_statement_month_fill(
             rows_updated += cur.rowcount
         conn.commit()
 
-        with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
-            wr = csv.DictWriter(f, fieldnames=_INSTALLMENT_CSV_FIELDNAMES, extrasaction="ignore")
-            wr.writeheader()
-            for row in proposed:
-                wr.writerow({**row, "applied": "1"})
+        preview_rows = []
+        for row in proposed:
+            entry = {k: row.get(k, "") for k in _INSTALLMENT_PREVIEW_KEYS if k != "applied"}
+            entry["applied"] = "1"
+            preview_rows.append(entry)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(preview_rows, f, ensure_ascii=False, indent=2)
 
         log.info("installment_statement_month: applied %s UPDATE(s)", rows_updated)
         if sink:
@@ -2274,7 +2264,7 @@ def run_installment_statement_month_fill(
             "proposed_count": len(proposed),
             "warnings": warnings,
             "cluster_stats": cluster_stats,
-            "output_csv": out_path,
+            "preview_path": out_path,
         }
     finally:
         conn.close()

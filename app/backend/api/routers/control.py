@@ -228,7 +228,7 @@ def register_routes(app: FastAPI) -> None:
                 "categorize_url_hint": f"http://{host}:{cport}/categorize/",
                 "workspace_root": config.workspace_root() or None,
                 "input_dir": config.download_inbox_dir,
-                "compiled_file": config.compiled_file,
+                "export_dir": config.export_dir,
                 "ledger_db_file": config.ledger_db_file,
             }
         )
@@ -263,6 +263,12 @@ def register_routes(app: FastAPI) -> None:
     async def sheets_preview() -> Response:
         snap = sheets.desktop_preview()
         if snap.get("error") == "not_configured":
+            return Response(
+                content=json_bytes_strict(snap),
+                status_code=503,
+                media_type="application/json; charset=utf-8",
+            )
+        if snap.get("error") == "no_ledger":
             return Response(
                 content=json_bytes_strict(snap),
                 status_code=503,

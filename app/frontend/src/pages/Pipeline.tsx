@@ -10,7 +10,8 @@ type StatusResp = { running?: boolean; current_job?: string; error?: string | nu
 type QueueResp = { compiled_exists?: boolean; open_count?: number };
 type SheetsStatus = {
   configured?: boolean;
-  pairs?: Array<{ sheet: string; local_path: string }>;
+  pairs?: Array<{ sheet: string; local_source?: string }>;
+  ledger_present?: boolean;
 };
 type ControlConfig = { categorize_url_hint?: string };
 
@@ -192,7 +193,9 @@ export default function Pipeline() {
         } else {
           setSheetsStatusText(
             'Targets: ' +
-              (j.pairs ?? []).map((p) => `${p.sheet} → ${p.local_path}`).join(' · '),
+              (j.pairs ?? [])
+                .map((p) => `${p.sheet} (${p.local_source ?? 'ledger'})`)
+                .join(' · '),
           );
         }
       } catch {
@@ -245,7 +248,9 @@ export default function Pipeline() {
           } else {
             setSheetsStatusText(
               'Targets: ' +
-                (j.pairs ?? []).map((p) => `${p.sheet} → ${p.local_path}`).join(' · '),
+                (j.pairs ?? [])
+                  .map((p) => `${p.sheet} (${p.local_source ?? 'ledger'})`)
+                  .join(' · '),
             );
           }
         } catch {
@@ -422,7 +427,7 @@ export default function Pipeline() {
 
         <label className="pipe-row">
           <input type="checkbox" checked={procH} onChange={(e) => setProcH(e.target.checked)} />
-          <strong>Compile holdings</strong> → <code>data/export/compiled/holdings.csv</code>
+          <strong>Compile holdings</strong> → <code>data/ledger.sqlite</code> (holdings_balance)
         </label>
         <label className="pipe-row">
           <input type="checkbox" checked={procT} onChange={(e) => setProcT(e.target.checked)} />
@@ -436,7 +441,7 @@ export default function Pipeline() {
             disabled={backupDisabled}
             onChange={(e) => setBackup(e.target.checked)}
           />
-          <strong>Backup snapshot first</strong> — copy compiled, static, and <code>web/data</code>{' '}
+          <strong>Backup snapshot first</strong> — copy export tree, static, ledger, and <code>web/data</code>{' '}
           into <code>data/_backups/&lt;timestamp&gt;/</code> before compile steps
         </label>
         <label className="pipe-row">

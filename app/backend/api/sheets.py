@@ -1,12 +1,10 @@
-"""Google Sheets desktop sync (Holdings + ledger-export Totals) for the control server."""
+"""Google Sheets desktop sync (Holdings + ledger Totals) for the control server."""
 
 from __future__ import annotations
 
 import logging
 import os
-import tempfile
-from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 import config
 from integrations.google_sheets import GSLink, GoogleSheetsHandler
@@ -24,50 +22,36 @@ def is_sheets_configured() -> bool:
     return os.path.isfile(os.path.expanduser(cred))
 
 
-def sync_pairs() -> list[tuple[str, str]]:
-    return config.desktop_sync_sheet_pairs()
+def desktop_sync_sheet_status() -> list[dict[str, Any]]:
+    """One entry per worksheet title (Holdings then Totals); data is always loaded from SQLite."""
+    return [{"sheet": s, "local_source": "ledger_sqlite"} for s in config.desktop_sync_sheet_order()]
+
+
+def _ledger_sync_frames() -> tuple[list[str], list]:
+    """Build (sheet titles, DataFrames) for Holdings wide + Totals from ``ledger_db_file``."""
+    from ledger import load_transactions_dataframe_from_ledger, migrate_ledger_db
+    from pipeline.holdings_balance import holdings_long_to_wide, load_holdings_long_dataframe
+
+    migrate_ledger_db()
+    db = config.ledger_db_file
+    if not os.path.isfile(db):
+        raise FileNotFoundError(f"Ledger database not found: {db}")
+
+    sheets = list(config.desktop_sync_sheet_order())
+    long_df = load_holdings_long_dataframe(db)
+    holdings_wide = holdings_long_to_wide(long_df)
+    tx = load_transactions_dataframe_from_ledger(db)
+    totals = tx.drop(columns=["ingested_at", "statement_month"], errors="ignore")
+    return sheets, [holdings_wide, totals]
 
 
 def desktop_status() -> dict[str, Any]:
-    pairs = [{"sheet": s, "local_path": p} for s, p in sync_pairs()]
     return {
         "configured": is_sheets_configured(),
-        "pairs": pairs,
+        "pairs": desktop_sync_sheet_status(),
         "worksheet_id_set": bool((google_worksheet_id() or "").strip()),
-        "totals_push_source": "ledger_sqlite"
-        if os.path.isfile(config.ledger_db_file)
-        else "compiled_csv",
+        "ledger_present": os.path.isfile(config.ledger_db_file),
     }
-
-
-@contextmanager
-def _desktop_sync_sheet_paths() -> Iterator[tuple[list[str], list[str]]]:
-    """
-    (Holdings CSV, Totals CSV) paths aligned with :func:`config.desktop_sync_sheet_pairs` sheets.
-
-    When ``ledger.sqlite`` exists, Totals are exported from the DB (canonical); otherwise
-    a legacy ``compiled.csv`` path may be used if present.
-    """
-    cleanup: list[str] = []
-    try:
-        sheets = [config.desktop_holdings_sheet_name(), config.desktop_totals_sheet_name()]
-        if os.path.isfile(config.ledger_db_file):
-            fd, tmp = tempfile.mkstemp(prefix="ledger_totals_", suffix=".csv")
-            os.close(fd)
-            cleanup.append(tmp)
-            from ledger import export_transactions_dataframe_to_csv
-
-            export_transactions_dataframe_to_csv(config.ledger_db_file, tmp)
-            paths = [config.holdings_file, tmp]
-        else:
-            paths = [config.holdings_file, config.compiled_file]
-        yield sheets, paths
-    finally:
-        for p in cleanup:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
 
 
 def _handler() -> GoogleSheetsHandler:
@@ -83,9 +67,12 @@ def desktop_preview() -> dict[str, Any]:
             "error": "not_configured",
             "message": "Configure Google Sheets in Settings → Providers (service account JSON path and spreadsheet id).",
         }
-    with _desktop_sync_sheet_paths() as (sheets, paths):
-        link = GSLink(_handler())
-        report = link.analyze_sync(list(sheets), list(paths), cell_range="A1:ZZ", for_cli=False)
+    try:
+        sheets, frames = _ledger_sync_frames()
+    except FileNotFoundError as e:
+        return {"ok": False, "error": "no_ledger", "message": str(e)}
+    link = GSLink(_handler())
+    report = link.analyze_sync(list(sheets), list(frames), cell_range="A1:ZZ", for_cli=False)
     return {"ok": True, "preview": report}
 
 
@@ -96,13 +83,16 @@ def desktop_push(*, force: bool) -> tuple[bool, str, dict[str, Any] | None]:
             "Google Sheets not configured — use Settings → Providers.",
             None,
         )
-    with _desktop_sync_sheet_paths() as (sheets, paths):
-        link = GSLink(_handler())
-        try:
-            ok, msg, preview = link.push_local_csvs_to_cloud(
-                list(sheets), list(paths), special_columns=[], cell_range="A1:ZZ", force=force
-            )
-        except Exception as e:  # noqa: BLE001
-            log.exception("desktop sheets push failed")
-            return False, f"{type(e).__name__}: {e}", None
+    try:
+        sheets, frames = _ledger_sync_frames()
+    except FileNotFoundError as e:
+        return False, str(e), None
+    link = GSLink(_handler())
+    try:
+        ok, msg, preview = link.push_dataframes_to_cloud(
+            list(sheets), list(frames), special_columns=[], cell_range="A1:ZZ", force=force
+        )
+    except Exception as e:  # noqa: BLE001
+        log.exception("desktop sheets push failed")
+        return False, f"{type(e).__name__}: {e}", None
     return ok, msg, preview

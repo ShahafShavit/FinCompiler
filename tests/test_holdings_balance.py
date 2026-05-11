@@ -6,12 +6,28 @@ import importlib
 import os
 import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import patch
 
 import pandas as pd
 
-_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "holdings_sample_2024ish.csv"
+# Same numeric layout as former ``tests/fixtures/holdings_sample_2024ish.csv``.
+_HOLDINGS_WIDE_SAMPLE = pd.DataFrame(
+    [
+        {
+            "עובר ושב": 100.0,
+            "ניירות ערך": 200.0,
+            "מטבע חוץ": 1.0,
+            "תאריך": "2024-01-01",
+            "פיקדונות וחסכונות": 0.0,
+        },
+        {
+            "עובר ושב": 50.0,
+            "ניירות ערך": 150.0,
+            "מטבע חוץ": 2.0,
+            "תאריך": "2024-02-01",
+            "פיקדונות וחסכונות": 0.0,
+        },
+    ]
+)
 
 
 class HoldingsBalanceTests(unittest.TestCase):
@@ -26,12 +42,14 @@ class HoldingsBalanceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            from unittest.mock import patch
+
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
             from pipeline.holdings_balance import upsert_holdings_long, wide_holdings_to_long
 
-            wide = pd.read_csv(_FIXTURE)
+            wide = _HOLDINGS_WIDE_SAMPLE.copy()
             wide.columns = [str(c).strip() for c in wide.columns]
             long_df = wide_holdings_to_long(wide)
             report = upsert_holdings_long(
@@ -45,7 +63,7 @@ class HoldingsBalanceTests(unittest.TestCase):
     def test_long_wide_roundtrip_matches_melt(self) -> None:
         from pipeline.holdings_balance import holdings_long_to_wide, wide_holdings_to_long
 
-        wide_fixture = pd.read_csv(_FIXTURE)
+        wide_fixture = _HOLDINGS_WIDE_SAMPLE.copy()
         wide_fixture.columns = [str(c).strip() for c in wide_fixture.columns]
         long_a = wide_holdings_to_long(wide_fixture)
         wide = holdings_long_to_wide(long_a)
@@ -64,6 +82,8 @@ class HoldingsBalanceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            from unittest.mock import patch
+
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 

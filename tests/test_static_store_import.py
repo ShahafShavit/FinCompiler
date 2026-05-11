@@ -1,4 +1,4 @@
-"""Tests for stores_to_categories.csv → store / store_category import."""
+"""Tests for static store mappings → ``store`` / ``store_category`` import."""
 
 from __future__ import annotations
 
@@ -7,10 +7,9 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "stores_to_categories_sample.csv"
+import pandas as pd
 
 
 class StaticStoreImportTests(unittest.TestCase):
@@ -23,16 +22,25 @@ class StaticStoreImportTests(unittest.TestCase):
     def test_import_fixture_counts_and_static_rule(self) -> None:
         import config as config_mod
 
+        fixture = pd.DataFrame(
+            [
+                {"store_name": "StaticCafe", "category": "אוכל בחוץ", "is_static": 1.0},
+                {"store_name": "DynamicMall", "category": "משק בית", "is_static": 0.0},
+                {"store_name": "DynamicMall", "category": "אישי", "is_static": 1.0},
+                {"store_name": "SingleRow", "category": "רכב", "is_static": 1.0},
+            ]
+        )
+
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from ledger import import_stores_to_ledger
+            from ledger import import_stores_to_ledger_from_dataframe
 
             db = config_mod.ledger_db_file
-            report = import_stores_to_ledger(
-                str(_FIXTURE),
+            report = import_stores_to_ledger_from_dataframe(
+                fixture,
                 db,
                 replace=True,
             )

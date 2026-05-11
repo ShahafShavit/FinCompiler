@@ -14,19 +14,15 @@ import config
 
 from . import fetch
 from . import route_inbox as route_inbox_mod
-from .compile_holdings import (
-    compile_holdings_main,
-    csv_from_raw_holdings,
-    ingest_holdings_inbox,
-)
+from .compile_holdings import compile_holdings_main, ingest_holdings_inbox, pickle_from_raw_holdings
 from .compile_transactions import (
     TRANSACTION_DROP_COLUMNS,
     TRANSACTION_DROP_SOURCES,
     TRANSACTION_DROP_SOURCES_UI_EXTRA,
     compile_transactions_main,
-    csv_from_raw_transactions,
     ingest_transactions_inbox,
     ingest_transactions_to_ledger,
+    pickle_from_raw_transactions,
     transaction_drop_pairs,
 )
 
@@ -42,7 +38,7 @@ def _notify(msg: str, sink: Optional[Callable[[str], None]]) -> None:
 
 
 def _pipeline_debug_dump() -> bool:
-    """When set, mirror legacy cleaned CSVs under pipeline clean dirs for inspection."""
+    """When set, write normalized pipeline frames as pickle under pipeline clean dirs for inspection."""
     v = os.environ.get("PIPELINE_DEBUG_DUMP", "").strip().lower()
     return v in ("1", "true", "yes", "on")
 
@@ -57,7 +53,7 @@ def ensure_pipeline_dirs() -> None:
         config.transactions_clean_dir,
         config.unclassified_download_dir,
         config.compiled_dir,
-        os.path.dirname(config.transaction_category_file),
+        config.export_dir,
     ):
         os.makedirs(d, exist_ok=True)
 
@@ -253,7 +249,7 @@ def run_holdings_pipeline(
     if ingest:
         ingest_holdings_inbox(sink=sink)
     if _pipeline_debug_dump():
-        csv_from_raw_holdings(sink=sink)
+        pickle_from_raw_holdings(sink=sink)
     if compile_:
         compile_holdings_main(sink=sink)
 
@@ -309,7 +305,7 @@ def run_transactions_pipeline(
     if ingest:
         ingest_transactions_inbox(sink=sink)
     if _pipeline_debug_dump():
-        csv_from_raw_transactions(drop_profile=drop_profile, sink=sink)
+        pickle_from_raw_transactions(drop_profile=drop_profile, sink=sink)
     if compile_:
         compile_transactions_main(
             run_auto_categorize=auto_categorize,
@@ -342,11 +338,6 @@ def clean_holdings_workspace(
                     _notify(f"clean holdings: removed {path}", sink)
                 except OSError as e:
                     log.warning("Could not remove %s: %s", path, e)
-    if not keep_compiled and os.path.isfile(config.holdings_file):
-        try:
-            os.remove(config.holdings_file)
-        except OSError as e:
-            log.warning("Could not remove holdings main csv: %s", e)
 
 
 def clean_transactions_workspace(
@@ -370,8 +361,3 @@ def clean_transactions_workspace(
                     _notify(f"clean transactions: removed {path}", sink)
                 except OSError as e:
                     log.warning("Could not remove %s: %s", path, e)
-    if not keep_compiled and os.path.isfile(config.compiled_file):
-        try:
-            os.remove(config.compiled_file)
-        except OSError as e:
-            log.warning("Could not remove compiled csv: %s", e)

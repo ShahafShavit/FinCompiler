@@ -134,16 +134,6 @@ class TransactionFile:
         self.file_df['בזכות'] = self.file_df.apply(update, axis=1)
         self.file_df['בחובה'] = self.file_df['בחובה'].apply(lambda x: float(0) if x < 0 else float(x))
 
-    def to_csv(self, output_clean_dir=None):
-        out_dir = output_clean_dir or config.cleaned_dir
-        os.makedirs(out_dir, exist_ok=True)
-        out = os.path.join(
-            out_dir,
-            os.path.basename(self.file_path).split(".")[0],
-        ) + ".csv"
-        self.file_df.to_csv(out, index=False)
-        log.info("TransactionFile: wrote cleaned CSV %s rows=%s", out, len(self.file_df))
-
 
 def load_transaction_clean_dataframe(
     file_path: str,
@@ -185,23 +175,6 @@ class HoldingsFile:
         merged_row = self.file_df.max(numeric_only=False)
         self.file_df = pd.DataFrame([merged_row])
 
-    def to_csv(self, output_clean_dir=None):
-        out_dir = output_clean_dir or config.cleaned_dir
-        os.makedirs(out_dir, exist_ok=True)
-        filename = os.path.basename(self.file_path)
-        date_pattern = re.compile(r'(\d{1,2}-\d{1,2}-\d{4})')
-
-        match = date_pattern.search(filename)
-        if match:
-            date_str = match.group(1)
-            formatted_date = date_str.replace('_', '-')
-            self.file_df['תאריך'] = formatted_date
-        else:
-            formatted_date = "00-00-00 00:00:00"
-        out_path = os.path.join(out_dir, f"Holdings_{formatted_date}.csv")
-        self.file_df.to_csv(out_path, index=False)
-        log.info("HoldingsFile: wrote %s rows=%s", out_path, len(self.file_df))
-
 
 def load_holdings_unified_wide(
     file_path: str,
@@ -216,28 +189,44 @@ def load_holdings_unified_wide(
 
 
 if __name__ == "__main__":
-    file_list = glob.glob(os.path.join(config.raw_dir, '*.xls*'))
+    _drop_cols = [
+        "סכום עסקה",
+        "מטבע חיוב",
+        "מטבע עסקה מקורי",
+        "מטבע מקור",
+        "מטבע לחיוב",
+        "סכום עסקה מקורי",
+        "סכום מקורי",
+        "מספר שובר",
+        "תאריך חיוב",
+        'שער המרה ממטבע מקור/התחשבנות לש"ח',
+        "אופן ביצוע ההעסקה",
+        "הערות",
+        "סוג עסקה",
+        "תאריך ערך",
+        "הערה",
+        "אסמכתא",
+        "קטגוריה",
+        'היתרה בש"ח',
+    ]
+    _drop_pairs = [
+        ("מקור עסקה", "כרטיס דביט"),
+        ("מקור עסקה", "קניה-אינטרנט"),
+        ('מקור עסקה', 'ישראכרט בע"מ-י'),
+        ("מקור עסקה", "מקס איט פיננ-י"),
+        ("מקור עסקה", "פקדון אינטר700"),
+        ("מקור עסקה", "פקדון אינטרנט"),
+        ("מקור עסקה", "שינוי בנ\"ע"),
+        ("מקור עסקה", 'נ"ע בבורסה'),
+    ]
+    os.makedirs(config.cleaned_dir, exist_ok=True)
+    file_list = glob.glob(os.path.join(config.raw_dir, "*.xls*"))
     for f in file_list:
-        if 'יתרות' not in f:
-            f = TransactionFile(f)
-            f.drop_columns(
-                ['סכום עסקה', 'מטבע חיוב', 'מטבע עסקה מקורי', 'מטבע מקור', 'מטבע לחיוב', 'סכום עסקה מקורי', 'סכום מקורי'
-                    , 'מספר שובר', 'תאריך חיוב', 'שער המרה ממטבע מקור/התחשבנות לש"ח', 'אופן ביצוע ההעסקה', 'הערות',
-                 'סוג עסקה', 'תאריך ערך', 'הערה', 'אסמכתא', 'קטגוריה', 'היתרה בש"ח'])
-            f.drop_by_column_and_value('מקור עסקה', 'כרטיס דביט')
-            f.drop_by_column_and_value('מקור עסקה', 'קניה-אינטרנט')
-            f.drop_by_column_and_value('מקור עסקה', 'ישראכרט בע"מ-י')
-            f.drop_by_column_and_value('מקור עסקה', 'מקס איט פיננ-י')
-            f.drop_by_column_and_value('מקור עסקה', 'פקדון אינטר700')
-            f.drop_by_column_and_value('מקור עסקה', 'פקדון אינטרנט')
-            f.drop_by_column_and_value('מקור עסקה', 'פקדון אינטרנט')
-            f.drop_by_column_and_value('מקור עסקה', 'שינוי בנ"ע')
-            f.drop_by_column_and_value('מקור עסקה', 'נ"ע בבורסה')
-            f.to_csv()
+        if "יתרות" not in f:
+            df = load_transaction_clean_dataframe(f, drop_columns=_drop_cols, drop_sources=_drop_pairs)
+            stem = os.path.splitext(os.path.basename(f))[0]
+            df.to_pickle(os.path.join(config.cleaned_dir, f"{stem}_clean.pkl"))
         else:
-            hf = HoldingsFile(f)
-            rename_map = {
-                'נכון לתאריך': 'תאריך',
-            }
-            hf.unify_columns(rename_map)
-            hf.to_csv()
+            df = load_holdings_unified_wide(f, rename_map={"נכון לתאריך": "תאריך"})
+            stem = os.path.splitext(os.path.basename(f))[0]
+            df.to_pickle(os.path.join(config.cleaned_dir, f"{stem}_holdings_clean.pkl"))

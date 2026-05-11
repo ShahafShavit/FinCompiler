@@ -10,7 +10,7 @@ import pandas as pd
 import tabulate
 from oauth2client.service_account import ServiceAccountCredentials
 import config
-from pipeline import compiler as compile_handler
+from pipeline.compiler import parse_post_ingest_date_column
 import gspread.utils
 from googleapiclient.discovery import build
 pd.set_option('display.precision', 2)  # Sets display precision to two decimal places
@@ -29,14 +29,8 @@ def _safe_to_numeric(num):
         return num
 
 
-def _read_local_csv_for_sync(path: str) -> tuple[pd.DataFrame, str]:
-    try:
-        df = pd.read_csv(path)
-    except FileNotFoundError:
-        return pd.DataFrame(), "missing"
-    except pd.errors.EmptyDataError:
-        return pd.DataFrame(), "empty"
-    return df, "ok"
+def _local_frame_status(local_df: pd.DataFrame) -> str:
+    return "empty" if local_df is None or local_df.empty else "ok"
 
 
 def _normalize_for_sync_compare(df: pd.DataFrame) -> pd.DataFrame:
@@ -112,15 +106,15 @@ class GSLink:
     def _sheet_pair_report(
         self,
         sheet_name: str,
-        local_path: str,
+        local_df: pd.DataFrame,
         *,
         cell_range: str,
     ) -> tuple[dict, pd.DataFrame | None]:
         """
-        Compare one local CSV to one worksheet. Returns a JSON-friendly report dict and an optional
-        diff frame (non-empty only when there are value-level differences with aligned shape).
+        Compare one in-memory local frame to one worksheet. Returns a JSON-friendly report dict
+        and an optional diff frame (non-empty only when there are value-level differences).
         """
-        out: dict = {"sheet": sheet_name, "local_path": local_path}
+        out: dict = {"sheet": sheet_name, "local_source": "dataframe"}
         try:
             cloud_df = self.handler.fetch_worksheet_as_dataframe(sheet_name, cell_range)
         except FileNotFoundError as e:
@@ -129,23 +123,18 @@ class GSLink:
             out["structural_issues"] = [str(e)]
             return out, None
 
-        local_df, local_status = _read_local_csv_for_sync(local_path)
+        local_df = local_df if local_df is not None else pd.DataFrame()
+        local_status = _local_frame_status(local_df)
         out["local_status"] = local_status
         out["local_row_count"] = int(len(local_df))
         out["cloud_row_count"] = int(len(cloud_df))
 
         structural: list[str] = []
 
-        if bool(local_df.columns.duplicated().any()):
+        if not local_df.empty and bool(local_df.columns.duplicated().any()):
             dups = [str(x) for x in local_df.columns[local_df.columns.duplicated()].tolist()]
             out["duplicate_local_columns"] = dups
-            structural.append("duplicate column names in local CSV")
-
-        if local_status == "missing":
-            structural.append("local CSV is missing")
-            out["ok"] = False
-            out["structural_issues"] = structural
-            return out, None
+            structural.append("duplicate column names in local data")
 
         if local_status == "empty" and cloud_df.empty:
             out["ok"] = True
@@ -153,7 +142,7 @@ class GSLink:
             return out, None
 
         if local_status == "empty" and not cloud_df.empty:
-            structural.append("local CSV is empty but the cloud sheet has rows")
+            structural.append("local data is empty but the cloud sheet has rows")
             out["ok"] = False
             out["structural_issues"] = structural
             return out, None
@@ -171,9 +160,9 @@ class GSLink:
                 only_c = sorted(set(cc) - set(lc), key=str)
                 out["columns_only_local"] = only_l
                 out["columns_only_cloud"] = only_c
-                structural.append("column headers do not match between local CSV and cloud sheet")
+                structural.append("column headers do not match between local data and cloud sheet")
         elif cloud_df.empty and not local_df.empty:
-            structural.append("cloud sheet has no data while local CSV is non-empty")
+            structural.append("cloud sheet has no data while local data is non-empty")
 
         if structural:
             out["ok"] = False
@@ -212,13 +201,13 @@ class GSLink:
     def analyze_sync(
         self,
         sheets: list,
-        compiled_files: list,
+        local_frames: list,
         *,
         cell_range: str = "A1:ZZ",
         for_cli: bool = False,
     ) -> dict:
         """
-        Structured comparison of local CSVs to cloud worksheets (same semantics as :meth:`sync_check`).
+        Structured comparison of local DataFrames to cloud worksheets (same semantics as :meth:`sync_check`).
 
         ``for_cli`` reproduces console tables for the first worksheet that has value differences
         (matches the historical desktop behaviour).
@@ -228,8 +217,8 @@ class GSLink:
         issues: list[str] = []
         all_ok = True
 
-        for sheet_name, path in zip(sheets, compiled_files):
-            rep, diff_df = self._sheet_pair_report(sheet_name, path, cell_range=cell_range)
+        for sheet_name, frame in zip(sheets, local_frames):
+            rep, diff_df = self._sheet_pair_report(sheet_name, frame, cell_range=cell_range)
             internal_diffs.append(diff_df)
             clean = {k: v for k, v in rep.items() if not str(k).startswith("_")}
             sheets_out.append(clean)
@@ -277,17 +266,17 @@ class GSLink:
 
         return {"ok": all_ok, "issues": issues, "sheets": sheets_out}
 
-    def push_local_csvs_to_cloud(
+    def push_dataframes_to_cloud(
         self,
         sheets: list,
-        compiled_files: list,
+        local_frames: list,
         special_columns=None,
         *,
         cell_range: str = "A1:ZZ",
         force: bool = False,
     ) -> tuple[bool, str, dict | None]:
         """
-        Push local CSVs to the corresponding worksheets. When ``force`` is false, requires a clean
+        Push local DataFrames to the corresponding worksheets. When ``force`` is false, requires a clean
         :meth:`analyze_sync` first (same gate as :meth:`update_cloud`).
 
         When blocked, returns the structured :meth:`analyze_sync` report as the third element.
@@ -295,7 +284,7 @@ class GSLink:
         if special_columns is None:
             special_columns = []
         if not force:
-            rep = self.analyze_sync(sheets, compiled_files, cell_range=cell_range, for_cli=False)
+            rep = self.analyze_sync(sheets, local_frames, cell_range=cell_range, for_cli=False)
             if not rep["ok"]:
                 return (
                     False,
@@ -305,75 +294,43 @@ class GSLink:
                 )
 
         skipped: list[str] = []
-        for sheet_name, compiled_file in zip(sheets, compiled_files):
-            try:
-                df = pd.read_csv(compiled_file)
-            except FileNotFoundError:
-                skipped.append(compiled_file)
-                print(f"Missing file: {compiled_file}, skipping push to cloud.")
+        for sheet_name, df in zip(sheets, local_frames):
+            if df is None or df.empty:
+                skipped.append(sheet_name)
+                print(f"Skipping empty local frame for worksheet {sheet_name!r}.")
                 continue
             self.handler.update_sheet(df, sheet_name, special_columns)
 
         if skipped:
-            return True, f"Pushed sheets; skipped missing file(s): {', '.join(skipped)}", None
-        return True, "Pushed all local CSVs to Google Sheets.", None
+            return True, f"Pushed sheets; skipped empty frame(s): {', '.join(skipped)}", None
+        return True, "Pushed all local data to Google Sheets.", None
 
-    def update_cloud(self, sheets, compiled_files, special_columns=None, *, confirm: bool = True):
+    def update_cloud(self, sheets, local_frames, special_columns=None, *, confirm: bool = True):
         if special_columns is None:
             special_columns = []
-        self.sync_check(sheets, compiled_files)
+        self.sync_check(sheets, local_frames)
         if confirm:
             input("Are you sure you want to PUSH data the cloud?")
-        for sheet_name, compiled_file in zip(sheets, compiled_files):
-            try:
-                df = pd.read_csv(compiled_file)
-                self.handler.update_sheet(df, sheet_name, special_columns)
-            except FileNotFoundError:
-                print(f"Missing file: {compiled_file}, skipping push to cloud.")
+        for sheet_name, df in zip(sheets, local_frames):
+            if df is None or df.empty:
+                print(f"Skipping empty local frame for worksheet {sheet_name!r}.")
+                continue
+            self.handler.update_sheet(df, sheet_name, special_columns)
 
-    def sync_check(self, sheets, compiled_files):
-        rep = self.analyze_sync(sheets, compiled_files, cell_range="A1:ZZ", for_cli=True)
+    def sync_check(self, sheets, local_frames):
+        rep = self.analyze_sync(sheets, local_frames, cell_range="A1:ZZ", for_cli=True)
         return bool(rep["ok"])
-
-
-# DEPRECATED
-# def sheets_push():
-#     df_totals, df_holdings = None, None
-#     try:
-#         df_totals = pd.read_csv(config.compiled_file)
-#     except FileNotFoundError as e:
-#         print(f"Missing file: {e}")
-#     try:
-#         df_holdings = pd.read_csv(config.holdings_file)
-#     except FileNotFoundError as e:
-#         print(f"Missing file: {e}")
-#     dfs = {
-#         "Totals2": df_totals,
-#         "Holdings2": df_holdings
-#     }
-#     GoogleAPI = GoogleSheetsHandler(<path from Settings/providers.json>, <worksheet id>)
-#     new_df = GoogleAPI.get_sheet("Holdings2", "A1:M")
-#     cols = new_df.columns.drop('תאריך')
-#     new_df[cols] = new_df[cols].apply(pd.to_numeric)
-#     new_df.to_csv(config.holdings_file, index=False)
-#
-#     # for sheet_name, df in dfs.items():
-#     #     if df is not None:
-#     #         GoogleAPI.write_sheet(df, sheet_name)
-#     #         print(f"Written sheet {sheet_name} to Google Sheets")
-#
 
 
 def push_monthly_look(gsh):
     print("Pushing updated monthly look...")
 
-    if os.path.isfile(config.ledger_db_file):
-        from ledger import load_transactions_dataframe_from_ledger
+    if not os.path.isfile(config.ledger_db_file):
+        raise FileNotFoundError(f"ledger required for monthly look: {config.ledger_db_file}")
+    from ledger import load_transactions_dataframe_from_ledger
 
-        df = load_transactions_dataframe_from_ledger(config.ledger_db_file)
-    else:
-        df = pd.read_csv(config.compiled_file)
-    df["תאריך"] = compile_handler.parse_post_ingest_date_column(df["תאריך"])
+    df = load_transactions_dataframe_from_ledger(config.ledger_db_file)
+    df["תאריך"] = parse_post_ingest_date_column(df["תאריך"])
     df['Month-Year'] = df['תאריך'].dt.to_period('M')
 
     # Creating a new column to distinguish between expenses and income
@@ -493,8 +450,7 @@ if __name__ == "__main__":
     gsh = GoogleSheetsHandler(google_api_user_path(), google_worksheet_id())
 
     gslink = GSLink(gsh)
-    # gslink.update_cloud(['Holdings', 'Totals'], [config.holdings_file, config.compiled_file])
-    # gslink.sync_check(['Holdings2', 'Totals2'], [config.holdings_file, config.compiled_file])
+    _ = gslink  # example: gslink.push_dataframes_to_cloud(["Holdings", "Totals"], [df_h, df_t], force=True)
     # print(tabulate.tabulate(pivoted, headers='keys', showindex=True, tablefmt='plain'))
     # gsh.update_sheet(pivoted, "Monthly Look")
     push_monthly_look(gsh)

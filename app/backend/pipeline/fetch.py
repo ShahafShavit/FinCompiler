@@ -1024,7 +1024,7 @@ def verify_download(
     timeout: float = 120.0,
     *,
     baseline_names: set[str] | None = None,
-    extensions: tuple[str, ...] = (".xlsx", ".xls", ".xlsm", ".csv"),
+    extensions: tuple[str, ...] = (".xlsx", ".xls", ".xlsm"),
 ) -> tuple[bool, str | None]:
     """
     Wait for a **new** spreadsheet (vs ``baseline_names``) to appear and stabilize.

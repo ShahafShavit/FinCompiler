@@ -44,7 +44,7 @@ def create_critical_paths_backup(
     """
     Copy minimum critical paths into ``parent_dir / <local_timestamp> /``.
 
-    Includes (when present): ``data/export/compiled/``, ``data/static/``,
+    Includes (when present): ``data/export/compiled/`` (historical export folder), ``data/static/``,
     ``data/private/`` (UI-managed providers + Google path config), ``web/data/``
     (heatmap totals dir). Does not copy ``.env``.
 

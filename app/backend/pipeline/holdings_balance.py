@@ -496,7 +496,7 @@ def parse_holdings_paste_grid(text: str) -> dict[str, Any]:
 
 def holdings_long_to_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Pivot melted holdings to the wide shape used by ``holdings.csv`` staging / Sheets.
+    Pivot melted holdings to the wide shape used for Sheets push and wide views.
 
     Empty table → empty frame (no columns); compiler + new ingest still work.
     """
@@ -612,7 +612,7 @@ def verify_holdings_long(expected: pd.DataFrame, db_path: str) -> dict[str, Any]
             continue
         gv = float(sub.iloc[0]["balance_ils"])
         if abs(gv - float(r["balance_ils"])) > tol:
-            amount_mismatch.append(f"{k} csv={r['balance_ils']} db={gv}")
+            amount_mismatch.append(f"{k} incoming={r['balance_ils']} db={gv}")
 
     parity_ok = not missing and not amount_mismatch
     return {

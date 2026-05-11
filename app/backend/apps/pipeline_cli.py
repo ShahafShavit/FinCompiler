@@ -42,7 +42,7 @@ Data flow (short version):
   - holdings pipeline: inbox -> raw xlsx -> in-memory merge -> SQLite holdings_balance
   - transactions pipeline: inbox -> raw xlsx -> in-memory normalize -> SQLite ledger_transaction
   - Canonical data: data/ledger.sqlite only (no pipeline CSV staging in normal runs)
-  - Set PIPELINE_DEBUG_DUMP=1 to also write legacy cleaned CSVs under pipeline/*/clean for debugging
+  - Set PIPELINE_DEBUG_DUMP=1 to also write normalized pipeline frames as pickle under pipeline/*/clean for debugging
   - Optional: set FINANCE_WORKSPACE_ROOT to a directory to use a separate data/ and web/
     tree (safe for tests or experiments; see config).
 
@@ -53,8 +53,8 @@ Pick a COMMAND below. Every command has its own options - use:
 MAIN_EPILOG = """\
 commands:
   route          Classify files in data/input/*.xls* and MOVE them into pipeline inboxes.
-  holdings       Balances: ingest -> clean CSV -> merge into holdings.csv
-  transactions   Spending/income lines: ingest -> clean CSV -> merge into data/ledger.sqlite
+  holdings       Balances: ingest -> normalize -> merge into data/ledger.sqlite (holdings_balance)
+  transactions   Spending/income lines: ingest -> normalize -> upsert into data/ledger.sqlite
   all            Optional browser downloads, then route, then BOTH pipelines in one go.
   both-process   No browser: route whatever is already in data/input, then BOTH pipelines.
 
@@ -98,7 +98,7 @@ Balances pipeline: workbooks that end up in data/pipeline/holdings/.
 Steps (each can be skipped with --no-*):
   1. route   - move *.xls* from data/input into holdings vs transactions inboxes
   2. ingest  - normalize to .xlsx under holdings/raw
-  3. (optional) If PIPELINE_DEBUG_DUMP=1: write cleaned CSV under holdings/clean
+  3. (optional) If PIPELINE_DEBUG_DUMP=1: write cleaned pickle under holdings/clean
   4. compile - merge raw workbooks into data/ledger.sqlite (holdings_balance)
 """
 
@@ -120,7 +120,7 @@ Transactions pipeline: card and account lines in data/pipeline/transactions/.
 Steps (each can be skipped with --no-*):
   1. route   - move *.xls* from data/input into the right pipeline inbox
   2. ingest  - normalize to .xlsx under transactions/raw
-  3. (optional) If PIPELINE_DEBUG_DUMP=1: write cleaned CSV under transactions/clean
+  3. (optional) If PIPELINE_DEBUG_DUMP=1: write cleaned pickle under transactions/clean
   4. compile - normalize workbooks in memory and upsert into data/ledger.sqlite
   5. optional: --auto-categorize runs the automatic category pass (same as part of the old batch flow)
 """
@@ -171,8 +171,8 @@ BOTH_PROCESS_DESCRIPTION = """\
 Assume files are already in data/input/ (you downloaded manually). No browser.
 
   1. route - move spreadsheets into pipeline inboxes.
-  2. Full holdings pipeline (ingest -> csv -> compile).
-  3. Full transactions pipeline (ingest -> csv -> compile).
+  2. Full holdings pipeline (ingest -> compile).
+  3. Full transactions pipeline (ingest -> compile).
 
 Does not delete files in data/input/ except by moving them during route (holdings and
 transactions inboxes receive the files; shared inbox ends up empty of *.xls*).
@@ -255,14 +255,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip xlsx normalization (no inbox -> raw copy/convert).",
     )
     hg_steps.add_argument(
-        "--no-csv",
-        action="store_true",
-        help="Ignored (compatibility). Cleaned CSVs are only written when PIPELINE_DEBUG_DUMP=1.",
-    )
-    hg_steps.add_argument(
         "--no-compile",
         action="store_true",
-        help="Skip merging cleaned CSVs into data/export/compiled/holdings.csv.",
+        help="Skip SQLite upsert for holdings (holdings_balance).",
     )
 
     # --- transactions ---
@@ -313,11 +308,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip inbox -> raw xlsx normalization.",
     )
     tg_steps.add_argument(
-        "--no-csv",
-        action="store_true",
-        help="Ignored (compatibility). Cleaned CSVs are only written when PIPELINE_DEBUG_DUMP=1.",
-    )
-    tg_steps.add_argument(
         "--no-compile",
         action="store_true",
         help="Skip merge into SQLite ledger (data/ledger.sqlite).",
@@ -345,7 +335,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--backup-first",
         action="store_true",
         help="Before the pipeline: write a timestamped snapshot under data/_backups/ "
-        "(compiled export, static CSVs, web/data).",
+        "(export dir, static dir, web/data, ledger.sqlite when present).",
     )
     # --- all ---
     a = sub.add_parser(
@@ -394,7 +384,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ag2.add_argument(
         "--backup-first",
         action="store_true",
-        help="Before the pipelines: snapshot compiled, static, and web/data (see transactions --help).",
+        help="Before the pipelines: snapshot export, static, ledger, and web/data (see transactions --help).",
     )
     # --- both-process ---
     b = sub.add_parser(
@@ -424,7 +414,7 @@ def _build_parser() -> argparse.ArgumentParser:
     b.add_argument(
         "--backup-first",
         action="store_true",
-        help="Before the pipelines: snapshot compiled, static, and web/data (see transactions --help).",
+        help="Before the pipelines: snapshot export, static, ledger, and web/data (see transactions --help).",
     )
     return p
 

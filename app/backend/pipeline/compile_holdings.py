@@ -32,14 +32,16 @@ def ingest_holdings_inbox(*, sink: Optional[Callable[[str], None]] = None) -> li
     return paths
 
 
-def csv_from_raw_holdings(*, sink: Optional[Callable[[str], None]] = None) -> None:
+def pickle_from_raw_holdings(*, sink: Optional[Callable[[str], None]] = None) -> None:
     files = glob.glob(os.path.join(config.holdings_raw_dir, "*.xls*"))
-    _notify(f"CSV HOLDINGS: {len(files)} workbook(s) -> {config.holdings_clean_dir}", sink)
+    _notify(f"DEBUG HOLDINGS: {len(files)} workbook(s) -> {config.holdings_clean_dir} (*.pkl)", sink)
+    os.makedirs(config.holdings_clean_dir, exist_ok=True)
     for f in files:
-        hf = workbook_normalize.HoldingsFile(f)
-        rename_map = {"נכון לתאריך": "תאריך"}
-        hf.unify_columns(rename_map)
-        hf.to_csv(output_clean_dir=config.holdings_clean_dir)
+        df = workbook_normalize.load_holdings_unified_wide(f, rename_map={"נכון לתאריך": "תאריך"})
+        stem = os.path.splitext(os.path.basename(f))[0]
+        out = os.path.join(config.holdings_clean_dir, f"{stem}_clean.pkl")
+        df.to_pickle(out)
+        log.info("debug dump: wrote %s rows=%s", out, len(df))
 
 
 def compile_holdings_main(*, sink: Optional[Callable[[str], None]] = None) -> None:
