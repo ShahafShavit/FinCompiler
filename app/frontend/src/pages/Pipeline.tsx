@@ -28,14 +28,7 @@ type PipelineOptions = {
   process_transactions: boolean;
   backup_first: boolean;
   auto_categorize: boolean;
-  drop_profile: 'full' | 'batch';
 };
-
-function normalizeDropProfile(raw: string): 'full' | 'batch' {
-  const v = raw.trim().toLowerCase();
-  if (v === 'batch' || v.startsWith('batch')) return 'batch';
-  return 'full';
-}
 
 export default function Pipeline() {
   // Pipeline checkbox state.
@@ -52,7 +45,6 @@ export default function Pipeline() {
   const [procT, setProcT] = useState(false);
   const [backup, setBackup] = useState(false);
   const [auto, setAuto] = useState(false);
-  const [dropProf, setDropProf] = useState('full');
 
   // Sheets card.
   const [sheetsForce, setSheetsForce] = useState(false);
@@ -305,7 +297,6 @@ export default function Pipeline() {
       process_transactions: procT,
       backup_first: backup,
       auto_categorize: auto,
-      drop_profile: normalizeDropProfile(dropProf),
     };
     void postJob('pipeline', opts);
   }
@@ -434,6 +425,10 @@ export default function Pipeline() {
           <strong>Compile transactions</strong> → <code>data/ledger.sqlite</code> (transactions
           ledger)
         </label>
+        <p className="hint pipe-indent">
+          Row-drop rules for the transaction workbooks live in Settings → <strong>Transaction drop rules</strong>{' '}
+          (<code>data/private/transaction_drop_rules.json</code>).
+        </p>
         <label className="pipe-row">
           <input
             type="checkbox"
@@ -453,23 +448,6 @@ export default function Pipeline() {
           />
           <strong>Auto-categorize</strong> after transactions compile (rows still missing a category
           → <a href="/categorize/">/categorize/</a>)
-        </label>
-
-        <label className="pipe-row combo-row" style={{ marginTop: '0.65rem' }}>
-          Transaction column-drop profile (type or pick)
-          <input
-            type="text"
-            className="pipe-combo"
-            list="drop_prof_list"
-            value={dropProf}
-            onChange={(e) => setDropProf(e.target.value)}
-            autoComplete="off"
-            title="full = same drops as desktop app; batch = smaller legacy set"
-          />
-          <datalist id="drop_prof_list">
-            <option value="full"></option>
-            <option value="batch"></option>
-          </datalist>
         </label>
 
         <div style={{ marginTop: '0.85rem' }}>

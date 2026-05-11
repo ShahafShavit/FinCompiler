@@ -89,3 +89,110 @@
 .settings-btn-secondary:hover {
   filter: brightness(1.06);
 }
+
+.settings-drop-rules-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.75rem 0 0.5rem;
+}
+
+.settings-drop-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 44rem;
+  margin-top: 0.35rem;
+}
+
+.settings-drop-rule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card, rgba(0, 0, 0, 0.12));
+  max-width: 44rem;
+}
+
+.settings-drop-rule-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  align-items: start;
+}
+
+@media (max-width: 640px) {
+  .settings-drop-rule-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.settings-page .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.settings-drop-rule-row--invalid {
+  border-color: #b45309;
+  box-shadow: 0 0 0 1px rgba(180, 83, 9, 0.35);
+}
+
+.settings-drop-rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.settings-drop-rule-actions button {
+  font-size: 0.8rem;
+  padding: 0.25rem 0.45rem;
+}
+
+.settings-drop-rule-num {
+  font-size: 0.75rem;
+  opacity: 0.75;
+  margin-bottom: 0.1rem;
+}
+
+.settings-drop-rules-advanced {
+  margin-top: 1rem;
+  max-width: 44rem;
+}
+
+.settings-drop-rules-advanced summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  user-select: none;
+}
+
+.settings-drop-rules-advanced-inner {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.settings-drop-rules-advanced textarea {
+  width: 100%;
+  min-height: 10rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  resize: vertical;
+}
+
+.settings-drop-rules-empty {
+  font-size: 0.9rem;
+  opacity: 0.85;
+  margin: 0.35rem 0;
+}

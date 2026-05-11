@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { fetchJson } from '../lib/api';
+import { fetchJson, postJson } from '../lib/api';
 
 import './Categorize.css';
 
@@ -134,6 +134,46 @@ function readMappingIsStatic(groupName: string): 0 | 1 | null {
   if (!el?.value) return null;
   const v = parseInt(el.value, 10);
   return v === 0 ? 0 : 1;
+}
+
+function DiscardTrashIcon() {
+  const stroke = {
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+  };
+  return (
+    <svg
+      className="categorize-discard-btn__icon"
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path d="M3 6h18" {...stroke} />
+      <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" {...stroke} />
+      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6" {...stroke} />
+      <path d="M10 11v6" {...stroke} />
+      <path d="M14 11v6" {...stroke} />
+    </svg>
+  );
+}
+
+function DiscardTxnButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="categorize-discard-btn categorize-discard-btn--footer"
+      title="Exclude from totals and add a compile-time drop rule for this source"
+      onClick={onClick}
+    >
+      <DiscardTrashIcon />
+      <span>Discard</span>
+    </button>
+  );
 }
 
 function CategoryBadgePick({
@@ -393,6 +433,18 @@ export default function Categorize() {
     }
   };
 
+  const postDiscard = async (promptId: string) => {
+    setStatus('Discarding…');
+    try {
+      const r = await postJson<{ ok?: boolean; error?: string }>(`${CAT}/api/discard`, { prompt_id: promptId });
+      if (!r.ok) throw new Error((r.data as { error?: string })?.error || r.status.toString());
+      setStatus('Discarded.');
+      await fetchNext();
+    } catch (e) {
+      setStatus(`Error: ${e}`);
+    }
+  };
+
   const p = payload.pending || { kind: 'idle' };
   const sessionCats = payload.session_categories || [];
   const history = payload.history || [];
@@ -581,27 +633,37 @@ export default function Categorize() {
             <label className="categorize-section-label">Category</label>
             <CategoryBadgePick key={`main-fluid-${String(p.prompt_id)}`} name="main-fluid" options={pendingOpts} />
             <TxnNotesField key={`txn-fluid-${p.prompt_id}`} id="notes-main-fluid" defaultNotes={esc(p.notes)} />
-            <button
-              type="button"
-              onClick={() => {
-                const cat = readPickedCategory('main-fluid');
-                if (!cat) {
-                  setStatus('Pick a category or type one');
-                  return;
-                }
-                void submit(
-                  {
-                    kind: 'fluid',
-                    prompt_id: p.prompt_id,
-                    category: cat,
-                    notes: readTxnNotes('notes-main-fluid'),
-                  },
-                  { clearNotesId: 'notes-main-fluid' },
-                );
-              }}
-            >
-              Save
-            </button>
+            <div className="categorize-action-footer">
+              <div className="categorize-action-footer__row">
+                <button
+                  type="button"
+                  className="categorize-btn-save"
+                  onClick={() => {
+                    const cat = readPickedCategory('main-fluid');
+                    if (!cat) {
+                      setStatus('Pick a category or type one');
+                      return;
+                    }
+                    void submit(
+                      {
+                        kind: 'fluid',
+                        prompt_id: p.prompt_id,
+                        category: cat,
+                        notes: readTxnNotes('notes-main-fluid'),
+                      },
+                      { clearNotesId: 'notes-main-fluid' },
+                    );
+                  }}
+                >
+                  Save
+                </button>
+                <DiscardTxnButton onClick={() => void postDiscard(String(p.prompt_id))} />
+              </div>
+              <p className="hint categorize-discard-hint categorize-action-footer__hint">
+                Discard excludes this row from totals and categorize, and adds a compile-time drop rule for this exact
+                payee/source string (מקור עסקה) so future imports with the same value are removed before the ledger.
+              </p>
+            </div>
           </>
         ) : p.kind === 'resolve_static' ? (
           <>
@@ -651,6 +713,14 @@ export default function Categorize() {
                 Static (1)
               </button>
             </div>
+            <div className="categorize-action-footer">
+              <div className="categorize-action-footer__row categorize-action-footer__row--only-danger">
+                <DiscardTxnButton onClick={() => void postDiscard(String(p.prompt_id))} />
+              </div>
+              <p className="hint categorize-discard-hint categorize-action-footer__hint">
+                Discard excludes this row and adds a drop rule for this payee/source (מקור עסקה) on future compiles.
+              </p>
+            </div>
           </>
         ) : p.kind === 'new_store' ? (
           <>
@@ -663,33 +733,43 @@ export default function Categorize() {
             <CategoryBadgePick key={`main-new-${String(p.prompt_id)}`} name="main-new" options={pendingOpts} />
             <MappingTypeBlock key={`map-nst-${p.prompt_id}`} groupName="nst-main" />
             <TxnNotesField key={`txn-new-${p.prompt_id}`} id="notes-main-new" defaultNotes={esc(p.notes)} />
-            <button
-              type="button"
-              onClick={() => {
-                const cat = readPickedCategory('main-new');
-                if (!cat) {
-                  setStatus('Pick a category or type one');
-                  return;
-                }
-                const is_static = readMappingIsStatic('nst-main');
-                if (is_static === null) {
-                  setStatus('Choose Static or Dynamic mapping');
-                  return;
-                }
-                void submit(
-                  {
-                    kind: 'new_store',
-                    prompt_id: p.prompt_id,
-                    category: cat,
-                    is_static,
-                    notes: readTxnNotes('notes-main-new'),
-                  },
-                  { clearNotesId: 'notes-main-new' },
-                );
-              }}
-            >
-              Save
-            </button>
+            <div className="categorize-action-footer">
+              <div className="categorize-action-footer__row">
+                <button
+                  type="button"
+                  className="categorize-btn-save"
+                  onClick={() => {
+                    const cat = readPickedCategory('main-new');
+                    if (!cat) {
+                      setStatus('Pick a category or type one');
+                      return;
+                    }
+                    const is_static = readMappingIsStatic('nst-main');
+                    if (is_static === null) {
+                      setStatus('Choose Static or Dynamic mapping');
+                      return;
+                    }
+                    void submit(
+                      {
+                        kind: 'new_store',
+                        prompt_id: p.prompt_id,
+                        category: cat,
+                        is_static,
+                        notes: readTxnNotes('notes-main-new'),
+                      },
+                      { clearNotesId: 'notes-main-new' },
+                    );
+                  }}
+                >
+                  Save
+                </button>
+                <DiscardTxnButton onClick={() => void postDiscard(String(p.prompt_id))} />
+              </div>
+              <p className="hint categorize-discard-hint categorize-action-footer__hint">
+                Discard excludes this row from totals and categorize, and adds a compile-time drop rule for this exact
+                payee/source string (מקור עסקה) on future imports.
+              </p>
+            </div>
           </>
         ) : (
           <p>Unknown prompt state</p>

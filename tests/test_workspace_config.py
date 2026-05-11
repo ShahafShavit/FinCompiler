@@ -48,6 +48,7 @@ class WorkspaceRootTests(unittest.TestCase):
                     config_mod.export_dir,
                     config_mod.ledger_db_file,
                     config_mod.providers_file,
+                    config_mod.transaction_drop_rules_file,
                     config_mod.static_dir,
                     os.path.join(config_mod.web_dir.rstrip(os.sep), "data"),
                     config_mod.backup_parent_dir,

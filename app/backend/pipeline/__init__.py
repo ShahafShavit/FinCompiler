@@ -17,14 +17,12 @@ from . import route_inbox as route_inbox_mod
 from .compile_holdings import compile_holdings_main, ingest_holdings_inbox, pickle_from_raw_holdings
 from .compile_transactions import (
     TRANSACTION_DROP_COLUMNS,
-    TRANSACTION_DROP_SOURCES,
-    TRANSACTION_DROP_SOURCES_UI_EXTRA,
     compile_transactions_main,
     ingest_transactions_inbox,
     ingest_transactions_to_ledger,
     pickle_from_raw_transactions,
-    transaction_drop_pairs,
 )
+from .transaction_drop_rules import transaction_drop_pairs
 
 import providers
 
@@ -256,7 +254,6 @@ def run_holdings_pipeline(
 
 def run_all_pipelines_after_shared_downloads(
     *,
-    drop_profile: str = "full",
     auto_categorize: bool = False,
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
@@ -269,7 +266,6 @@ def run_all_pipelines_after_shared_downloads(
     run_holdings_pipeline(fetch=False, route=False, sink=sink)
     run_transactions_pipeline(
         route=False,
-        drop_profile=drop_profile,
         auto_categorize=auto_categorize,
         sink=sink,
     )
@@ -286,7 +282,6 @@ def run_transactions_pipeline(
     ingest: bool = True,
     compile_: bool = True,
     auto_categorize: bool = False,
-    drop_profile: str = "full",
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
     ensure_pipeline_dirs()
@@ -305,11 +300,10 @@ def run_transactions_pipeline(
     if ingest:
         ingest_transactions_inbox(sink=sink)
     if _pipeline_debug_dump():
-        pickle_from_raw_transactions(drop_profile=drop_profile, sink=sink)
+        pickle_from_raw_transactions(sink=sink)
     if compile_:
         compile_transactions_main(
             run_auto_categorize=auto_categorize,
-            drop_profile=drop_profile,
             sink=sink,
         )
 

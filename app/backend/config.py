@@ -72,6 +72,8 @@ static_dir = _static_root + os.sep
 # UI-managed secrets (portal + Google Sheets path/id). See ``providers``.
 private_dir = _data("private")
 providers_file = os.path.join(private_dir, "providers.json")
+# Transaction workbook row-drop rules (non-secret); created on first read if missing.
+transaction_drop_rules_file = os.path.join(private_dir, "transaction_drop_rules.json")
 
 # Timestamped pipeline snapshots (MIG-B). Lives under data/ (see .gitignore /data/).
 backup_parent_dir = _data("_backups")

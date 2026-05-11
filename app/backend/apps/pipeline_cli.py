@@ -129,7 +129,7 @@ TRANSACTIONS_EPILOG = """\
 notes:
   - Bank credit + bank osh can run in one Leumi session (enable both flags).
   - --from-date / --to-date only affect --fetch-bank-osh (same strings as in the bank UI).
-  - drop-profile: full = same column drops as the web / default transaction processor; batch = smaller legacy drop set.
+  - Row-drop rules for normalize live in ``data/private/transaction_drop_rules.json`` (Settings in the web app).
   - --categorize: after compile, run auto categorization; finish in the browser at /categorize/ (run ``python -m api.main``).
 
 examples:
@@ -183,7 +183,6 @@ examples:
   python run_pipeline.py both-process
   python run_pipeline.py both-process --auto-categorize
   python run_pipeline.py both-process --categorize
-  python run_pipeline.py both-process --drop-profile batch
 """
 
 
@@ -324,14 +323,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api.main`).",
     )
     tg_out.add_argument(
-        "--drop-profile",
-        choices=("full", "batch"),
-        default="full",
-        metavar="PROFILE",
-        help="'full' = same column drops as the default web transaction processor (default). "
-        "'batch' = smaller drop set for legacy imports.",
-    )
-    tg_out.add_argument(
         "--backup-first",
         action="store_true",
         help="Before the pipeline: write a timestamped snapshot under data/_backups/ "
@@ -375,13 +366,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api.main`).",
     )
     ag2.add_argument(
-        "--drop-profile",
-        choices=("full", "batch"),
-        default="full",
-        metavar="PROFILE",
-        help="Column-drop preset for the transactions side (see transactions --help).",
-    )
-    ag2.add_argument(
         "--backup-first",
         action="store_true",
         help="Before the pipelines: snapshot export, static, ledger, and web/data (see transactions --help).",
@@ -403,13 +387,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--categorize",
         action="store_true",
         help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api.main`).",
-    )
-    b.add_argument(
-        "--drop-profile",
-        choices=("full", "batch"),
-        default="full",
-        metavar="PROFILE",
-        help="Column-drop preset for transactions (see transactions --help).",
     )
     b.add_argument(
         "--backup-first",
@@ -459,7 +436,6 @@ def main(argv: list[str] | None = None) -> int:
             ingest=not args.no_ingest,
             compile_=not args.no_compile,
             auto_categorize=args.auto_categorize and not do_interactive_cat,
-            drop_profile=args.drop_profile,
         )
         if do_interactive_cat:
             pipeline.run_auto_categorize_with_web_remainder()
@@ -479,7 +455,6 @@ def main(argv: list[str] | None = None) -> int:
             )
         auto_only = args.auto_categorize and not args.categorize
         pipeline.run_all_pipelines_after_shared_downloads(
-            drop_profile=args.drop_profile,
             auto_categorize=auto_only,
         )
         if args.categorize:
@@ -491,7 +466,6 @@ def main(argv: list[str] | None = None) -> int:
             _run_cli_backup_first()
         auto_only = args.auto_categorize and not args.categorize
         pipeline.run_all_pipelines_after_shared_downloads(
-            drop_profile=args.drop_profile,
             auto_categorize=auto_only,
         )
         if args.categorize:

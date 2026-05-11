@@ -14,7 +14,16 @@ import config
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
-from api import categorize_queue, dashboard, heatmap, integrity, jobs, providers_config, sheets
+from api import (
+    categorize_queue,
+    dashboard,
+    heatmap,
+    integrity,
+    jobs,
+    providers_config,
+    sheets,
+    transaction_drop_rules_config,
+)
 from api.utils import (
     StateDep,
     SPA_INDEX_MISSING_BYTES,
@@ -98,6 +107,12 @@ def register_routes(app: FastAPI) -> None:
     async def cat_revise(request: Request) -> Response:
         raw = await request.body()
         code, body, ct = categorize_queue.handle_post("/api/revise", raw)
+        return Response(content=body, status_code=code, media_type=ct)
+
+    @cat.post("/api/discard", include_in_schema=False)
+    async def cat_discard(request: Request) -> Response:
+        raw = await request.body()
+        code, body, ct = categorize_queue.handle_post("/api/discard", raw)
         return Response(content=body, status_code=code, media_type=ct)
 
     app.include_router(cat, prefix="/categorize")
@@ -264,6 +279,32 @@ def register_routes(app: FastAPI) -> None:
         clen = int(request.headers.get("content-length", "0") or "0")
         raw = await request.body() if clen > 0 else b"{}"
         status, payload = providers_config.put_config(raw)
+        return Response(
+            content=json_bytes_strict(payload),
+            status_code=status,
+            media_type="application/json; charset=utf-8",
+        )
+
+    @r.get("/api/transaction-drop-rules", include_in_schema=False)
+    async def transaction_drop_rules_get() -> Response:
+        try:
+            doc = transaction_drop_rules_config.get_config()
+        except ValueError as e:
+            return Response(
+                content=json_bytes_strict({"ok": False, "error": "validation_error", "message": str(e)}),
+                status_code=500,
+                media_type="application/json; charset=utf-8",
+            )
+        return Response(
+            content=json_bytes_strict(doc),
+            media_type="application/json; charset=utf-8",
+        )
+
+    @r.put("/api/transaction-drop-rules", include_in_schema=False)
+    async def transaction_drop_rules_put(request: Request) -> Response:
+        clen = int(request.headers.get("content-length", "0") or "0")
+        raw = await request.body() if clen > 0 else b"{}"
+        status, payload = transaction_drop_rules_config.put_config(raw)
         return Response(
             content=json_bytes_strict(payload),
             status_code=status,

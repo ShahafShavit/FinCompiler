@@ -21,6 +21,62 @@ type ProvidersApi = {
 
 const BANK_OPTIONS = [{ id: 'leumi', label: 'Bank Leumi (Leumi)' }];
 
+type DropRuleRow = { key: string; column: string; value: string };
+
+const DEFAULT_DROP_COLUMN = 'מקור עסקה';
+
+function newDropRuleKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `r-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function emptyDropRuleRow(): DropRuleRow {
+  return { key: newDropRuleKey(), column: DEFAULT_DROP_COLUMN, value: '' };
+}
+
+function rowsFromDropRulesApi(data: Record<string, unknown>): DropRuleRow[] {
+  const rules = data.rules;
+  if (!Array.isArray(rules)) return [];
+  const out: DropRuleRow[] = [];
+  for (const item of rules) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const col = typeof o.column === 'string' ? o.column : String(o.column ?? '');
+    const val = typeof o.value === 'string' ? o.value : String(o.value ?? '');
+    out.push({ key: newDropRuleKey(), column: col, value: val });
+  }
+  return out;
+}
+
+function validateDropRuleRowsForSave(rows: DropRuleRow[]): string | null {
+  const problems: string[] = [];
+  rows.forEach((r, i) => {
+    const c = r.column.trim();
+    const v = r.value.trim();
+    if (c && !v) problems.push(`Row ${i + 1}: value is required when column is set.`);
+    if (!c && v) problems.push(`Row ${i + 1}: column is required when value is set.`);
+  });
+  return problems.length ? problems.join(' ') : null;
+}
+
+function buildDropRulesPayload(rows: DropRuleRow[]): {
+  version: 1;
+  rules: { column: string; value: string }[];
+} {
+  const rules = rows
+    .map((r) => ({ column: r.column.trim(), value: r.value.trim() }))
+    .filter((r) => r.column.length > 0 && r.value.length > 0);
+  return { version: 1, rules };
+}
+
+function rowLooksIncomplete(r: DropRuleRow): boolean {
+  const c = r.column.trim();
+  const v = r.value.trim();
+  return (c.length > 0 && v.length === 0) || (c.length === 0 && v.length > 0);
+}
+
 export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -42,6 +98,11 @@ export default function Settings() {
 
   const [gPath, setGPath] = useState('');
   const [gSheet, setGSheet] = useState('');
+
+  const [dropRulesRows, setDropRulesRows] = useState<DropRuleRow[]>([]);
+  const [dropRulesAdvancedJson, setDropRulesAdvancedJson] = useState('');
+  const [dropRulesErr, setDropRulesErr] = useState<string | null>(null);
+  const [dropRulesMsg, setDropRulesMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -83,6 +144,25 @@ export default function Settings() {
       setIsrLast6('');
       setGPath(data.google_sheets.service_account_json_path || '');
       setGSheet(data.google_sheets.worksheet_id || '');
+
+      setDropRulesErr(null);
+      setDropRulesMsg(null);
+      const dr = await fetchJson<Record<string, unknown>>('/api/transaction-drop-rules', {
+        cache: 'no-store',
+        signal: ctrl.signal,
+      });
+      if (dr.ok && dr.data && typeof dr.data === 'object') {
+        const doc = dr.data as Record<string, unknown>;
+        const next = rowsFromDropRulesApi(doc);
+        setDropRulesRows(next.length > 0 ? next : [emptyDropRuleRow()]);
+        setDropRulesAdvancedJson(JSON.stringify(buildDropRulesPayload(next.length > 0 ? next : [emptyDropRuleRow()]), null, 2));
+      } else {
+        setDropRulesRows([emptyDropRuleRow()]);
+        setDropRulesAdvancedJson(JSON.stringify({ version: 1, rules: [] }, null, 2));
+        setDropRulesErr(
+          `Transaction drop rules: failed to load (${dr.status}). ${JSON.stringify(dr.data).slice(0, 200)}`,
+        );
+      }
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
         setErr(
@@ -153,6 +233,107 @@ export default function Settings() {
     setIsrLast6('');
   }
 
+  function syncAdvancedJsonFromRows(rows: DropRuleRow[]) {
+    setDropRulesAdvancedJson(JSON.stringify(buildDropRulesPayload(rows), null, 2));
+  }
+
+  function applyJsonToDropRulesTable() {
+    setDropRulesErr(null);
+    setDropRulesMsg(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(dropRulesAdvancedJson || '{}');
+    } catch {
+      setDropRulesErr('Advanced JSON: invalid JSON.');
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      setDropRulesErr('Advanced JSON: root must be an object.');
+      return;
+    }
+    const o = parsed as Record<string, unknown>;
+    if (o.version !== undefined && Number(o.version) !== 1) {
+      setDropRulesErr('Advanced JSON: only version 1 is supported.');
+      return;
+    }
+    if (!Array.isArray(o.rules)) {
+      setDropRulesErr('Advanced JSON: missing or invalid "rules" array.');
+      return;
+    }
+    const next = rowsFromDropRulesApi(o);
+    const rowsToSet = next.length > 0 ? next : [emptyDropRuleRow()];
+    setDropRulesRows(rowsToSet);
+    setDropRulesAdvancedJson(JSON.stringify(buildDropRulesPayload(rowsToSet), null, 2));
+    setDropRulesMsg('Table updated from JSON.');
+  }
+
+  async function saveDropRules() {
+    setDropRulesErr(null);
+    setDropRulesMsg(null);
+    const invalid = validateDropRuleRowsForSave(dropRulesRows);
+    if (invalid) {
+      setDropRulesErr(invalid);
+      return;
+    }
+    const body = buildDropRulesPayload(dropRulesRows);
+    if (body.rules.length === 0) {
+      const ok = window.confirm(
+        'Save with zero rules? No workbook rows will be dropped by this list at compile time.',
+      );
+      if (!ok) return;
+    }
+    const r = await putJson<{ ok?: boolean; error?: string; message?: string; config?: Record<string, unknown> }>(
+      '/api/transaction-drop-rules',
+      body,
+    );
+    if (!r.ok || !r.data.ok) {
+      setDropRulesErr((r.data as { message?: string }).message || `Save failed (${r.status})`);
+      return;
+    }
+    setDropRulesMsg('Transaction drop rules saved.');
+    if (r.data.config && typeof r.data.config === 'object') {
+      const next = rowsFromDropRulesApi(r.data.config as Record<string, unknown>);
+      setDropRulesRows(next.length > 0 ? next : [emptyDropRuleRow()]);
+      syncAdvancedJsonFromRows(next.length > 0 ? next : [emptyDropRuleRow()]);
+    }
+  }
+
+  function updateDropRuleRow(key: string, patch: Partial<Pick<DropRuleRow, 'column' | 'value'>>) {
+    setDropRulesRows((rows) => rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+  }
+
+  function removeDropRuleRow(key: string) {
+    setDropRulesRows((rows) => {
+      const next = rows.filter((r) => r.key !== key);
+      return next.length > 0 ? next : [emptyDropRuleRow()];
+    });
+  }
+
+  function moveDropRuleRow(key: string, dir: -1 | 1) {
+    setDropRulesRows((rows) => {
+      const i = rows.findIndex((r) => r.key === key);
+      if (i < 0) return rows;
+      const j = i + dir;
+      if (j < 0 || j >= rows.length) return rows;
+      const copy = [...rows];
+      const t = copy[i];
+      copy[i] = copy[j];
+      copy[j] = t;
+      return copy;
+    });
+  }
+
+  function addDropRuleRow() {
+    setDropRulesRows((rows) => [...rows, emptyDropRuleRow()]);
+  }
+
+  function removeEmptyDropRuleRows() {
+    setDropRulesRows((rows) => {
+      const kept = rows.filter((r) => r.column.trim() !== '' || r.value.trim() !== '');
+      return kept.length > 0 ? kept : [emptyDropRuleRow()];
+    });
+  }
+
   async function importEnv() {
     setErr(null);
     setMsg(null);
@@ -175,7 +356,7 @@ export default function Settings() {
   return (
     <div className="pipe-page settings-page">
       <header className="pipe-header">
-        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Providers &amp; secrets</h1>
+        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Providers, pipeline rules &amp; secrets</h1>
       </header>
       {loading ? (
         <p className="pipe-status settings-loading-banner" role="status">
@@ -194,6 +375,8 @@ export default function Settings() {
       ) : null}
       {err ? <p className="settings-error">{err}</p> : null}
       {msg ? <p className="settings-msg">{msg}</p> : null}
+      {dropRulesErr ? <p className="settings-error">{dropRulesErr}</p> : null}
+      {dropRulesMsg ? <p className="settings-msg">{dropRulesMsg}</p> : null}
 
       <section className="settings-section card">
         <h2>Bank portal</h2>
@@ -307,6 +490,113 @@ export default function Settings() {
             maxLength={6}
           />
         </label>
+      </section>
+
+      <section className="settings-section card">
+        <h2>Transaction drop rules</h2>
+        <p className="settings-hint">
+          Stored in <code>data/private/transaction_drop_rules.json</code> (created on first use). Each rule removes
+          workbook rows where the column exactly equals the value before compile. Wildcards are not special.
+        </p>
+        <div className="settings-drop-rules-toolbar">
+          <button type="button" className="settings-btn-secondary" onClick={addDropRuleRow}>
+            Add rule
+          </button>
+          <button type="button" className="settings-btn-secondary" onClick={removeEmptyDropRuleRows}>
+            Remove empty rows
+          </button>
+        </div>
+        {dropRulesRows.length === 0 ? (
+          <p className="settings-drop-rules-empty">No rows loaded yet.</p>
+        ) : (
+          <div className="settings-drop-rules-list">
+            {dropRulesRows.map((row, idx) => (
+              <div
+                key={row.key}
+                className={`settings-drop-rule-row${rowLooksIncomplete(row) ? ' settings-drop-rule-row--invalid' : ''}`}
+              >
+                <span className="settings-drop-rule-num">Rule {idx + 1}</span>
+                <div className="settings-drop-rule-fields">
+                  <label className="settings-label" style={{ margin: 0 }}>
+                    Column
+                    <input
+                      className="pipe-input-text settings-input-wide"
+                      spellCheck={false}
+                      value={row.column}
+                      onChange={(e) => updateDropRuleRow(row.key, { column: e.target.value })}
+                      placeholder="e.g. מקור עסקה"
+                    />
+                  </label>
+                  <label className="settings-label" style={{ margin: 0 }}>
+                    Value
+                    <input
+                      className="pipe-input-text settings-input-wide mono"
+                      spellCheck={false}
+                      value={row.value}
+                      onChange={(e) => updateDropRuleRow(row.key, { value: e.target.value })}
+                      placeholder="exact cell text to drop"
+                    />
+                  </label>
+                </div>
+                <div className="settings-drop-rule-actions">
+                  <button
+                    type="button"
+                    className="settings-btn-secondary"
+                    title="Move up"
+                    disabled={idx === 0}
+                    onClick={() => moveDropRuleRow(row.key, -1)}
+                  >
+                    Up
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-btn-secondary"
+                    title="Move down"
+                    disabled={idx === dropRulesRows.length - 1}
+                    onClick={() => moveDropRuleRow(row.key, 1)}
+                  >
+                    Down
+                  </button>
+                  <button type="button" className="settings-btn-secondary" onClick={() => removeDropRuleRow(row.key)}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="settings-actions" style={{ marginTop: '0.75rem' }}>
+          <button type="button" className="settings-btn-primary" onClick={() => void saveDropRules()}>
+            Save drop rules
+          </button>
+        </div>
+        <details className="settings-drop-rules-advanced">
+          <summary>Advanced: edit as JSON</summary>
+          <div className="settings-drop-rules-advanced-inner">
+            <p className="settings-hint" style={{ marginTop: 0 }}>
+              Paste or edit the full document, then apply to the table. Save drop rules still sends the table state
+              (use Save after applying if needed).
+            </p>
+            <div className="settings-drop-rules-toolbar">
+              <button
+                type="button"
+                className="settings-btn-secondary"
+                onClick={() => syncAdvancedJsonFromRows(dropRulesRows)}
+              >
+                Load current rules into editor
+              </button>
+              <button type="button" className="settings-btn-secondary" onClick={applyJsonToDropRulesTable}>
+                Apply JSON to table
+              </button>
+            </div>
+            <textarea
+              value={dropRulesAdvancedJson}
+              onChange={(e) => setDropRulesAdvancedJson(e.target.value)}
+              spellCheck={false}
+              aria-label="Transaction drop rules JSON"
+            />
+          </div>
+        </details>
       </section>
 
       <section className="settings-section card">

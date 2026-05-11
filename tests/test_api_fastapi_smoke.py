@@ -39,6 +39,12 @@ class FastApiControlSmokeTests(unittest.TestCase):
                 self.assertEqual(r2.status_code, 200)
                 self.assertIn("ok", r2.json())
 
+                r_drop = client.get("/api/transaction-drop-rules")
+                self.assertEqual(r_drop.status_code, 200)
+                dj = r_drop.json()
+                self.assertEqual(dj.get("version"), 1)
+                self.assertIsInstance(dj.get("rules"), list)
+
                 r3 = client.post(
                     "/api/jobs/run",
                     content=b"not-json",

@@ -470,6 +470,87 @@
   color: #f0f3ff;
 }
 
+.categorize-action-footer {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.categorize-action-footer__row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 1.25rem;
+  flex-wrap: wrap;
+}
+
+.categorize-action-footer__row--only-danger {
+  justify-content: flex-end;
+}
+
+.categorize-action-footer__hint {
+  margin: 0.65rem 0 0;
+  max-width: 100%;
+}
+
+.categorize-page .categorize-btn-save {
+  margin-top: 0 !important;
+  min-width: 6.5rem;
+  padding: 0.48rem 1.2rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid rgba(99, 102, 241, 0.85);
+  background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
+  color: #f8fafc;
+  box-shadow: 0 2px 12px rgba(76, 110, 245, 0.35);
+  cursor: pointer;
+}
+
+.categorize-page .categorize-btn-save:hover {
+  filter: brightness(1.06);
+}
+
+.categorize-page button.categorize-discard-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  padding: 0.38rem 0.65rem;
+  font-weight: 600;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.42);
+  border: 1px solid rgba(248, 113, 113, 0.65);
+  box-shadow: none;
+  letter-spacing: 0.02em;
+}
+
+.categorize-page button.categorize-discard-btn:hover {
+  color: #fee2e2;
+  background: rgba(185, 28, 28, 0.55);
+  border-color: #f87171;
+}
+
+.categorize-page button.categorize-discard-btn:focus-visible {
+  outline: 2px solid #f87171;
+  outline-offset: 2px;
+}
+
+.categorize-discard-btn__icon {
+  flex-shrink: 0;
+  color: #fca5a5;
+}
+
+.categorize-page button.categorize-discard-btn:hover .categorize-discard-btn__icon {
+  color: #fecaca;
+}
+
+.categorize-page .categorize-discard-hint {
+  opacity: 0.88;
+  font-size: 0.82rem;
+}
+
 .categorize-page .row2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -522,7 +603,18 @@
   width: auto;
 }
 
-.categorize-page > .categorize-card button[type='button']:not(.small):not(.secondary) {
+.categorize-page button.categorize-discard-btn--footer {
+  margin-top: 0 !important;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.88rem;
+  flex-shrink: 0;
+}
+
+.categorize-action-footer__row .categorize-discard-btn {
+  align-self: center;
+}
+
+.categorize-page > .categorize-card button[type='button']:not(.small):not(.secondary):not(.categorize-btn-save) {
   margin-top: 0.35rem;
 }
 

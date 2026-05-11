@@ -35,14 +35,9 @@ def run_action(
     ``options`` keys (all optional unless noted):
       fetch_holdings, fetch_max_isracard, fetch_bank_credit, fetch_bank_osh (bools)
       from_date, to_date (osh)
-      drop_profile: full | batch
       auto_categorize, no_fetch (bools)
       backup_first (bool) — snapshot compiled/static/web data before compile-oriented jobs
     """
-    drop_profile = str(options.get("drop_profile") or "full").strip().lower()
-    if drop_profile not in ("full", "batch"):
-        drop_profile = "full"
-
     if action == "pipeline":
         dl = bool(options.get("download_enabled", False))
         if dl:
@@ -83,7 +78,6 @@ def run_action(
             pipeline.run_transactions_pipeline(
                 route=False,
                 auto_categorize=bool(options.get("auto_categorize", False)),
-                drop_profile=drop_profile,
                 sink=sink,
             )
         return
@@ -134,7 +128,6 @@ def run_action(
             ingest=not bool(options.get("no_ingest")),
             compile_=not bool(options.get("no_compile")),
             auto_categorize=bool(options.get("auto_categorize")) and not do_cat,
-            drop_profile=drop_profile,
             sink=sink,
         )
         if do_cat:
@@ -147,7 +140,6 @@ def run_action(
             options.get("categorize_interactive")
         )
         pipeline.run_all_pipelines_after_shared_downloads(
-            drop_profile=drop_profile,
             auto_categorize=auto_only,
             sink=sink,
         )
@@ -178,7 +170,6 @@ def run_action(
             options.get("categorize_interactive")
         )
         pipeline.run_all_pipelines_after_shared_downloads(
-            drop_profile=drop_profile,
             auto_categorize=auto_only,
             sink=sink,
         )
