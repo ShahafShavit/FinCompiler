@@ -248,7 +248,7 @@ class CategorizeFile:
 
     Web flow: query uncategorized rows, one ``UPDATE`` per saved answer; when a store becomes
     static (``is_static = 1``), forward-fill runs for **other** uncategorized rows for that store
-    only (see :func:`pipeline.ledger.forward_fill_uncategorized_for_store_if_static_sql`).
+    only (see :func:`ledger.forward_fill_uncategorized_for_store_if_static_sql`).
     """
 
     def __init__(
@@ -267,8 +267,8 @@ class CategorizeFile:
         self._io_lock = threading.Lock()
 
         if ledger_db_path:
-            from pipeline.ledger import load_transactions_dataframe_from_ledger
-            from pipeline.ledger import migrate_ledger_db
+            from ledger import load_transactions_dataframe_from_ledger
+            from ledger import migrate_ledger_db
 
             migrate_ledger_db(ledger_db_path)
             self.file_path = ledger_db_path
@@ -332,7 +332,7 @@ class CategorizeFile:
 
     def load_stores(self):
         if self._ledger_db_path:
-            from pipeline.ledger import load_stores_dataframe_from_ledger
+            from ledger import load_stores_dataframe_from_ledger
 
             self.stores_df = load_stores_dataframe_from_ledger(self._ledger_db_path)
             return
@@ -353,7 +353,7 @@ class CategorizeFile:
 
     def save_stores(self):
         if self._ledger_db_path:
-            from pipeline.ledger import sync_stores_to_ledger_from_dataframe
+            from ledger import sync_stores_to_ledger_from_dataframe
 
             sync_stores_to_ledger_from_dataframe(self._ledger_db_path, self.stores_df)
             return
@@ -361,7 +361,7 @@ class CategorizeFile:
 
     def save_progress(self):
         if self._ledger_db_path:
-            from pipeline.ledger import update_categories_by_fingerprint_batch
+            from ledger import update_categories_by_fingerprint_batch
 
             if self._ledger_category_dirty:
                 n = update_categories_by_fingerprint_batch(
@@ -393,8 +393,8 @@ class CategorizeFile:
         with self._io_lock:
             self.load_stores()
             if self._ledger_db_path:
-                from pipeline.ledger import load_ledger_transaction_by_stable_id
-                from pipeline.ledger import update_category_by_fingerprint
+                from ledger import load_ledger_transaction_by_stable_id
+                from ledger import update_category_by_fingerprint
 
                 row = load_ledger_transaction_by_stable_id(self._ledger_db_path, str(transaction_id))
                 if row is None:
@@ -547,8 +547,8 @@ class CategorizeFile:
 
     def _persist_category_for_transaction(self, transaction_id: str, category: str) -> None:
         if self._ledger_db_path:
-            from pipeline.ledger import load_ledger_transaction_by_stable_id
-            from pipeline.ledger import update_category_by_fingerprint
+            from ledger import load_ledger_transaction_by_stable_id
+            from ledger import update_category_by_fingerprint
 
             row = load_ledger_transaction_by_stable_id(self._ledger_db_path, str(transaction_id))
             if row is None:
@@ -651,7 +651,7 @@ class CategorizeFile:
         ldb_row = None
         row_mask = None
         if self._ledger_db_path:
-            from pipeline.ledger import load_ledger_transaction_by_stable_id
+            from ledger import load_ledger_transaction_by_stable_id
 
             ldb_row = load_ledger_transaction_by_stable_id(self._ledger_db_path, tid)
             if ldb_row is None:
@@ -714,7 +714,7 @@ class CategorizeFile:
     def count_rows_needing_category(self) -> int:
         """Rows still needing a manual category (ledger: live query; CSV: ``transactions_df``)."""
         if self._ledger_db_path:
-            from pipeline.ledger import count_transactions_needing_manual_category
+            from ledger import count_transactions_needing_manual_category
 
             return count_transactions_needing_manual_category(self._ledger_db_path)
         if self.transactions_df is None or self.transactions_df.empty:
@@ -725,7 +725,7 @@ class CategorizeFile:
     def load_known_transactions(self):
         """Backup category hints keyed by stable id (fingerprint from ledger; CSV legacy uses ``transaction_id``)."""
         if self._ledger_db_path:
-            from pipeline.ledger import load_known_transactions_backup_from_ledger
+            from ledger import load_known_transactions_backup_from_ledger
 
             return load_known_transactions_backup_from_ledger(self._ledger_db_path)
         if os.path.isfile(config.transaction_category_file):
@@ -736,10 +736,10 @@ class CategorizeFile:
 
     def auto_categorize(self):
         if self._ledger_db_path:
-            from pipeline.ledger import count_ledger_transaction_rows
-            from pipeline.ledger import count_transactions_needing_manual_category
-            from pipeline.ledger import forward_fill_uncategorized_for_static_stores_sql
-            from pipeline.ledger import load_transactions_dataframe_from_ledger
+            from ledger import count_ledger_transaction_rows
+            from ledger import count_transactions_needing_manual_category
+            from ledger import forward_fill_uncategorized_for_static_stores_sql
+            from ledger import load_transactions_dataframe_from_ledger
 
             total_rows = (
                 len(self.transactions_df)
@@ -834,7 +834,7 @@ class CategorizeFile:
         """Bulk-fill other uncategorized rows for this store when it is static (never overwrites set categories)."""
         if not self._ledger_db_path or int(is_static) != 1:
             return
-        from pipeline.ledger import forward_fill_uncategorized_for_store_if_static_sql
+        from ledger import forward_fill_uncategorized_for_store_if_static_sql
 
         n = forward_fill_uncategorized_for_store_if_static_sql(
             self._ledger_db_path,

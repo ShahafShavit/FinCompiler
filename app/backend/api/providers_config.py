@@ -1,4 +1,4 @@
-"""HTTP helpers for ``/api/providers-config`` (GET redacted, PUT merge, import-env)."""
+"""JSON handlers for ``/api/providers-config`` (GET redacted, PUT merge, import-env)."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ import providers
 log = logging.getLogger(__name__)
 
 
-def api_get() -> dict[str, Any]:
+def get_config() -> dict[str, Any]:
     doc = providers.load_document()
     return providers.document_for_api_get(doc)
 
 
-def api_put(raw_body: bytes) -> tuple[int, dict[str, Any]]:
+def put_config(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     try:
         body = json.loads(raw_body.decode("utf-8") or "{}")
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -48,7 +48,7 @@ def api_put(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     return 200, {"ok": True, "config": providers.document_for_api_get(merged)}
 
 
-def api_import_env() -> tuple[int, dict[str, Any]]:
+def import_dotenv() -> tuple[int, dict[str, Any]]:
     try:
         merged = providers.import_legacy_env_from_dotenv(save=True)
     except OSError as e:

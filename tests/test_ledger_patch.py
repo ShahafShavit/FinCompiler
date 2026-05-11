@@ -1,4 +1,4 @@
-"""Tests for :func:`pipeline.ledger.patch_ledger_transaction_by_id`."""
+"""Tests for :func:`ledger.patch_ledger_transaction_by_id`."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class LedgerPatchTests(unittest.TestCase):
         os.environ["FINANCE_WORKSPACE_ROOT"] = tmp.name
         with patch("dotenv.load_dotenv"):
             importlib.reload(config_mod)
-        from pipeline.ledger import migrate_ledger_db
+        from ledger import migrate_ledger_db
 
         migrate_ledger_db()
         return tmp, config_mod.ledger_db_file
@@ -60,7 +60,7 @@ class LedgerPatchTests(unittest.TestCase):
         return int(rid)
 
     def test_notes_only_preserves_fingerprint(self) -> None:
-        from pipeline.ledger import patch_ledger_transaction_by_id
+        from ledger import patch_ledger_transaction_by_id
 
         tmp, db_path = self._fresh_db()
         try:
@@ -108,7 +108,7 @@ class LedgerPatchTests(unittest.TestCase):
             tmp.cleanup()
 
     def test_fingerprint_field_without_confirmation_rejected(self) -> None:
-        from pipeline.ledger import patch_ledger_transaction_by_id
+        from ledger import patch_ledger_transaction_by_id
 
         tmp, db_path = self._fresh_db()
         try:
@@ -147,7 +147,7 @@ class LedgerPatchTests(unittest.TestCase):
             tmp.cleanup()
 
     def test_fingerprint_change_with_phrase_updates_row(self) -> None:
-        from pipeline.ledger import LEDGER_FINGERPRINT_CONFIRM_PHRASE, patch_ledger_transaction_by_id
+        from ledger import LEDGER_FINGERPRINT_CONFIRM_PHRASE, patch_ledger_transaction_by_id
 
         tmp, db_path = self._fresh_db()
         try:
@@ -201,7 +201,7 @@ class LedgerPatchTests(unittest.TestCase):
             tmp.cleanup()
 
     def test_fingerprint_collision_returns_error(self) -> None:
-        from pipeline.ledger import LEDGER_FINGERPRINT_CONFIRM_PHRASE, patch_ledger_transaction_by_id
+        from ledger import LEDGER_FINGERPRINT_CONFIRM_PHRASE, patch_ledger_transaction_by_id
 
         tmp, db_path = self._fresh_db()
         try:
@@ -257,7 +257,7 @@ class LedgerPatchTests(unittest.TestCase):
             tmp.cleanup()
 
     def test_excluded_from_calculations_patch(self) -> None:
-        from pipeline.ledger import patch_ledger_transaction_by_id
+        from ledger import patch_ledger_transaction_by_id
 
         tmp, db_path = self._fresh_db()
         try:

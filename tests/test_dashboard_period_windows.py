@@ -20,8 +20,8 @@ class DashboardPeriodWindowTests(unittest.TestCase):
     def test_period_all_sums_non_excluded_only(self) -> None:
         import config as config_mod
 
-        from pipeline.ledger import migrate_ledger_db
-        from api import dashboard_tx_sql
+        from ledger import migrate_ledger_db
+        from ledger import dashboard_sql as dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -61,8 +61,8 @@ class DashboardPeriodWindowTests(unittest.TestCase):
     def test_period_calendar_year_filters_effective_ym(self) -> None:
         import config as config_mod
 
-        from pipeline.ledger import migrate_ledger_db
-        from api import dashboard_tx_sql
+        from ledger import migrate_ledger_db
+        from ledger import dashboard_sql as dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -98,8 +98,8 @@ class DashboardPeriodWindowTests(unittest.TestCase):
     def test_custom_start_end_ym_inclusive_order_independent(self) -> None:
         import config as config_mod
 
-        from pipeline.ledger import migrate_ledger_db
-        from api import dashboard_tx_sql
+        from ledger import migrate_ledger_db
+        from ledger import dashboard_sql as dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -141,8 +141,8 @@ class DashboardPeriodWindowTests(unittest.TestCase):
     def test_effective_month_bounds(self) -> None:
         import config as config_mod
 
-        from pipeline.ledger import migrate_ledger_db
-        from api import dashboard_tx_sql
+        from ledger import migrate_ledger_db
+        from ledger import dashboard_sql as dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp

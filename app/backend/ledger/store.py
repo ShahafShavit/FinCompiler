@@ -2278,3 +2278,33 @@ def run_installment_statement_month_fill(
         }
     finally:
         conn.close()
+
+
+def heatmap_ledger_row_counts(db_path: str) -> dict[str, Any]:
+    """Counts for heatmap source status. ``transaction_count`` is included rows; ``-1`` on query error."""
+    import sqlite3 as _sqlite3
+
+    payload: dict[str, Any] = {
+        "transaction_count": 0,
+        "transaction_count_total_stored": 0,
+        "transaction_count_excluded": 0,
+    }
+    try:
+        migrate_ledger_db(db_path)
+        conn = _sqlite3.connect(db_path)
+        try:
+            total = int(conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0] or 0)
+            inc = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM ledger_transaction WHERE {LEDGER_SQL_TX_INCLUDED}"
+                ).fetchone()[0]
+                or 0
+            )
+            payload["transaction_count_total_stored"] = total
+            payload["transaction_count_excluded"] = max(0, total - inc)
+            payload["transaction_count"] = inc
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        payload["transaction_count"] = -1
+    return payload

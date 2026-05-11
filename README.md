@@ -174,7 +174,7 @@ See **[Environment variables](#environment-variables)** for every key. You only 
 From the **repository root**, with **`PYTHONPATH`** including **`app/backend`** ([below](#python-path-and-working-directory)):
 
 ```bash
-python -m api
+python -m api.main
 ```
 
 Open [http://127.0.0.1:8780/](http://127.0.0.1:8780/) (default port **8780**).
@@ -260,16 +260,16 @@ PYTHONPATH=app/backend python -m providers
 ## Run the web app
 
 ```bash
-python -m api
+python -m api.main
 ```
 
-The VS Code task **Web (Python): control server** runs [`app/backend/scripts/api_server_restart.py`](app/backend/scripts/api_server_restart.py): frees port **8780**, sets **`PYTHONPATH`**, starts **`api`** from the repo root.
+The VS Code task **Web (Python): control server** runs [`app/backend/scripts/api_server_restart.py`](app/backend/scripts/api_server_restart.py): frees port **8780**, sets **`PYTHONPATH`**, starts **`python -m api.main`** from the repo root.
 
 **Windows cmd** without activating the venv:
 
 ```cmd
 set PYTHONPATH=app\backend
-.venv\Scripts\python.exe -m api
+.venv\Scripts\python.exe -m api.main
 ```
 
 | Page | URL |
@@ -288,7 +288,7 @@ If **`app/frontend/dist/`** is missing, you get a placeholder page with build in
 **Terminal 1** (repo root, `PYTHONPATH=app/backend`):
 
 ```bash
-python -m api
+python -m api.main
 ```
 
 **Terminal 2**
@@ -325,7 +325,7 @@ Commands (each has its own flags—use **`python run_pipeline.py COMMAND --help`
 
 [`run_pipeline.py`](run_pipeline.py) and [`main.py`](main.py) delegate to **`apps.pipeline_cli`** with **`app/backend`** on **`sys.path`**.
 
-`run_pipeline.py … --categorize` runs auto-categorization; finish remaining rows at **`/categorize/`** while **`python -m api`** is running.
+`run_pipeline.py … --categorize` runs auto-categorization; finish remaining rows at **`/categorize/`** while **`python -m api.main`** is running.
 
 ## Contributing
 
@@ -355,7 +355,7 @@ Run from the repo root with **`PYTHONPATH=app/backend`** unless the script boots
 | Command | Purpose |
 |---------|---------|
 | `python app/backend/scripts/verify_ledger_integrity.py` | Structural audit of the ledger DB ([`pipeline/ledger.py`](app/backend/pipeline/ledger.py)). |
-| `python app/backend/scripts/api_server_restart.py` | Free port **8780**, start **`python -m api`** with correct **`PYTHONPATH`** and cwd. |
+| `python app/backend/scripts/api_server_restart.py` | Free port **8780**, start **`python -m api.main`** with correct **`PYTHONPATH`** and cwd. |
 
 Additional scripts: [`app/backend/scripts`](app/backend/scripts).
 

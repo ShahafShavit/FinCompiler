@@ -219,7 +219,7 @@ def run_auto_categorize_with_web_remainder(
     """Auto-pass on the SQLite ledger; rows that still need a category are handled in the browser at ``/categorize/``."""
     from api.categorize import CategorizeFile
 
-    from pipeline.ledger import migrate_ledger_db
+    from ledger import migrate_ledger_db
 
     migrate_ledger_db()
     _notify("CATEGORIZE: running auto pass (remaining questions → web app)", sink)

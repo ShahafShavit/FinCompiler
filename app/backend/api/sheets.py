@@ -1,4 +1,4 @@
-"""Google Sheets desktop sync (Holdings + full-ledger Totals tab) for the control dashboard API."""
+"""Google Sheets desktop sync (Holdings + ledger-export Totals) for the control server."""
 
 from __future__ import annotations
 
@@ -11,16 +11,24 @@ from typing import Any, Iterator
 import config
 from integrations.google_sheets import GSLink, GoogleSheetsHandler
 from providers import google_api_user_path, google_worksheet_id
-from api.totals_sheet_sync import is_sheets_configured
 
 log = logging.getLogger(__name__)
+
+
+def is_sheets_configured() -> bool:
+    """True when service-account JSON path and spreadsheet id are set and the key file exists."""
+    cred = (google_api_user_path() or "").strip()
+    sid = (google_worksheet_id() or "").strip()
+    if not cred or not sid:
+        return False
+    return os.path.isfile(os.path.expanduser(cred))
 
 
 def sync_pairs() -> list[tuple[str, str]]:
     return config.desktop_sync_sheet_pairs()
 
 
-def api_status() -> dict[str, Any]:
+def desktop_status() -> dict[str, Any]:
     pairs = [{"sheet": s, "local_path": p} for s, p in sync_pairs()]
     return {
         "configured": is_sheets_configured(),
@@ -47,7 +55,7 @@ def _desktop_sync_sheet_paths() -> Iterator[tuple[list[str], list[str]]]:
             fd, tmp = tempfile.mkstemp(prefix="ledger_totals_", suffix=".csv")
             os.close(fd)
             cleanup.append(tmp)
-            from pipeline.ledger import export_transactions_dataframe_to_csv
+            from ledger import export_transactions_dataframe_to_csv
 
             export_transactions_dataframe_to_csv(config.ledger_db_file, tmp)
             paths = [config.holdings_file, tmp]
@@ -68,7 +76,7 @@ def _handler() -> GoogleSheetsHandler:
     return GoogleSheetsHandler(cred, sid)
 
 
-def api_preview() -> dict[str, Any]:
+def desktop_preview() -> dict[str, Any]:
     if not is_sheets_configured():
         return {
             "ok": False,
@@ -81,7 +89,7 @@ def api_preview() -> dict[str, Any]:
     return {"ok": True, "preview": report}
 
 
-def api_push(*, force: bool) -> tuple[bool, str, dict[str, Any] | None]:
+def desktop_push(*, force: bool) -> tuple[bool, str, dict[str, Any] | None]:
     if not is_sheets_configured():
         return (
             False,
@@ -95,6 +103,6 @@ def api_push(*, force: bool) -> tuple[bool, str, dict[str, Any] | None]:
                 list(sheets), list(paths), special_columns=[], cell_range="A1:ZZ", force=force
             )
         except Exception as e:  # noqa: BLE001
-            log.exception("desktop_sheets push failed")
+            log.exception("desktop sheets push failed")
             return False, f"{type(e).__name__}: {e}", None
     return ok, msg, preview

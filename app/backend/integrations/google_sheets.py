@@ -368,7 +368,7 @@ def push_monthly_look(gsh):
     print("Pushing updated monthly look...")
 
     if os.path.isfile(config.ledger_db_file):
-        from pipeline.ledger import load_transactions_dataframe_from_ledger
+        from ledger import load_transactions_dataframe_from_ledger
 
         df = load_transactions_dataframe_from_ledger(config.ledger_db_file)
     else:

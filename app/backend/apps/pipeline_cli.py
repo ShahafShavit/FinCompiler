@@ -130,7 +130,7 @@ notes:
   - Bank credit + bank osh can run in one Leumi session (enable both flags).
   - --from-date / --to-date only affect --fetch-bank-osh (same strings as in the bank UI).
   - drop-profile: full = same column drops as the web / default transaction processor; batch = smaller legacy drop set.
-  - --categorize: after compile, run auto categorization; finish in the browser at /categorize/ (run ``python -m api``).
+  - --categorize: after compile, run auto categorization; finish in the browser at /categorize/ (run ``python -m api.main``).
 
 examples:
   python run_pipeline.py transactions
@@ -331,7 +331,7 @@ def _build_parser() -> argparse.ArgumentParser:
     tg_out.add_argument(
         "--categorize",
         action="store_true",
-        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api`).",
+        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api.main`).",
     )
     tg_out.add_argument(
         "--drop-profile",
@@ -382,7 +382,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ag2.add_argument(
         "--categorize",
         action="store_true",
-        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api`).",
+        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api.main`).",
     )
     ag2.add_argument(
         "--drop-profile",
@@ -412,7 +412,7 @@ def _build_parser() -> argparse.ArgumentParser:
     b.add_argument(
         "--categorize",
         action="store_true",
-        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api`).",
+        help="After compile: auto categorization; remaining rows → web app /categorize/ (run `python -m api.main`).",
     )
     b.add_argument(
         "--drop-profile",

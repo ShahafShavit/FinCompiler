@@ -20,7 +20,7 @@ if _repo not in sys.path:
     sys.path.insert(0, _repo)
 
 import config
-from pipeline.ledger import audit_ledger_constraints, format_report
+from ledger import audit_ledger_constraints, format_report
 
 
 def main() -> int:

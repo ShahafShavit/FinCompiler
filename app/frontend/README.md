@@ -21,7 +21,7 @@ Two processes: Python control server from the **repository root** with `PYTHONPA
 
 ```bash
 # Terminal 1 (repo root): export PYTHONPATH=app/backend   # POSIX
-python -m api
+python -m api.main
 
 # Terminal 2
 cd app/frontend
@@ -39,7 +39,7 @@ npm install   # first time / when deps change
 npm run build
 ```
 
-Output is **`dist/`** under this directory. With `PYTHONPATH=app/backend`, run `python -m api` from the repo root and open <http://127.0.0.1:8780/> — the server serves `app/frontend/dist/index.html` and `dist/assets/*`.
+Output is **`dist/`** under this directory. With `PYTHONPATH=app/backend`, run `python -m api.main` from the repo root and open <http://127.0.0.1:8780/> — the server serves `app/frontend/dist/index.html` and `dist/assets/*`.
 
 If you open the Python server before building, you get a placeholder page with instructions instead of a blank screen.
 

@@ -1,6 +1,6 @@
 """SQLite aggregations for dashboard transaction endpoints (no pandas).
 
-Period / effective month rules mirror legacy ``dashboard_api`` pandas helpers:
+Period / effective month rules mirror legacy ``api.dashboard`` pandas helpers:
 - ``effective_ym``: valid ``statement_month`` (YYYY-MM) per schema, else ``strftime`` month of ``תאריך``.
 - ``tx_date``: first day of valid ``statement_month`` or ``date(תאריך)`` — used for 30d / YTD anchors.
 - ``30d`` / ``ytd`` / last-N-months buckets match prior behavior.
@@ -17,7 +17,7 @@ _YM_RE = re.compile(r"^(\d{4})-(\d{2})$")
 _YM_RANGE_MAX_MONTHS = 240
 _CATEGORY_STATS_MAX_ROWS = 8000
 
-from pipeline.ledger import (
+from ledger.store import (
     LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR,
     LEDGER_SQL_EFFECTIVE_YM_EXPR,
     LEDGER_SQL_TX_INCLUDED,

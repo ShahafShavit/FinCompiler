@@ -88,7 +88,7 @@ def update_category_in_fingerprint_db(fingerprint, category):
     Legacy name kept for callers; ``fingerprint_db.csv`` is deprecated.
     """
     try:
-        from pipeline.ledger import update_category_by_fingerprint
+        from ledger import update_category_by_fingerprint
 
         db_path = config.ledger_db_file
         if not os.path.exists(db_path):
@@ -135,7 +135,7 @@ class Compiler:
         if ledger_db and self._holdings_ledger:
             from pipeline.holdings_balance import holdings_long_to_wide
             from pipeline.holdings_balance import load_holdings_long_dataframe
-            from pipeline.ledger import migrate_ledger_db
+            from ledger import migrate_ledger_db
 
             migrate_ledger_db(ledger_db)
             long_df = load_holdings_long_dataframe(ledger_db)

@@ -27,7 +27,7 @@ class LedgerMigrateTests(unittest.TestCase):
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from pipeline.ledger import migrate_ledger_db
+            from ledger import migrate_ledger_db
 
             db_path = config_mod.ledger_db_file
             migrate_ledger_db()
@@ -63,7 +63,7 @@ class LedgerMigrateTests(unittest.TestCase):
         import pandas as pd
 
         from pipeline.fingerprint import generate_transaction_fingerprint
-        from pipeline.ledger import migrate_ledger_db
+        from ledger import migrate_ledger_db
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -130,7 +130,7 @@ class LedgerMigrateTests(unittest.TestCase):
     def test_excluded_from_calculations_column_defaults_zero(self) -> None:
         import config as config_mod
 
-        from pipeline.ledger import migrate_ledger_db
+        from ledger import migrate_ledger_db
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -167,7 +167,7 @@ class LedgerMigrateTests(unittest.TestCase):
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from pipeline.ledger import migrate_ledger_db
+            from ledger import migrate_ledger_db
 
             db_path = config_mod.ledger_db_file
             migrate_ledger_db()

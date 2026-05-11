@@ -1,4 +1,4 @@
-"""Browser-safe JSON: Python's :func:`json.dumps` can emit ``NaN`` / ``Infinity``, which are not valid JSON and break ``JSON.parse``."""
+"""Browser-safe JSON: no NaN/Infinity (invalid in JSON.parse)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Tests for :mod:`api.integrity_api`."""
+"""Tests for :mod:`api.integrity`."""
 
 from __future__ import annotations
 
@@ -24,13 +24,13 @@ class IntegrityApiTests(unittest.TestCase):
         os.environ["FINANCE_WORKSPACE_ROOT"] = tmp.name
         with patch("dotenv.load_dotenv"):
             importlib.reload(config_mod)
-        from pipeline.ledger import migrate_ledger_db
+        from ledger import migrate_ledger_db
 
         migrate_ledger_db()
         return config_mod.ledger_db_file
 
     def test_rename_category_updates_ledger_and_store(self) -> None:
-        from api import integrity_api
+        from api import integrity
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -48,7 +48,7 @@ class IntegrityApiTests(unittest.TestCase):
         finally:
             conn.close()
 
-        status, payload = integrity_api.rename_category_api(
+        status, payload = integrity.rename_category(
             json.dumps({"from": "OldCat", "to": "NewCat", "dry_run": False}).encode("utf-8")
         )
         self.assertEqual(status, 200)
@@ -66,7 +66,7 @@ class IntegrityApiTests(unittest.TestCase):
             conn.close()
 
     def test_patch_store_static_rejects_multiple_categories(self) -> None:
-        from api import integrity_api
+        from api import integrity
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -78,14 +78,14 @@ class IntegrityApiTests(unittest.TestCase):
         finally:
             conn.close()
 
-        status, payload = integrity_api.patch_store_static_api(
+        status, payload = integrity.patch_store_static(
             json.dumps({"store_name": "X", "is_static": 1}).encode("utf-8")
         )
         self.assertEqual(status, 409)
         self.assertEqual(payload.get("error"), "multiple_categories_for_static")
 
     def test_patch_store_static_ok_and_forward_fill(self) -> None:
-        from api import integrity_api
+        from api import integrity
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -103,7 +103,7 @@ class IntegrityApiTests(unittest.TestCase):
         finally:
             conn.close()
 
-        status, payload = integrity_api.patch_store_static_api(
+        status, payload = integrity.patch_store_static(
             json.dumps({"store_name": "Y", "is_static": 1}).encode("utf-8")
         )
         self.assertEqual(status, 200)
@@ -118,17 +118,17 @@ class IntegrityApiTests(unittest.TestCase):
             conn.close()
 
     def test_report_has_sections(self) -> None:
-        from api import integrity_api
+        from api import integrity
 
         self._fresh_db()
-        rpt = integrity_api.build_integrity_report()
+        rpt = integrity.build_integrity_report()
         self.assertTrue(rpt.get("ledger_exists"))
         ids = {s["id"] for s in (rpt.get("sections") or [])}
         self.assertIn("uncategorized", ids)
         self.assertIn("duplicate_fingerprint", ids)
 
     def test_list_stores_aggregated(self) -> None:
-        from api import integrity_api
+        from api import integrity
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -139,7 +139,7 @@ class IntegrityApiTests(unittest.TestCase):
         finally:
             conn.close()
 
-        out = integrity_api.list_stores_aggregated()
+        out = integrity.list_stores_aggregated()
         self.assertTrue(out.get("ok"))
         stores = out.get("stores") or []
         self.assertEqual(len(stores), 1)
@@ -148,7 +148,7 @@ class IntegrityApiTests(unittest.TestCase):
         self.assertEqual(stores[0]["categories"], ["C1"])
 
     def test_integrity_excluded_section_and_uncategorized_filter(self) -> None:
-        from api import integrity_api
+        from api import integrity
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -172,8 +172,8 @@ class IntegrityApiTests(unittest.TestCase):
         finally:
             conn.close()
 
-        with patch.object(integrity_api, "_ledger_path", return_value=db):
-            rpt = integrity_api.build_integrity_report()
+        with patch.object(integrity, "_ledger_path", return_value=db):
+            rpt = integrity.build_integrity_report()
 
         self.assertTrue(rpt.get("ok"))
         by_id = {s["id"]: s for s in (rpt.get("sections") or [])}
@@ -183,7 +183,7 @@ class IntegrityApiTests(unittest.TestCase):
         self.assertEqual(by_id["uncategorized"].get("count"), 1)
 
     def test_patch_ledger_tx_by_fingerprint(self) -> None:
-        from api import integrity_api
+        from api import integrity
 
         db = self._fresh_db()
         conn = sqlite3.connect(db)
@@ -199,8 +199,8 @@ class IntegrityApiTests(unittest.TestCase):
         finally:
             conn.close()
 
-        with patch.object(integrity_api, "_ledger_path", return_value=db):
-            status, payload = integrity_api.patch_ledger_transaction_api(
+        with patch.object(integrity, "_ledger_path", return_value=db):
+            status, payload = integrity.patch_ledger_transaction(
                 json.dumps({"fingerprint": "fp-x", "patch": {"excluded_from_calculations": 1}}).encode("utf-8")
             )
         self.assertEqual(status, 200)

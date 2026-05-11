@@ -20,14 +20,14 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import config
-from pipeline.ledger import (
+from ledger import (
     LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR,
     LEDGER_SQL_TX_INCLUDED,
     ledger_connect_readonly,
     migrate_ledger_db,
 )
 
-from . import dashboard_tx_sql
+from ledger import dashboard_sql as dashboard_tx_sql
 
 log = logging.getLogger(__name__)
 
@@ -518,7 +518,7 @@ def month_bounds() -> dict[str, Any]:
         conn.close()
 
 
-# --- query string helpers (used by server.py) -------------------------------
+# --- query string helpers (used by dashboard HTTP handlers) -----------------
 
 
 def _qs_first(qs: dict[str, list[str]], key: str, default: str | None = None) -> str | None:

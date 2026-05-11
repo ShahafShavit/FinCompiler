@@ -22,18 +22,19 @@ class PhaseGSheetsPolicyTests(unittest.TestCase):
         self.assertFalse(hasattr(GSLink, "pull_desktop_sync_from_cloud"))
         self.assertFalse(hasattr(GSLink, "pull_sheet_readonly_to_csv"))
 
-    def test_totals_sheet_sync_push_helper_only(self) -> None:
-        import api.totals_sheet_sync as tss
+    def test_sheets_module_config_probe_only(self) -> None:
+        import api.sheets as sheets_mod
 
-        self.assertTrue(hasattr(tss, "is_sheets_configured"))
-        self.assertFalse(hasattr(tss, "ensure_totals_csv_present"))
-        self.assertFalse(hasattr(tss, "refresh_totals_from_cloud"))
+        self.assertTrue(hasattr(sheets_mod, "is_sheets_configured"))
+        self.assertFalse(hasattr(sheets_mod, "ensure_totals_csv_present"))
+        self.assertFalse(hasattr(sheets_mod, "refresh_totals_from_cloud"))
 
-    def test_desktop_sheets_api_has_no_api_pull(self) -> None:
-        import api.desktop_sheets_api as dsa
+    def test_sheets_desktop_push_only_no_pull(self) -> None:
+        import api.sheets as sheets_mod
 
-        self.assertFalse(hasattr(dsa, "api_pull"))
-        self.assertTrue(hasattr(dsa, "api_push"))
+        self.assertFalse(hasattr(sheets_mod, "api_pull"))
+        self.assertFalse(hasattr(sheets_mod, "desktop_pull"))
+        self.assertTrue(hasattr(sheets_mod, "desktop_push"))
 
 
 if __name__ == "__main__":

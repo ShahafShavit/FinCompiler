@@ -410,25 +410,12 @@ def _ledger_heatmap_status() -> dict[str, Any]:
         return payload
 
     try:
-        import sqlite3
+        from ledger.store import heatmap_ledger_row_counts
 
-        from pipeline.ledger import LEDGER_SQL_TX_INCLUDED, migrate_ledger_db
-
-        migrate_ledger_db(p)
-        conn = sqlite3.connect(p)
-        try:
-            total = int(conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0] or 0)
-            inc = int(
-                conn.execute(
-                    f"SELECT COUNT(*) FROM ledger_transaction WHERE {LEDGER_SQL_TX_INCLUDED}"
-                ).fetchone()[0]
-                or 0
-            )
-            payload["transaction_count_total_stored"] = total
-            payload["transaction_count_excluded"] = max(0, total - inc)
-            payload["transaction_count"] = inc
-        finally:
-            conn.close()
+        counts = heatmap_ledger_row_counts(p)
+        payload["transaction_count_total_stored"] = counts["transaction_count_total_stored"]
+        payload["transaction_count_excluded"] = counts["transaction_count_excluded"]
+        payload["transaction_count"] = counts["transaction_count"]
     except Exception:  # noqa: BLE001
         payload["transaction_count"] = -1
 
@@ -440,7 +427,7 @@ def get_bundle() -> HeatmapBundle | None:
 
     Phase: pandas pivots and normalization only — no SQL-side matrix yet. Uses
     :func:`load_transactions_dataframe_from_ledger` (migrate + full read). Control server
-    startup also runs :func:`pipeline.ledger.migrate_ledger_db` so DDL stays off hot paths
+    startup also runs :func:`ledger.migrate_ledger_db` so DDL stays off hot paths
     where possible. A later phase could swap to SQL/materialized slices and ``read_*`` only.
     """
     db = config.ledger_db_file
@@ -454,7 +441,7 @@ def get_bundle() -> HeatmapBundle | None:
     c = _bundle_cache
     if c["path"] == db and c["mtime"] == st.st_mtime and c["bundle"] is not None:
         return c["bundle"]
-    from pipeline.ledger import load_transactions_dataframe_from_ledger
+    from ledger import load_transactions_dataframe_from_ledger
 
     try:
         df = load_transactions_dataframe_from_ledger(db)
@@ -632,7 +619,7 @@ def _period_filter_transactions(
 ) -> pd.DataFrame:
     if df.empty:
         return df
-    from . import dashboard_tx_sql
+    from ledger import dashboard_sql as dashboard_tx_sql
 
     bounds = dashboard_tx_sql.normalize_ym_range(start_ym, end_ym)
     if bounds is not None:
@@ -863,7 +850,7 @@ def _detail_frames_category(
     cols_show_exp = _detail_column_order(work, _COLS_EXP)
     cols_show_in = _detail_column_order(work, _COLS_IN)
 
-    from . import dashboard_tx_sql
+    from ledger import dashboard_sql as dashboard_tx_sql
 
     bounds_lbl = dashboard_tx_sql.normalize_ym_range(start_ym, end_ym)
     if bounds_lbl is not None:
@@ -1024,9 +1011,9 @@ def _ledger_patch_http_status(result: dict[str, Any]) -> int:
     return 400
 
 
-def ledger_transaction_patch_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
-    """Parse JSON body and apply :func:`pipeline.ledger.patch_ledger_transaction_by_id`."""
-    from pipeline.ledger import patch_ledger_transaction_by_id
+def patch_ledger_transaction(raw_body: bytes) -> tuple[int, dict[str, Any]]:
+    """Parse JSON body and apply :func:`ledger.patch_ledger_transaction_by_id`."""
+    from ledger import patch_ledger_transaction_by_id
 
     try:
         data = json.loads(raw_body.decode("utf-8") or "{}")

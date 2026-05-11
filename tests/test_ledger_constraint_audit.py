@@ -18,7 +18,7 @@ class LedgerConstraintAuditTests(unittest.TestCase):
         importlib.reload(config)
 
     def test_fresh_db_passes_audit(self) -> None:
-        from pipeline.ledger import audit_ledger_constraints, migrate_ledger_db
+        from ledger import audit_ledger_constraints, migrate_ledger_db
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp

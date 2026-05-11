@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any
 
 import config
-from pipeline.ledger import (
+from ledger import (
     LEDGER_SQL_LT_TX_INCLUDED,
     LEDGER_SQL_TX_INCLUDED,
     forward_fill_uncategorized_for_store_if_static_sql,
@@ -405,7 +405,7 @@ def list_stores_aggregated() -> dict[str, Any]:
         conn.close()
 
 
-def rename_category_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
+def rename_category(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     try:
         data = json.loads(raw_body.decode("utf-8") or "{}")
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -461,7 +461,7 @@ def rename_category_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
         conn.close()
 
 
-def patch_store_static_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
+def patch_store_static(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     try:
         data = json.loads(raw_body.decode("utf-8") or "{}")
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -531,7 +531,7 @@ def patch_store_static_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     return 200, {"ok": True, "updated": True, "forward_filled_uncategorized": int(forward_filled)}
 
 
-def patch_ledger_transaction_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
+def patch_ledger_transaction(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     """Ledger row patch used from Data Integrity (same patch rules as ``/heatmap/api/transaction``).
 
     Body may include::
@@ -606,7 +606,7 @@ def patch_ledger_transaction_api(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     if phrase is not None:
         forward["confirm_fingerprint_phrase"] = phrase
 
-    status, payload = heatmap.ledger_transaction_patch_api(json.dumps(forward).encode("utf-8"))
+    status, payload = heatmap.patch_ledger_transaction(json.dumps(forward).encode("utf-8"))
     if isinstance(payload, dict) and payload.get("ok"):
         payload = {**payload, "id": resolved_id}
     return status, payload

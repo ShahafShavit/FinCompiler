@@ -10,7 +10,6 @@ from typing import Any, Callable, Iterable, Optional
 import pandas as pd
 
 import config
-from pipeline.ledger import dedupe_import_batch_by_fingerprint, upsert_compiled_dataframe_to_ledger
 
 from . import compiler, spreadsheet_ingest, workbook_normalize
 
@@ -131,6 +130,8 @@ def ingest_transactions_to_ledger(
     merged = pd.concat(dfs, ignore_index=True)
     merged = compiler.normalize_transaction_import_dates(merged)
     log.info("phase=dedupe: rows before=%s", len(merged))
+    from ledger import dedupe_import_batch_by_fingerprint, upsert_compiled_dataframe_to_ledger
+
     merged = dedupe_import_batch_by_fingerprint(merged)
     log.info("phase=upsert: rows after=%s", len(merged))
     return upsert_compiled_dataframe_to_ledger(merged, config.ledger_db_file)
@@ -156,7 +157,7 @@ def compile_transactions_main(
         categorizer.auto_categorize()
 
     try:
-        from pipeline.ledger import run_installment_statement_month_fill
+        from ledger import run_installment_statement_month_fill
 
         run_installment_statement_month_fill(
             config.ledger_db_file,

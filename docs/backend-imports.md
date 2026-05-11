@@ -2,7 +2,7 @@
 
 Run Python with **`PYTHONPATH` including `app/backend`** (repository root as cwd). Entry modules:
 
-- **`python -m api`** — local HTTP server (React SPA + JSON APIs).
+- **`python -m api.main`** — local HTTP server (React SPA + JSON APIs).
 - **`python -m providers`** — one-shot merge of legacy `.env` secrets into `data/private/providers.json`.
 
 ## Dependency direction

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pipeline.ledger import LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR, migrate_ledger_db
+from ledger import LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR, migrate_ledger_db
 
 
 class EffectiveTxDateWebTests(unittest.TestCase):
@@ -49,7 +49,7 @@ class EffectiveTxDateWebTests(unittest.TestCase):
 
     def test_dashboard_summary_30d_anchor_uses_effective_date(self) -> None:
         import config as config_mod
-        from api import dashboard_api
+        from api import dashboard
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -78,9 +78,9 @@ class EffectiveTxDateWebTests(unittest.TestCase):
             finally:
                 conn.close()
 
-            with patch.object(dashboard_api, "_ledger_path", return_value=db_path):
-                with patch.object(dashboard_api.config, "ledger_db_file", db_path):
-                    out = dashboard_api.summary()
+            with patch.object(dashboard, "_ledger_path", return_value=db_path):
+                with patch.object(dashboard.config, "ledger_db_file", db_path):
+                    out = dashboard.summary()
 
             self.assertTrue(out.get("ledger_exists"))
             kpis = out.get("kpis") or {}
@@ -88,7 +88,7 @@ class EffectiveTxDateWebTests(unittest.TestCase):
 
     def test_dashboard_tx_sql_30d_includes_row_by_statement_month(self) -> None:
         import config as config_mod
-        from api import dashboard_tx_sql
+        from ledger import dashboard_sql as dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
@@ -125,7 +125,7 @@ SELECT COALESCE(SUM(income_amt), 0) FROM period_tx"""
 
     def test_dashboard_tx_sql_ytd_year_from_effective_max(self) -> None:
         import config as config_mod
-        from api import dashboard_tx_sql
+        from ledger import dashboard_sql as dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp

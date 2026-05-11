@@ -20,14 +20,14 @@ class DashboardTxExcludedTests(unittest.TestCase):
     def test_cashflow_monthly_omits_excluded(self) -> None:
         import config as config_mod
 
-        from api import dashboard_tx_sql
+        from ledger import dashboard_sql as dashboard_tx_sql
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
             with patch("dotenv.load_dotenv"):
                 importlib.reload(config_mod)
 
-            from pipeline.ledger import migrate_ledger_db
+            from ledger import migrate_ledger_db
 
             migrate_ledger_db()
             db = config_mod.ledger_db_file

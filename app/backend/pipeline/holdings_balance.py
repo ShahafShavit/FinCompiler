@@ -16,7 +16,7 @@ import pandas as pd
 
 import config
 from pipeline.compiler import parse_post_ingest_date_scalar
-from pipeline.ledger import migrate_ledger_db
+from ledger import migrate_ledger_db
 
 log = logging.getLogger(__name__)
 

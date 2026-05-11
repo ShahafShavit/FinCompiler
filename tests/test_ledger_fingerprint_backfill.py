@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from pipeline.fingerprint import generate_transaction_fingerprint
-from pipeline.ledger import (
+from ledger import (
     backfill_null_fingerprints,
     list_would_duplicate_null_rows,
     migrate_ledger_db,

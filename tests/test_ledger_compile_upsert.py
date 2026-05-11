@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from pipeline.fingerprint import generate_transaction_fingerprint
-from pipeline.ledger import dedupe_import_batch_by_fingerprint
+from ledger import dedupe_import_batch_by_fingerprint
 
 
 def _reload_config() -> None:
@@ -28,7 +28,7 @@ class LedgerCompileUpsertTests(unittest.TestCase):
         _reload_config()
 
     def test_upsert_inserts_and_updates_pipeline_columns(self) -> None:
-        from pipeline.ledger import upsert_compiled_dataframe_to_ledger
+        from ledger import upsert_compiled_dataframe_to_ledger
 
         base = {
             "תאריך": "2025-01-15",
@@ -78,7 +78,7 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             self.assertEqual(notes, "second")
 
     def test_upsert_preserves_nonempty_category(self) -> None:
-        from pipeline.ledger import upsert_compiled_dataframe_to_ledger
+        from ledger import upsert_compiled_dataframe_to_ledger
 
         row = {
             "תאריך": "2025-02-01",
@@ -131,7 +131,7 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             self.assertFalse(os.path.isfile(cfg.fingerprint_db_file))
 
     def test_batch_category_updates_by_fingerprint(self) -> None:
-        from pipeline.ledger import update_categories_by_fingerprint_batch, upsert_compiled_dataframe_to_ledger
+        from ledger import update_categories_by_fingerprint_batch, upsert_compiled_dataframe_to_ledger
 
         row = {
             "תאריך": "2025-03-01",
@@ -189,9 +189,9 @@ class LedgerCompileUpsertTests(unittest.TestCase):
         self.assertEqual(str(out.iloc[0]["קטגוריה"]), "Food")
 
     def test_apply_auto_categories_from_static_stores_sql(self) -> None:
-        from pipeline.ledger import apply_auto_categories_from_static_stores_sql
-        from pipeline.ledger import sync_stores_to_ledger_from_dataframe
-        from pipeline.ledger import upsert_compiled_dataframe_to_ledger
+        from ledger import apply_auto_categories_from_static_stores_sql
+        from ledger import sync_stores_to_ledger_from_dataframe
+        from ledger import upsert_compiled_dataframe_to_ledger
 
         row = {
             "תאריך": "2025-03-01",
