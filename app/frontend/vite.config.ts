@@ -11,8 +11,9 @@ export default defineConfig({
     proxy: {
       '/api': PY_BACKEND,
       '/heatmap/api': PY_BACKEND,
-      '/categorize': PY_BACKEND,
-      '/holdings': PY_BACKEND,
+      // Only the queue JSON — do not proxy `/categorize/` or Vite would never serve the SPA
+      // and `/assets/*` would resolve to dev 404/HTML (wrong MIME for JS/CSS).
+      '/categorize/api': PY_BACKEND,
     },
   },
   build: {

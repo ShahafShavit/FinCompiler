@@ -18,7 +18,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from api.categorize import CategorizeFile, FluidStorePrompt, NewStorePrompt
+from api.categorize import CategorizeFile, FluidStorePrompt, NewStorePrompt, flow_kind_for_amounts
 from pipeline.fingerprint import generate_transaction_fingerprint
 
 
@@ -207,7 +207,100 @@ class FluidPromptSerializationTests(unittest.TestCase):
             all_categories=("Food", "Other"),
             prompt_id="pid",
         )
-        json.loads(json.dumps(p.to_display_dict(), ensure_ascii=False))
+        d = json.loads(json.dumps(p.to_display_dict(), ensure_ascii=False))
+        self.assertEqual(flow_kind_for_amounts(p.expense, p.income), "income")
+        for key in ("ledger_id", "additional_detail", "notes", "statement_month", "ingested_at"):
+            self.assertIn(key, d)
+        self.assertEqual(d["payee_mapping_kind"], "unmapped")
+        self.assertIn("payee_store_mappings", d)
+        self.assertIn("payee_mapping_summary", d)
+
+    def test_display_dict_ledger_context_and_flow(self) -> None:
+        p = FluidStorePrompt(
+            store_name="Shop",
+            date="2024-06-01",
+            expense=12.5,
+            income=0,
+            details=None,
+            digits="4242",
+            dynamic_categories=("Food",),
+            all_categories=("Food", "Other"),
+            ledger_id=99,
+            additional_detail="Extra line",
+            notes="memo",
+            statement_month="2024-06",
+            row_fingerprint="fp-test",
+            ingested_at="2024-06-02",
+            prompt_id="pid",
+        )
+        d = p.to_display_dict()
+        self.assertEqual(flow_kind_for_amounts(p.expense, p.income), "expense")
+        self.assertEqual(d["ledger_id"], 99)
+        self.assertEqual(d["additional_detail"], "Extra line")
+        self.assertEqual(d["notes"], "memo")
+        self.assertEqual(d["statement_month"], "2024-06")
+        self.assertEqual(d["ingested_at"], "2024-06-02")
+        json.loads(json.dumps(d, ensure_ascii=False))
+
+
+class FlowKindTests(unittest.TestCase):
+    def test_flow_kind_labels(self) -> None:
+        self.assertEqual(flow_kind_for_amounts(100, 0), "expense")
+        self.assertEqual(flow_kind_for_amounts(0, 50), "income")
+        self.assertEqual(flow_kind_for_amounts(1, 2), "both")
+        self.assertEqual(flow_kind_for_amounts(0, 0), "none")
+
+
+class NewStoreDisplayContextTests(unittest.TestCase):
+    def test_build_manual_prompt_passes_ledger_columns_to_display(self) -> None:
+        stores = pd.DataFrame([{"store_name": "Other", "category": "X", "is_static": 1}])
+        row_dict = _base_tx_row(store="BrandNewPayee", category="")
+        row_dict["פירוט נוסף"] = "Installment 3/12"
+        row_dict["notes"] = "card ending 4242"
+        row_dict["statement_month"] = "2024-01"
+        fp = generate_transaction_fingerprint(pd.Series(row_dict))
+        with tempfile.TemporaryDirectory() as tmp:
+            _cfg, db = _seed_ledger_with_rows(tmp, [{**row_dict, "fingerprint": fp}], stores=stores)
+            cf = CategorizeFile(ledger_db_path=db)
+            cf.load_stores()
+            from ledger import load_first_transaction_needing_manual_category
+
+            row = load_first_transaction_needing_manual_category(db)
+            self.assertIsNotNone(row)
+            p = cf.build_manual_prompt_for_row(row)
+            self.assertIsInstance(p, NewStorePrompt)
+            d = p.to_display_dict()
+            self.assertEqual(d["additional_detail"], "Installment 3/12")
+            self.assertEqual(d["notes"], "card ending 4242")
+            self.assertEqual(d["statement_month"], "2024-01")
+            self.assertEqual(flow_kind_for_amounts(p.expense, p.income), "income")
+            self.assertIsNotNone(d.get("ledger_id"))
+            self.assertEqual(d["payee_mapping_kind"], "unmapped")
+            self.assertEqual(d["payee_store_mappings"], [])
+
+
+class FluidPayeeMappingPayloadTests(unittest.TestCase):
+    def test_fluid_prompt_includes_store_rows_for_payee(self) -> None:
+        stores = pd.DataFrame(
+            [
+                {"store_name": "FluidShop", "category": "Food", "is_static": 0},
+                {"store_name": "FluidShop", "category": "Drinks", "is_static": 0},
+            ]
+        )
+        row_dict = _base_tx_row(store="FluidShop")
+        fp = generate_transaction_fingerprint(pd.Series(row_dict))
+        with tempfile.TemporaryDirectory() as tmp:
+            _cfg, db = _seed_ledger_with_rows(tmp, [{**row_dict, "fingerprint": fp}], stores=stores)
+            cf = CategorizeFile(ledger_db_path=db)
+            cf.load_stores()
+            row = pd.Series({**row_dict, "fingerprint": fp})
+            p = cf.build_manual_prompt_for_row(row)
+            d = p.to_display_dict()
+            self.assertEqual(d["payee_mapping_kind"], "dynamic")
+            self.assertEqual(len(d["payee_store_mappings"]), 2)
+            cats = {m["category"] for m in d["payee_store_mappings"]}
+            self.assertEqual(cats, {"Drinks", "Food"})
+            self.assertEqual(d["payee_distinct_category_count"], 2)
 
 
 if __name__ == "__main__":

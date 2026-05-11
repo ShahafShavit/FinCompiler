@@ -750,6 +750,47 @@ def update_category_by_fingerprint(db_path: str, fingerprint: str, category: str
         conn.close()
 
 
+def update_notes_by_fingerprint(db_path: str, fingerprint: str, notes: str) -> None:
+    """Set ``notes`` for a row (does not change category). ``notes`` may be empty to clear."""
+    if not fingerprint or not str(fingerprint).strip():
+        return
+    migrate_ledger_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        fp = str(fingerprint).strip()
+        conn.execute(
+            "UPDATE ledger_transaction SET notes = ? "
+            'WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") = ?',
+            (notes, fp),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_category_and_notes_by_fingerprint(
+    db_path: str, fingerprint: str, category: str | None, notes: str
+) -> None:
+    """Set ``קטגוריה`` and ``notes`` in one UPDATE (categorize queue save)."""
+    if not fingerprint or not str(fingerprint).strip():
+        return
+    migrate_ledger_db(db_path)
+    cat_str = "" if category is None else str(category)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        fp = str(fingerprint).strip()
+        conn.execute(
+            'UPDATE ledger_transaction SET "קטגוריה" = ?, notes = ? '
+            'WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") = ?',
+            (cat_str, notes, fp),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def update_categories_by_fingerprint_batch(
     db_path: str,
     items: list[tuple[str, str]],

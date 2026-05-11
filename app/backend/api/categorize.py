@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Union
 
 import pandas as pd
@@ -83,6 +83,164 @@ def _scalar_for_json(x: Any) -> Any:
         return str(x)
 
 
+def _nonzero_amount(x: Any) -> bool:
+    """True if the normalized cell represents a non-zero monetary amount."""
+    v = _scalar_for_json(x)
+    if v is None:
+        return False
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, (int, float)):
+        return abs(float(v)) > 1e-12
+    try:
+        return abs(float(str(v).strip().replace(",", ""))) > 1e-12
+    except (TypeError, ValueError):
+        return False
+
+
+def flow_kind_for_amounts(expense: Any, income: Any) -> str:
+    """UI/API classifier: expense | income | both | none (never debit/credit)."""
+    e = _nonzero_amount(expense)
+    i = _nonzero_amount(income)
+    if e and i:
+        return "both"
+    if e:
+        return "expense"
+    if i:
+        return "income"
+    return "none"
+
+
+def _optional_row_scalar(row_data: Union[pd.Series, Mapping], key: str) -> Any:
+    if isinstance(row_data, pd.Series):
+        return row_data[key] if key in row_data.index else None
+    return row_data.get(key) if isinstance(row_data, Mapping) else None
+
+
+def _ledger_display_context(row_data: Union[pd.Series, Mapping]) -> dict[str, Any]:
+    """Extra columns from ledger_transaction for the categorize UI (English JSON keys)."""
+    return {
+        "ledger_id": _optional_row_scalar(row_data, "id"),
+        "additional_detail": _optional_row_scalar(row_data, "פירוט נוסף"),
+        "notes": _optional_row_scalar(row_data, "notes"),
+        "statement_month": _optional_row_scalar(row_data, "statement_month"),
+        "row_fingerprint": _optional_row_scalar(row_data, "fingerprint"),
+        "ingested_at": _optional_row_scalar(row_data, "ingested_at"),
+    }
+
+
+def _merge_ledger_into_display(d: dict[str, Any], prompt: Any) -> dict[str, Any]:
+    """Append normalized ledger context to a prompt display dict (no fingerprint — stable id is ``transaction_id``)."""
+    d = {**d}
+    d["ledger_id"] = _scalar_for_json(getattr(prompt, "ledger_id", None))
+    d["additional_detail"] = _scalar_for_json(getattr(prompt, "additional_detail", None))
+    d["notes"] = _scalar_for_json(getattr(prompt, "notes", None))
+    d["statement_month"] = _scalar_for_json(getattr(prompt, "statement_month", None))
+    d["ingested_at"] = _scalar_for_json(getattr(prompt, "ingested_at", None))
+    return d
+
+
+def _parse_store_is_static_cell(iv_raw: Any) -> int | None:
+    """0 / 1 for valid flags, ``None`` if missing or not exactly 0/1."""
+    try:
+        if iv_raw is None or (isinstance(iv_raw, float) and pd.isna(iv_raw)):
+            return None
+        v = int(float(iv_raw))
+        return v if v in (0, 1) else None
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True)
+class PayeeMappingEnvelope:
+    """Serialized store-table rows for the payee shown in the categorize UI."""
+
+    rows: tuple[tuple[str, int | None], ...]
+    kind: str
+    summary: str
+
+    def to_json_dict(self) -> dict[str, Any]:
+        distinct = len({c for c, _ in self.rows if c})
+        return {
+            "payee_store_mappings": [{"category": c, "is_static": iv} for c, iv in self.rows],
+            "payee_mapping_kind": self.kind,
+            "payee_mapping_summary": self.summary,
+            "payee_distinct_category_count": distinct,
+        }
+
+
+def _default_payee_mapping_unmapped() -> PayeeMappingEnvelope:
+    return PayeeMappingEnvelope(
+        tuple(),
+        "unmapped",
+        "This payee has no rows in the store mapping table yet.",
+    )
+
+
+def _payee_mapping_envelope_from_stores(stores_df: Optional[pd.DataFrame], store_name: str) -> PayeeMappingEnvelope:
+    """Summarize ``store`` / ``store_category`` rows for this payee (``store_name`` column)."""
+    if stores_df is None or stores_df.empty:
+        return _default_payee_mapping_unmapped()
+    sub = stores_df[stores_df["store_name"] == store_name]
+    if sub.empty:
+        return _default_payee_mapping_unmapped()
+
+    raw_rows: list[tuple[str, int | None]] = []
+    for _, r in sub.iterrows():
+        cat = r["category"]
+        if cat is None or (isinstance(cat, float) and pd.isna(cat)):
+            cat_s = ""
+        else:
+            cat_s = str(cat).strip()
+        raw_rows.append((cat_s, _parse_store_is_static_cell(r["is_static"])))
+
+    raw_rows.sort(key=lambda t: (t[0].lower(), t[1] is None, t[1] if t[1] is not None else -1))
+    rows_t = tuple(raw_rows)
+
+    flags = [iv for _, iv in raw_rows]
+    has_bad_flag = any(iv is None for iv in flags)
+    any_static = any(iv == 1 for iv in flags)
+    any_dynamic = any(iv == 0 for iv in flags)
+    distinct_cats = len({c for c, _ in raw_rows if c})
+
+    if has_bad_flag:
+        kind = "ambiguous"
+        summary = (
+            "At least one store row for this payee has an unclear static/dynamic flag. "
+            "Use the buttons below to set whether this mapping is static or dynamic for future imports."
+        )
+    elif any_static and any_dynamic:
+        kind = "mixed"
+        summary = (
+            "This payee has both static and dynamic rows in the store table (unusual). "
+            "See the list below—review for duplicates or inconsistent data."
+        )
+    elif any_static:
+        kind = "static"
+        if distinct_cats <= 1:
+            summary = (
+                "This payee is mapped as static: the same category is applied automatically "
+                "to new ledger rows for this name (when the pipeline runs)."
+            )
+        else:
+            summary = (
+                "This payee has several static-marked categories (unusual). See the list below; "
+                "normally only one static category should exist per payee."
+            )
+    elif any_dynamic:
+        kind = "dynamic"
+        summary = (
+            f"This payee is mapped as dynamic: {distinct_cats} distinct "
+            f"categor{'y is' if distinct_cats == 1 else 'ies are'} already linked; "
+            "you may reuse one or add another for this row."
+        )
+    else:
+        kind = "unmapped"
+        summary = "No usable static/dynamic flags on store rows for this payee."
+
+    return PayeeMappingEnvelope(rows_t, kind, summary)
+
+
 @dataclass(frozen=True)
 class FluidStorePrompt:
     """Existing store with fluid (non-static) categories — pick or type a category."""
@@ -95,23 +253,34 @@ class FluidStorePrompt:
     digits: Optional[Any]
     dynamic_categories: tuple[str, ...]
     all_categories: tuple[str, ...]
+    ledger_id: Any = None
+    additional_detail: Any = None
+    notes: Any = None
+    statement_month: Any = None
+    row_fingerprint: Any = None
+    ingested_at: Any = None
+    payee_mapping: PayeeMappingEnvelope = field(default_factory=_default_payee_mapping_unmapped)
     transaction_id: str = ""
     prompt_id: str = ""
 
     def to_display_dict(self) -> dict[str, Any]:
-        return {
-            "kind": "fluid",
-            "prompt_id": self.prompt_id,
-            "transaction_id": _scalar_for_json(self.transaction_id),
-            "store_name": _scalar_for_json(self.store_name),
-            "date": _scalar_for_json(self.date),
-            "expense": _scalar_for_json(self.expense),
-            "income": _scalar_for_json(self.income),
-            "details": _scalar_for_json(self.details),
-            "digits": _scalar_for_json(self.digits),
-            "dynamic_categories": list(self.dynamic_categories),
-            "all_categories": list(self.all_categories),
-        }
+        d = _merge_ledger_into_display(
+            {
+                "kind": "fluid",
+                "prompt_id": self.prompt_id,
+                "transaction_id": _scalar_for_json(self.transaction_id),
+                "store_name": _scalar_for_json(self.store_name),
+                "date": _scalar_for_json(self.date),
+                "expense": _scalar_for_json(self.expense),
+                "income": _scalar_for_json(self.income),
+                "details": _scalar_for_json(self.details),
+                "digits": _scalar_for_json(self.digits),
+                "dynamic_categories": list(self.dynamic_categories),
+                "all_categories": list(self.all_categories),
+            },
+            self,
+        )
+        return {**d, **self.payee_mapping.to_json_dict()}
 
 
 @dataclass(frozen=True)
@@ -125,22 +294,33 @@ class ResolveStaticPrompt:
     income: Any
     details: Optional[Any]
     digits: Optional[Any]
+    ledger_id: Any = None
+    additional_detail: Any = None
+    notes: Any = None
+    statement_month: Any = None
+    row_fingerprint: Any = None
+    ingested_at: Any = None
+    payee_mapping: PayeeMappingEnvelope = field(default_factory=_default_payee_mapping_unmapped)
     transaction_id: str = ""
     prompt_id: str = ""
 
     def to_display_dict(self) -> dict[str, Any]:
-        return {
-            "kind": "resolve_static",
-            "prompt_id": self.prompt_id,
-            "transaction_id": _scalar_for_json(self.transaction_id),
-            "store_name": _scalar_for_json(self.store_name),
-            "category": _scalar_for_json(self.category),
-            "date": _scalar_for_json(self.date),
-            "expense": _scalar_for_json(self.expense),
-            "income": _scalar_for_json(self.income),
-            "details": _scalar_for_json(self.details),
-            "digits": _scalar_for_json(self.digits),
-        }
+        d = _merge_ledger_into_display(
+            {
+                "kind": "resolve_static",
+                "prompt_id": self.prompt_id,
+                "transaction_id": _scalar_for_json(self.transaction_id),
+                "store_name": _scalar_for_json(self.store_name),
+                "category": _scalar_for_json(self.category),
+                "date": _scalar_for_json(self.date),
+                "expense": _scalar_for_json(self.expense),
+                "income": _scalar_for_json(self.income),
+                "details": _scalar_for_json(self.details),
+                "digits": _scalar_for_json(self.digits),
+            },
+            self,
+        )
+        return {**d, **self.payee_mapping.to_json_dict()}
 
 
 @dataclass(frozen=True)
@@ -154,22 +334,33 @@ class NewStorePrompt:
     details: Optional[Any]
     digits: Optional[Any]
     all_categories: tuple[str, ...]
+    ledger_id: Any = None
+    additional_detail: Any = None
+    notes: Any = None
+    statement_month: Any = None
+    row_fingerprint: Any = None
+    ingested_at: Any = None
+    payee_mapping: PayeeMappingEnvelope = field(default_factory=_default_payee_mapping_unmapped)
     transaction_id: str = ""
     prompt_id: str = ""
 
     def to_display_dict(self) -> dict[str, Any]:
-        return {
-            "kind": "new_store",
-            "prompt_id": self.prompt_id,
-            "transaction_id": _scalar_for_json(self.transaction_id),
-            "store_name": _scalar_for_json(self.store_name),
-            "date": _scalar_for_json(self.date),
-            "expense": _scalar_for_json(self.expense),
-            "income": _scalar_for_json(self.income),
-            "details": _scalar_for_json(self.details),
-            "digits": _scalar_for_json(self.digits),
-            "all_categories": list(self.all_categories),
-        }
+        d = _merge_ledger_into_display(
+            {
+                "kind": "new_store",
+                "prompt_id": self.prompt_id,
+                "transaction_id": _scalar_for_json(self.transaction_id),
+                "store_name": _scalar_for_json(self.store_name),
+                "date": _scalar_for_json(self.date),
+                "expense": _scalar_for_json(self.expense),
+                "income": _scalar_for_json(self.income),
+                "details": _scalar_for_json(self.details),
+                "digits": _scalar_for_json(self.digits),
+                "all_categories": list(self.all_categories),
+            },
+            self,
+        )
+        return {**d, **self.payee_mapping.to_json_dict()}
 
 
 ManualPrompt = Union[FluidStorePrompt, ResolveStaticPrompt, NewStorePrompt]
@@ -379,6 +570,9 @@ class CategorizeFile:
         else:
             all_categories = tuple(sorted(set(self.stores_df["category"].tolist()), key=str))
 
+        lc = _ledger_display_context(row_data)
+        pem = _payee_mapping_envelope_from_stores(self.stores_df, store_name)
+
         def _static_flag(s) -> int:
             if s is None or (isinstance(s, float) and pd.isna(s)):
                 return -999
@@ -410,6 +604,13 @@ class CategorizeFile:
                     digits=digits,
                     dynamic_categories=dynamic_categories,
                     all_categories=all_categories,
+                    ledger_id=lc["ledger_id"],
+                    additional_detail=lc["additional_detail"],
+                    notes=lc["notes"],
+                    statement_month=lc["statement_month"],
+                    row_fingerprint=lc["row_fingerprint"],
+                    ingested_at=lc["ingested_at"],
+                    payee_mapping=pem,
                     transaction_id=transaction_id,
                     prompt_id=pid,
                 )
@@ -421,6 +622,13 @@ class CategorizeFile:
                 income=income,
                 details=details,
                 digits=digits,
+                ledger_id=lc["ledger_id"],
+                additional_detail=lc["additional_detail"],
+                notes=lc["notes"],
+                statement_month=lc["statement_month"],
+                row_fingerprint=lc["row_fingerprint"],
+                ingested_at=lc["ingested_at"],
+                payee_mapping=pem,
                 transaction_id=transaction_id,
                 prompt_id=pid,
             )
@@ -433,12 +641,22 @@ class CategorizeFile:
             details=details,
             digits=digits,
             all_categories=all_categories,
+            ledger_id=lc["ledger_id"],
+            additional_detail=lc["additional_detail"],
+            notes=lc["notes"],
+            statement_month=lc["statement_month"],
+            row_fingerprint=lc["row_fingerprint"],
+            ingested_at=lc["ingested_at"],
+            payee_mapping=pem,
             transaction_id=transaction_id,
             prompt_id=pid,
         )
 
-    def _persist_category_for_transaction(self, transaction_id: str, category: str) -> None:
+    def _persist_category_for_transaction(
+        self, transaction_id: str, category: str, data: Optional[dict] = None
+    ) -> None:
         from ledger import load_ledger_transaction_by_stable_id
+        from ledger import update_category_and_notes_by_fingerprint
         from ledger import update_category_by_fingerprint
 
         row = load_ledger_transaction_by_stable_id(self._ledger_db_path, str(transaction_id))
@@ -448,7 +666,34 @@ class CategorizeFile:
         if not fp:
             raise ValueError("transaction has no fingerprint")
         with self._io_lock:
-            update_category_by_fingerprint(self._ledger_db_path, fp, category)
+            if data is not None and "notes" in data:
+                raw = data.get("notes")
+                notes_str = "" if raw is None else str(raw).strip()
+                if len(notes_str) > 8000:
+                    notes_str = notes_str[:8000]
+                update_category_and_notes_by_fingerprint(self._ledger_db_path, fp, category, notes_str)
+            else:
+                update_category_by_fingerprint(self._ledger_db_path, fp, category)
+
+    def _apply_queue_notes_if_present(self, stable_id: str, data: dict) -> None:
+        """When ``notes`` is present in queue JSON, persist to the ledger row for ``stable_id``."""
+        if "notes" not in data:
+            return
+        from ledger import load_ledger_transaction_by_stable_id
+        from ledger import update_notes_by_fingerprint
+
+        row = load_ledger_transaction_by_stable_id(self._ledger_db_path, str(stable_id))
+        if row is None:
+            raise ValueError("transaction not in ledger")
+        fp = str(row.get("fingerprint", "")).strip()
+        if not fp:
+            raise ValueError("transaction has no fingerprint")
+        raw = data.get("notes")
+        notes_str = "" if raw is None else str(raw).strip()
+        if len(notes_str) > 8000:
+            notes_str = notes_str[:8000]
+        with self._io_lock:
+            update_notes_by_fingerprint(self._ledger_db_path, fp, notes_str)
 
     def apply_manual_http_response(self, row_data, kind: str, data: dict) -> None:
         """Apply one queue answer (first unanswered row only)."""
@@ -480,7 +725,7 @@ class CategorizeFile:
                 }
                 self.stores_df.loc[len(self.stores_df)] = new_row
                 self.save_stores()
-            self._persist_category_for_transaction(transaction_id, category_input)
+            self._persist_category_for_transaction(transaction_id, category_input, data)
             return
 
         if kind == "resolve_static":
@@ -496,7 +741,7 @@ class CategorizeFile:
             category = ambig.iloc[0]["category"]
             self.stores_df.loc[self.stores_df["store_name"] == store_name, "is_static"] = int(v)
             self.save_stores()
-            self._persist_category_for_transaction(transaction_id, str(category))
+            self._persist_category_for_transaction(transaction_id, str(category), data)
             self._ledger_forward_fill_uncategorized_if_static(store_name, int(v))
             return
 
@@ -514,7 +759,7 @@ class CategorizeFile:
             }
             self.stores_df.loc[len(self.stores_df)] = new_row
             self.save_stores()
-            self._persist_category_for_transaction(transaction_id, category_input)
+            self._persist_category_for_transaction(transaction_id, category_input, data)
             self._ledger_forward_fill_uncategorized_if_static(store_name, int(v))
             return
 
@@ -569,6 +814,7 @@ class CategorizeFile:
                 self.apply_session_resolve_static_revision(store_name, cat, int(v))
             else:
                 return "unknown kind"
+            self._apply_queue_notes_if_present(tid, data)
         except ValueError as e:
             return str(e)
         except Exception as e:  # noqa: BLE001
