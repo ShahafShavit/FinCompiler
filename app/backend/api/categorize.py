@@ -367,22 +367,16 @@ ManualPrompt = Union[FluidStorePrompt, ResolveStaticPrompt, NewStorePrompt]
 
 
 def stable_transaction_key(row: Union[pd.Series, Mapping]) -> str:
-    """Stable id for prompts and HTTP queue. Prefer **fingerprint** (ledger dedupe key).
+    """Stable id for prompts and HTTP queue: ledger ``fingerprint`` only.
 
-    Fall back to **מזהה עסקה** only when that column exists on the row (not stored in SQLite).
+    Must match :func:`ledger.store.load_ledger_transaction_by_stable_id` lookup (trimmed fingerprint).
     """
     if isinstance(row, pd.Series):
-        fp_ok = "fingerprint" in row.index
-        leg_ok = "מזהה עסקה" in row.index
-        fp = row["fingerprint"] if fp_ok else None
-        leg = row["מזהה עסקה"] if leg_ok else None
+        fp = row["fingerprint"] if "fingerprint" in row.index else None
     else:
         fp = row.get("fingerprint")
-        leg = row.get("מזהה עסקה")
     if fp is not None and pd.notna(fp) and str(fp).strip():
         return str(fp).strip()
-    if leg is not None and pd.notna(leg):
-        return str(leg)
     return ""
 
 

@@ -1343,7 +1343,10 @@ def load_first_transaction_needing_manual_category(db_path: str) -> pd.Series | 
 
 
 def load_ledger_transaction_by_stable_id(db_path: str, stable_id: str) -> pd.Series | None:
-    """Load one row by ``fingerprint`` (same string as :func:`stable_transaction_key`)."""
+    """Load one row where ``fingerprint`` equals ``stable_id`` (trimmed).
+
+    ``stable_id`` must be the row's **fingerprint** — same string as :func:`api.categorize.stable_transaction_key`.
+    """
     sid = str(stable_id or "").strip()
     if not sid:
         return None

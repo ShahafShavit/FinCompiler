@@ -206,6 +206,48 @@ class LedgerMigrateTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_migrate_drops_abandoned_mezaha_column(self) -> None:
+        """Abandoned legacy row-hash column on ``ledger_transaction`` is dropped when SQLite supports DROP COLUMN."""
+        import config as config_mod
+
+        from ledger import migrate_ledger_db
+
+        def _sqlite_ge(conn: sqlite3.Connection, want: tuple[int, int, int]) -> bool:
+            raw = conn.execute("SELECT sqlite_version()").fetchone()[0]
+            parts = [int(x) for x in raw.split(".")[:3]]
+            while len(parts) < 3:
+                parts.append(0)
+            return tuple(parts) >= want
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                importlib.reload(config_mod)
+
+            db_path = config_mod.ledger_db_file
+            migrate_ledger_db()
+
+            conn = sqlite3.connect(db_path)
+            try:
+                if not _sqlite_ge(conn, (3, 35, 0)):
+                    self.skipTest("SQLite < 3.35 has no ALTER TABLE DROP COLUMN")
+                conn.execute('ALTER TABLE ledger_transaction ADD COLUMN "מזהה עסקה" TEXT')
+                conn.commit()
+                names = [r[1] for r in conn.execute("PRAGMA table_info(ledger_transaction)")]
+                self.assertIn("מזהה עסקה", names)
+            finally:
+                conn.close()
+
+            migrate_ledger_db()
+
+            conn = sqlite3.connect(db_path)
+            try:
+                names = [r[1] for r in conn.execute("PRAGMA table_info(ledger_transaction)")]
+            finally:
+                conn.close()
+
+            self.assertNotIn("מזהה עסקה", names)
+
 
 if __name__ == "__main__":
     unittest.main()

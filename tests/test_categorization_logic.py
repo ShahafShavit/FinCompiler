@@ -18,7 +18,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from api.categorize import CategorizeFile, FluidStorePrompt, NewStorePrompt, flow_kind_for_amounts
+from api.categorize import CategorizeFile, FluidStorePrompt, NewStorePrompt, flow_kind_for_amounts, stable_transaction_key
 from pipeline.fingerprint import generate_transaction_fingerprint
 
 
@@ -301,6 +301,23 @@ class FluidPayeeMappingPayloadTests(unittest.TestCase):
             cats = {m["category"] for m in d["payee_store_mappings"]}
             self.assertEqual(cats, {"Drinks", "Food"})
             self.assertEqual(d["payee_distinct_category_count"], 2)
+
+
+class StableTransactionKeyTests(unittest.TestCase):
+    def test_returns_fingerprint_trimmed(self) -> None:
+        row = pd.Series({"fingerprint": "  fp1  ", "מקור עסקה": "S"})
+        self.assertEqual(stable_transaction_key(row), "fp1")
+
+    def test_ignores_legacy_mezaha_when_fingerprint_missing(self) -> None:
+        row = pd.Series({"מזהה עסקה": "deadbeef", "מקור עסקה": "S"})
+        self.assertEqual(stable_transaction_key(row), "")
+
+    def test_dict_mapping_fingerprint_only(self) -> None:
+        self.assertEqual(
+            stable_transaction_key({"fingerprint": "x", "מזהה עסקה": "y"}),
+            "x",
+        )
+        self.assertEqual(stable_transaction_key({"מזהה עסקה": "y"}), "")
 
 
 if __name__ == "__main__":

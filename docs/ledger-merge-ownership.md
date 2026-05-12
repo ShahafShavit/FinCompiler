@@ -8,7 +8,7 @@ Some exports still include Hebrew columns that **do not exist** on `ledger_trans
 
 | Name | Role |
 |------|------|
-| **מזהה עסקה** | Legacy **row hash** used in older CSV/Sheets workflows. **Not** stored in SQLite. **Never** use it as `fingerprint` or as a merge key into the ledger. |
+| **מזהה עסקה** | Legacy bank / Sheets column (row hash). **Not** stored in SQLite; **stripped** on workbook normalize. **Never** use it as `fingerprint` or as a merge key into the ledger. |
 | **תאריך עדכון** | Optional **source** field for **computing** `ingested_at` on **first insert** only (`pipeline/ingested_at_rules.py`). It is **not** a column on the ledger; only **`ingested_at`** is stored. |
 
 Canonical reference: `schema/ledger/README.md` and comments in `schema/ledger/full_schema.sql`.

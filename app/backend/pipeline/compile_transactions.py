@@ -34,6 +34,7 @@ TRANSACTION_DROP_COLUMNS: list[str] = [
     "אסמכתא",
     "קטגוריה",
     'היתרה בש"ח',
+    "מזהה עסקה",
 ]
 
 

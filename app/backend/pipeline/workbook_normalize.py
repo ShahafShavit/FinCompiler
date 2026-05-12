@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import glob
-import hashlib
 import logging
 import os
 import re
@@ -16,6 +16,59 @@ from pipeline.fingerprint import generate_transaction_fingerprint
 from .compiler import parse_post_ingest_date_column
 
 log = logging.getLogger(__name__)
+
+
+def _cell_str(x: object) -> str:
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return ""
+    return str(x).strip()
+
+
+def _non_numeric_amount_text_mask(df: pd.DataFrame) -> pd.Series:
+    """Rows where **בחובה** or **בזכות** has non-empty text that ``pd.to_numeric`` cannot parse."""
+    if df.empty:
+        return pd.Series(dtype=bool)
+    mask = pd.Series(False, index=df.index)
+    for col in ("בחובה", "בזכות"):
+        if col not in df.columns:
+            continue
+        s = df[col]
+        coerced = pd.to_numeric(s, errors="coerce")
+        nonempty = s.notna() & (s.map(_cell_str).str.len() > 0)
+        mask = mask | (nonempty & coerced.isna())
+    return mask
+
+
+def _dropped_transaction_rows_dir() -> str:
+    return os.path.normpath(os.path.join(config.transactions_raw_dir, "dropped_rows"))
+
+
+def _dump_transaction_rows(
+    df: pd.DataFrame,
+    mask: pd.Series,
+    *,
+    source_path: str,
+    drop_reason: str,
+) -> str | None:
+    """Write dropped rows to UTF-8 CSV under ``raw/dropped_rows/``; log path. Returns file path or None."""
+    if not mask.any():
+        return None
+    out_dir = _dropped_transaction_rows_dir()
+    os.makedirs(out_dir, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(source_path))[0]
+    ts = _dt.datetime.now().strftime("%Y%m%dT%H%M%S")
+    safe_reason = re.sub(r"[^\w\-]+", "_", drop_reason).strip("_")[:80] or "drop"
+    out_path = os.path.join(out_dir, f"{stem}_{safe_reason}_{ts}.csv")
+    sub = df.loc[mask].copy()
+    sub.insert(0, "_drop_reason", drop_reason)
+    sub.insert(1, "_source_workbook", os.path.normpath(source_path))
+    sub.to_csv(out_path, index=True, encoding="utf-8-sig")
+    log.info(
+        "TransactionFile wrote %s dropped row(s) (non-numeric amount text) -> %s",
+        int(mask.sum()),
+        out_path,
+    )
+    return out_path
 
 
 class TransactionFile:
@@ -34,7 +87,6 @@ class TransactionFile:
         self.file_path = file_path
         self.file_df = self.__load_data__()
         self.clean_nan_rows()
-        self.unique_identifier()
         self.unify_columns(rename_map)
         self.file_df["fingerprint"] = self.file_df.apply(generate_transaction_fingerprint, axis=1)
         self.file_df.dropna(subset=["fingerprint"], inplace=True)
@@ -94,18 +146,6 @@ class TransactionFile:
 
         return file_df
 
-    def unique_identifier(self):
-        """Attach legacy **מזהה עסקה** (SHA-256 of row text) for old CSV workflows only.
-
-        This is **not** the pipeline ``fingerprint`` and is **not** stored on ``ledger_transaction``.
-        SQLite/categorizer paths key off ``fingerprint`` (canonical dedupe string).
-        """
-        def hash_row(row):
-            row_string = ''.join(row.values.astype(str))
-            return hashlib.sha256(row_string.encode()).hexdigest()
-
-        self.file_df['מזהה עסקה'] = self.file_df.apply(hash_row, axis=1)
-
     def clean_nan_rows(self):
         df = self.file_df
         df = df[df.isnull().sum(axis=1) < 4]
@@ -124,15 +164,35 @@ class TransactionFile:
 
     def unify_columns(self, map):
         self.file_df.rename(columns=map, inplace=True)
+        path = self.file_path
+
+        bad = _non_numeric_amount_text_mask(self.file_df)
+        if bad.any():
+            _dump_transaction_rows(
+                self.file_df,
+                bad,
+                source_path=path,
+                drop_reason="amount_columns_non_numeric_text",
+            )
+            self.file_df = self.file_df.loc[~bad].reset_index(drop=True)
+
+        for col in ("בחובה", "בזכות"):
+            if col in self.file_df.columns:
+                self.file_df[col] = pd.to_numeric(self.file_df[col], errors="coerce")
 
         def update(row):
-            if row['בחובה'] < 0:
-                return abs(row['בחובה'])
-            else:
-                return row['בזכות'] if 'בזכות' in row and pd.notnull(row['בזכות']) else float(0)
+            if row["בחובה"] < 0:
+                return abs(row["בחובה"])
+            return (
+                row["בזכות"]
+                if "בזכות" in row and pd.notnull(row["בזכות"])
+                else float(0)
+            )
 
-        self.file_df['בזכות'] = self.file_df.apply(update, axis=1)
-        self.file_df['בחובה'] = self.file_df['בחובה'].apply(lambda x: float(0) if x < 0 else float(x))
+        self.file_df["בזכות"] = self.file_df.apply(update, axis=1)
+        self.file_df["בחובה"] = self.file_df["בחובה"].apply(
+            lambda x: float(0) if x < 0 else float(x)
+        )
 
 
 def load_transaction_clean_dataframe(
