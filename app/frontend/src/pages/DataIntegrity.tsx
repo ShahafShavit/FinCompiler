@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import TopCategoriesBoard from '../components/TopCategoriesBoard';
 import { getJson, patchJson, postJson } from '../lib/api';
 import { heatmapDetailCategory, heatmapDetailSource } from '../lib/drilldown';
 
@@ -31,6 +32,13 @@ type StoresResponse = {
   ok?: boolean;
   ledger_exists?: boolean;
   stores?: StoreRow[];
+};
+
+type TopCategoriesResponse = {
+  ok?: boolean;
+  ledger_exists?: boolean;
+  columns?: { top_name: string; sub_categories: string[] }[];
+  unassigned?: string[];
 };
 
 function cellStr(v: unknown): string {
@@ -68,14 +76,20 @@ export default function DataIntegrity() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [quickId, setQuickId] = useState('');
   const [quickFingerprint, setQuickFingerprint] = useState('');
+  const [topCats, setTopCats] = useState<TopCategoriesResponse | null>(null);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const [rpt, st] = await Promise.all([getJson<ReportResponse>('/api/integrity/report'), getJson<StoresResponse>('/api/integrity/stores')]);
+      const [rpt, st, tc] = await Promise.all([
+        getJson<ReportResponse>('/api/integrity/report'),
+        getJson<StoresResponse>('/api/integrity/stores'),
+        getJson<TopCategoriesResponse>('/api/integrity/top-categories'),
+      ]);
       setReport(rpt);
       setStores(st.stores ?? []);
+      setTopCats(tc);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -215,6 +229,15 @@ export default function DataIntegrity() {
       {err ? <div className="intg-error">{err}</div> : null}
       {!report?.ledger_exists ? <p className="intg-muted">No ledger file found at configured path.</p> : null}
       {txnMsg ? <p className="intg-msg intg-msg--txn">{txnMsg}</p> : null}
+
+      {topCats && report?.ledger_exists ? (
+        <TopCategoriesBoard
+          ledgerExists={!!topCats.ledger_exists}
+          columns={topCats.columns ?? []}
+          unassigned={topCats.unassigned ?? []}
+          onSaved={() => void loadAll()}
+        />
+      ) : null}
 
       <section className="intg-card">
         <h2 className="intg-card-title">Exclude any transaction</h2>

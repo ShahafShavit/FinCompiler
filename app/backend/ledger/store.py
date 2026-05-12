@@ -718,6 +718,14 @@ CREATE INDEX IF NOT EXISTS idx_trade_portfolio_account ON trade_portfolio_positi
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (15, 'add_trade_portfolio_position')"
             )
+            ver = _current_schema_version(conn)
+            if ver < 16:
+                from ledger.top_categories import TOP_CATEGORIES_V16_DDL
+
+                conn.executescript(TOP_CATEGORIES_V16_DDL)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (16, 'top_categories_navigation_layout')"
+            )
             conn.commit()
         finally:
             conn.close()

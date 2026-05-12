@@ -42,6 +42,7 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (12, 'fingerprint
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (13, 'drop_similar_category_pair');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (14, 'ledger_excluded_from_calculations');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (15, 'add_trade_portfolio_position');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (16, 'top_categories_navigation_layout');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -187,6 +188,22 @@ CREATE TABLE IF NOT EXISTS trade_portfolio_position (
 
 CREATE INDEX IF NOT EXISTS idx_trade_portfolio_snapshot ON trade_portfolio_position (snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_trade_portfolio_account ON trade_portfolio_position (portfolio_account);
+
+-- -----------------------------------------------------------------------------
+-- Top categories (QoL: group store_category strings for categorize UI only)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS top_category_column (
+    top_name    TEXT NOT NULL PRIMARY KEY,
+    sort_order  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS top_categories (
+    top_name      TEXT NOT NULL,
+    sub_category  TEXT NOT NULL,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (top_name, sub_category),
+    FOREIGN KEY (top_name) REFERENCES top_category_column(top_name) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_top_categories_sub ON top_categories (sub_category);
 
 -- =============================================================================
 -- Triggers: timestamps (evaluation Section 13.9)

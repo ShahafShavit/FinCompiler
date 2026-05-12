@@ -16,6 +16,11 @@ from ledger import (
     ledger_connect_readonly,
     migrate_ledger_db,
 )
+from ledger.top_categories import (
+    build_top_categories_payload,
+    parse_top_categories_put_body,
+    replace_top_categories_layout,
+)
 
 log = logging.getLogger(__name__)
 
@@ -405,6 +410,48 @@ def list_stores_aggregated() -> dict[str, Any]:
         conn.close()
 
 
+def get_top_categories() -> dict[str, Any]:
+    path = _ledger_path()
+    if not os.path.isfile(path):
+        return {"ok": True, "ledger_exists": False, "columns": [], "unassigned": []}
+    migrate_ledger_db(path)
+    conn = ledger_connect_readonly(path)
+    try:
+        lay = build_top_categories_payload(conn)
+        return {"ok": True, "ledger_exists": True, "columns": lay["columns"], "unassigned": lay["unassigned"]}
+    finally:
+        conn.close()
+
+
+def put_top_categories(raw_body: bytes) -> tuple[int, dict[str, Any]]:
+    try:
+        data = json.loads(raw_body.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return 400, {"ok": False, "error": "invalid_json", "message": "Invalid JSON body"}
+
+    cols, parse_err = parse_top_categories_put_body(data)
+    if parse_err or cols is None:
+        return 400, {"ok": False, "error": "validation_error", "message": parse_err or "invalid body"}
+
+    path = _ledger_path()
+    if not os.path.isfile(path):
+        return 404, {"ok": False, "error": "no_ledger", "message": "Ledger database not found"}
+
+    migrate_ledger_db(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        ok, err = replace_top_categories_layout(conn, cols)
+        if not ok:
+            conn.rollback()
+            return 400, {"ok": False, "error": "validation_error", "message": err or "save failed"}
+        lay = build_top_categories_payload(conn)
+        conn.commit()
+        return 200, {"ok": True, "columns": lay["columns"], "unassigned": lay["unassigned"]}
+    finally:
+        conn.close()
+
+
 def rename_category(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     try:
         data = json.loads(raw_body.decode("utf-8") or "{}")
@@ -435,14 +482,30 @@ def rename_category(raw_body: bytes) -> tuple[int, dict[str, Any]]:
             "SELECT COUNT(*) FROM store_category WHERE category = ?",
             (from_cat,),
         ).fetchone()[0]
+        n_top = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM top_categories WHERE sub_category = ?",
+                (from_cat,),
+            ).fetchone()[0]
+            or 0
+        )
         if dry_run:
             return 200, {
                 "ok": True,
                 "dry_run": True,
-                "would_update": {"ledger_transaction": int(n_led), "store_category": int(n_sc)},
+                "would_update": {
+                    "ledger_transaction": int(n_led),
+                    "store_category": int(n_sc),
+                    "top_categories": n_top,
+                },
             }
         conn.execute('UPDATE ledger_transaction SET "קטגוריה" = ? WHERE "קטגוריה" = ?', (to_cat, from_cat))
         conn.execute("UPDATE store_category SET category = ? WHERE category = ?", (to_cat, from_cat))
+        conn.execute("DELETE FROM top_categories WHERE sub_category = ?", (to_cat,))
+        conn.execute(
+            "UPDATE top_categories SET sub_category = ? WHERE sub_category = ?",
+            (to_cat, from_cat),
+        )
         conn.commit()
         try:
             from api import heatmap as _heatmap_mod
@@ -455,6 +518,7 @@ def rename_category(raw_body: bytes) -> tuple[int, dict[str, Any]]:
             "rows_updated": {
                 "ledger_transaction": int(n_led),
                 "store_category": int(n_sc),
+                "top_categories": n_top,
             },
         }
     finally:

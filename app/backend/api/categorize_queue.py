@@ -41,6 +41,24 @@ def _session_categories(cf: CategorizeFile) -> list[str]:
     return sorted({str(x) for x in cf.stores_df["category"].tolist() if str(x).strip()})
 
 
+def _attach_category_columns(base: dict[str, Any]) -> dict[str, Any]:
+    """Add ``category_columns`` from ledger (QoL grouping; optional for UI)."""
+    path = config.ledger_db_file
+    if not os.path.isfile(path):
+        base["category_columns"] = {"columns": [], "unassigned": []}
+        return base
+    from ledger import ledger_connect_readonly
+    from ledger.top_categories import build_top_categories_payload
+
+    conn = ledger_connect_readonly(path)
+    try:
+        lay = build_top_categories_payload(conn)
+    finally:
+        conn.close()
+    base["category_columns"] = {"columns": lay["columns"], "unassigned": lay["unassigned"]}
+    return base
+
+
 def summary() -> dict[str, Any]:
     from ledger import count_transactions_needing_manual_category
     from ledger import migrate_ledger_db
@@ -72,12 +90,14 @@ def next_payload() -> dict[str, Any]:
 
         migrate_ledger_db()
         if not os.path.isfile(config.ledger_db_file):
-            return {
-                "pending": {"kind": "idle"},
-                "open_count": 0,
-                "history": [],
-                "session_categories": [],
-            }
+            return _attach_category_columns(
+                {
+                    "pending": {"kind": "idle"},
+                    "open_count": 0,
+                    "history": [],
+                    "session_categories": [],
+                }
+            )
 
         forward_fill_uncategorized_for_static_stores_sql(config.ledger_db_file)
 
@@ -87,20 +107,24 @@ def next_payload() -> dict[str, Any]:
         for attempt in range(2):
             open_n = count_transactions_needing_manual_category(config.ledger_db_file)
             if open_n == 0:
-                return {
-                    "pending": {"kind": "idle"},
-                    "open_count": 0,
-                    "history": [],
-                    "session_categories": cats,
-                }
+                return _attach_category_columns(
+                    {
+                        "pending": {"kind": "idle"},
+                        "open_count": 0,
+                        "history": [],
+                        "session_categories": cats,
+                    }
+                )
             row = load_first_transaction_needing_manual_category(config.ledger_db_file)
             if row is None:
-                return {
-                    "pending": {"kind": "idle"},
-                    "open_count": 0,
-                    "history": [],
-                    "session_categories": cats,
-                }
+                return _attach_category_columns(
+                    {
+                        "pending": {"kind": "idle"},
+                        "open_count": 0,
+                        "history": [],
+                        "session_categories": cats,
+                    }
+                )
             try:
                 p = cf.build_manual_prompt_for_row(row)
             except ValueError as e:
@@ -111,26 +135,32 @@ def next_payload() -> dict[str, Any]:
                         cf._persist_category_for_transaction(stable_transaction_key(row), str(cat))
                         cats = _session_categories(cf)
                         continue
-                return {
-                    "pending": {"kind": "idle"},
+                return _attach_category_columns(
+                    {
+                        "pending": {"kind": "idle"},
+                        "open_count": open_n,
+                        "history": [],
+                        "session_categories": cats,
+                        "error": str(e),
+                    }
+                )
+            return _attach_category_columns(
+                {
+                    "pending": p.to_display_dict(),
                     "open_count": open_n,
                     "history": [],
-                    "session_categories": cats,
-                    "error": str(e),
+                    "session_categories": _session_categories(cf),
                 }
-            return {
-                "pending": p.to_display_dict(),
-                "open_count": open_n,
+            )
+        return _attach_category_columns(
+            {
+                "pending": {"kind": "idle"},
+                "open_count": 0,
                 "history": [],
-                "session_categories": _session_categories(cf),
+                "session_categories": cats,
+                "error": "queue repair failed after retry",
             }
-        return {
-            "pending": {"kind": "idle"},
-            "open_count": 0,
-            "history": [],
-            "session_categories": cats,
-            "error": "queue repair failed after retry",
-        }
+        )
 
 
 def respond(data: dict[str, Any]) -> Optional[str]:

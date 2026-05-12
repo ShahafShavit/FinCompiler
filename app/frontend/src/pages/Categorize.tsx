@@ -39,13 +39,39 @@ type HistoryItem = {
   response?: { category?: string; is_static?: number };
 };
 
+type CategoryColumnsPayload = {
+  columns: { top_name: string; sub_categories: string[] }[];
+  unassigned: string[];
+};
+
 type CatApi = {
   pending?: Pending;
   history?: HistoryItem[];
   session_categories?: string[];
   open_count?: number;
   error?: string;
+  category_columns?: CategoryColumnsPayload;
 };
+
+function pickCategoryColumns(data: Record<string, unknown>): CategoryColumnsPayload | undefined {
+  const raw = data.category_columns;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const cols = obj.columns;
+  const un = obj.unassigned;
+  if (!Array.isArray(cols)) return undefined;
+  const columns = cols
+    .filter((c): c is Record<string, unknown> => Boolean(c && typeof c === 'object'))
+    .map((c) => ({
+      top_name: String(c.top_name ?? ''),
+      sub_categories: Array.isArray(c.sub_categories)
+        ? (c.sub_categories as unknown[]).map((x) => String(x))
+        : [],
+    }))
+    .filter((c) => c.top_name.trim());
+  const unassigned = Array.isArray(un) ? (un as unknown[]).map((x) => String(x)) : [];
+  return { columns, unassigned };
+}
 
 function normalizeApi(raw: unknown): CatApi {
   const data = raw as Record<string, unknown>;
@@ -63,6 +89,7 @@ function normalizeApi(raw: unknown): CatApi {
         : [],
       open_count: typeof data.open_count === 'number' ? data.open_count : undefined,
       error: typeof data.error === 'string' ? data.error : undefined,
+      category_columns: pickCategoryColumns(data),
     };
   }
   if (data && data.kind) {
@@ -71,6 +98,7 @@ function normalizeApi(raw: unknown): CatApi {
       pending: data as Pending,
       open_count: typeof data.open_count === 'number' ? data.open_count : undefined,
       error: typeof data.error === 'string' ? data.error : undefined,
+      category_columns: pickCategoryColumns(data),
     };
   }
   return empty;
@@ -180,10 +208,12 @@ function CategoryBadgePick({
   name,
   options,
   initialPick,
+  categoryColumns,
 }: {
   name: string;
   options: string[];
   initialPick?: string;
+  categoryColumns?: CategoryColumnsPayload | null;
 }) {
   const sorted = useMemo(() => {
     const s = new Set<string>();
@@ -193,6 +223,29 @@ function CategoryBadgePick({
     });
     return [...s].sort((a, b) => a.localeCompare(b));
   }, [options]);
+
+  const useGrouped = Boolean(
+    categoryColumns?.columns && categoryColumns.columns.length > 0,
+  );
+
+  const grouped = useMemo(() => {
+    if (!useGrouped || !categoryColumns) return null;
+    const optSet = new Set(sorted);
+    const cols = categoryColumns.columns.map((c) => ({
+      top_name: c.top_name,
+      subs: c.sub_categories.filter((s) => optSet.has(s)),
+    }));
+    const fromServerU = categoryColumns.unassigned.filter((s) => optSet.has(s));
+    const assigned = new Set<string>();
+    cols.forEach((c) => c.subs.forEach((s) => assigned.add(s)));
+    categoryColumns.unassigned.forEach((s) => {
+      if (optSet.has(s)) assigned.add(s);
+    });
+    const orphans = sorted.filter((s) => !assigned.has(s));
+    const unBlock = [...new Set([...fromServerU, ...orphans])].sort((a, b) => a.localeCompare(b));
+    return { cols, unBlock };
+  }, [useGrouped, categoryColumns, sorted]);
+
   const [picked, setPicked] = useState<string | null>(null);
   const customId = `${name}-custom`;
 
@@ -204,24 +257,74 @@ function CategoryBadgePick({
   return (
     <div className="categorize-cat-pick" data-cat-pick={name}>
       <p className="categorize-cat-count">
-        {sorted.length} {sorted.length === 1 ? 'category' : 'categories'} (sorted A–Z)
+        {sorted.length} {sorted.length === 1 ? 'category' : 'categories'}
+        {useGrouped && grouped ? ' (grouped)' : ' (sorted A–Z)'}
       </p>
-      <div className="categorize-cat-badges" role="group" aria-label="Pick a category">
-        {sorted.map((c) => (
-          <button
-            key={c}
-            type="button"
-            className={`categorize-cat-badge${picked === c ? ' categorize-cat-badge--selected' : ''}`}
-            onClick={() => {
-              setPicked(c);
-              const el = document.getElementById(customId) as HTMLInputElement | null;
-              if (el) el.value = '';
-            }}
-          >
-            {c}
-          </button>
-        ))}
-      </div>
+      {useGrouped && grouped ? (
+        <div className="categorize-cat-groups" role="group" aria-label="Pick a category">
+          {grouped.cols.map((col) =>
+            col.subs.length === 0 ? null : (
+              <div key={col.top_name} className="categorize-cat-group">
+                <p className="categorize-cat-group-title">{col.top_name}</p>
+                <div className="categorize-cat-badges">
+                  {col.subs.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`categorize-cat-badge${picked === c ? ' categorize-cat-badge--selected' : ''}`}
+                      onClick={() => {
+                        setPicked(c);
+                        const el = document.getElementById(customId) as HTMLInputElement | null;
+                        if (el) el.value = '';
+                      }}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ),
+          )}
+          {grouped.unBlock.length > 0 ? (
+            <div className="categorize-cat-group">
+              <p className="categorize-cat-group-title">Unassigned</p>
+              <div className="categorize-cat-badges">
+                {grouped.unBlock.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`categorize-cat-badge${picked === c ? ' categorize-cat-badge--selected' : ''}`}
+                    onClick={() => {
+                      setPicked(c);
+                      const el = document.getElementById(customId) as HTMLInputElement | null;
+                      if (el) el.value = '';
+                    }}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="categorize-cat-badges" role="group" aria-label="Pick a category">
+          {sorted.map((c) => (
+            <button
+              key={c}
+              type="button"
+              className={`categorize-cat-badge${picked === c ? ' categorize-cat-badge--selected' : ''}`}
+              onClick={() => {
+                setPicked(c);
+                const el = document.getElementById(customId) as HTMLInputElement | null;
+                if (el) el.value = '';
+              }}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
       <label className="categorize-cat-custom-label" htmlFor={customId}>
         Or type a category
       </label>
@@ -454,6 +557,8 @@ export default function Categorize() {
     [sessionCats, p],
   );
 
+  const categoryColumns = payload.category_columns;
+
   const queueMeta =
     typeof payload.open_count === 'number' ? (
       <p
@@ -491,6 +596,7 @@ export default function Categorize() {
                       name={`hist-fluid-${hid}`}
                       options={histFluidOpts}
                       initialPick={item.response?.category}
+                      categoryColumns={categoryColumns}
                     />
                     <TxnNotesField id={`hist-notes-fluid-${hid}`} defaultNotes="" />
                     <button
@@ -530,6 +636,7 @@ export default function Categorize() {
                         all_categories: [],
                       } as Pending)}
                       initialPick={item.response?.category}
+                      categoryColumns={categoryColumns}
                     />
                     <MappingTypeBlock key={`map-hnst-${item.prompt_id}`} groupName={`hnst-${hid}`} />
                     <TxnNotesField id={`hist-notes-new-${hid}`} defaultNotes="" />
@@ -631,7 +738,12 @@ export default function Categorize() {
             <PayeeStoreMappings data={p} />
             <TransactionDetails data={p} />
             <label className="categorize-section-label">Category</label>
-            <CategoryBadgePick key={`main-fluid-${String(p.prompt_id)}`} name="main-fluid" options={pendingOpts} />
+            <CategoryBadgePick
+              key={`main-fluid-${String(p.prompt_id)}`}
+              name="main-fluid"
+              options={pendingOpts}
+              categoryColumns={categoryColumns}
+            />
             <TxnNotesField key={`txn-fluid-${p.prompt_id}`} id="notes-main-fluid" defaultNotes={esc(p.notes)} />
             <div className="categorize-action-footer">
               <div className="categorize-action-footer__row">
@@ -730,7 +842,12 @@ export default function Categorize() {
             <PayeeStoreMappings data={p} />
             <TransactionDetails data={p} />
             <label className="categorize-section-label">Category</label>
-            <CategoryBadgePick key={`main-new-${String(p.prompt_id)}`} name="main-new" options={pendingOpts} />
+            <CategoryBadgePick
+              key={`main-new-${String(p.prompt_id)}`}
+              name="main-new"
+              options={pendingOpts}
+              categoryColumns={categoryColumns}
+            />
             <MappingTypeBlock key={`map-nst-${p.prompt_id}`} groupName="nst-main" />
             <TxnNotesField key={`txn-new-${p.prompt_id}`} id="notes-main-new" defaultNotes={esc(p.notes)} />
             <div className="categorize-action-footer">

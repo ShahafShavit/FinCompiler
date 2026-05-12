@@ -237,6 +237,31 @@
   color: var(--fg-muted);
 }
 
+.categorize-cat-groups {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.categorize-cat-group {
+  flex: 1 1 min(11rem, 100%);
+  min-width: min(10rem, 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem 0.55rem;
+  background: rgba(28, 29, 34, 0.45);
+}
+
+.categorize-cat-group-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--fg-muted);
+  text-transform: none;
+}
+
 .categorize-cat-badges {
   display: flex;
   flex-wrap: wrap;

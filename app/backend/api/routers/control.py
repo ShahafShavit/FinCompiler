@@ -245,6 +245,42 @@ def register_routes(app: FastAPI) -> None:
             )
         return Response(content=body, media_type="application/json; charset=utf-8")
 
+    @r.get("/api/integrity/top-categories", include_in_schema=False)
+    async def integrity_top_categories_get() -> Response:
+        try:
+            payload = integrity.get_top_categories()
+            body = json_bytes_strict(payload)
+        except Exception:  # noqa: BLE001
+            log.exception("GET /api/integrity/top-categories failed")
+            body = json_bytes_strict(
+                {
+                    "ok": False,
+                    "error": "server_error",
+                    "message": "Top categories load failed (see server log).",
+                    "columns": [],
+                    "unassigned": [],
+                }
+            )
+        return Response(content=body, media_type="application/json; charset=utf-8")
+
+    @r.put("/api/integrity/top-categories", include_in_schema=False)
+    async def integrity_top_categories_put(request: Request) -> Response:
+        raw = await request.body()
+        try:
+            status, payload = integrity.put_top_categories(raw)
+            body = json_bytes_strict(payload)
+        except Exception:  # noqa: BLE001
+            log.exception("PUT /api/integrity/top-categories failed")
+            status = 500
+            body = json_bytes_strict(
+                {
+                    "ok": False,
+                    "error": "server_error",
+                    "message": "Top categories save failed (see server log).",
+                }
+            )
+        return Response(content=body, status_code=status, media_type="application/json; charset=utf-8")
+
     @r.get("/api/status", include_in_schema=False)
     async def api_status(state: StateDep) -> JSONResponse:
         return JSONResponse(
