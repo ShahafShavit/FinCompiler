@@ -403,27 +403,43 @@ def category_period_stats(
         "limit": int(limit),
         **_category_window_meta(period, start_ym, end_ym),
     }
+    empty_net: dict[str, Any] = {
+        "period_income_total": 0.0,
+        "period_expense_total": 0.0,
+        "category_bucket_count": 0,
+        "period_net_total": 0.0,
+        "period_months": 1,
+        "avg_monthly_net": 0.0,
+    }
     conn = _tx_conn()
     if conn is None:
-        return _empty_payload(
-            {**meta, "period_income_total": 0.0, "period_expense_total": 0.0, "category_bucket_count": 0}
-        )
+        return _empty_payload({**meta, **empty_net})
     try:
         period_income_total, period_expense_total, category_bucket_count, out_rows = (
             dashboard_tx_sql.category_period_stats(
                 conn, period, int(limit), start_ym=start_ym, end_ym=end_ym
             )
         )
+        period_months = dashboard_tx_sql.category_period_window_months(
+            conn, period, start_ym=start_ym, end_ym=end_ym
+        )
+        period_net_total = float(period_income_total) - float(period_expense_total)
+        avg_monthly_net: float | None
+        if period_months > 0:
+            avg_monthly_net = period_net_total / float(period_months)
+        else:
+            avg_monthly_net = None
     except Exception:  # noqa: BLE001
         log.exception("dashboard: category_period_stats failed")
-        return _empty_payload(
-            {**meta, "period_income_total": 0.0, "period_expense_total": 0.0, "category_bucket_count": 0}
-        )
+        return _empty_payload({**meta, **empty_net})
     finally:
         conn.close()
     meta["period_income_total"] = period_income_total
     meta["period_expense_total"] = period_expense_total
     meta["category_bucket_count"] = category_bucket_count
+    meta["period_net_total"] = period_net_total
+    meta["period_months"] = int(period_months)
+    meta["avg_monthly_net"] = avg_monthly_net
     if not out_rows:
         return _empty_payload(meta)
     return {

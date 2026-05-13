@@ -1,0 +1,8 @@
+# Optional deps for notebooks/ (not used by app backend).
+# Install: pip install -r notebooks/requirements-notebooks.txt
+jupyter>=1.0.0
+ipykernel>=6.29.0
+yfinance>=0.2.40
+matplotlib>=3.8.0
+pymaya>=0.5.0
+cachetools>=5.0.0

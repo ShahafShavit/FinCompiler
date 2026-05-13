@@ -43,6 +43,8 @@ export type CategoryPeriodStatRow = {
   income: number;
   expense: number;
   net: number;
+  /** Category net / window month count (same divisor as response ``period_months``). */
+  avg_monthly_net: number;
   txn_count: number;
   pct_of_period_income: number;
   pct_of_period_expense: number;
@@ -54,6 +56,9 @@ export type CategoryPeriodStatsResponse = {
   limit: number;
   period_income_total: number;
   period_expense_total: number;
+  period_net_total?: number;
+  period_months?: number;
+  avg_monthly_net?: number | null;
   rows: CategoryPeriodStatRow[];
   category_bucket_count?: number;
   start_ym?: string;

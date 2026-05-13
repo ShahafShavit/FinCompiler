@@ -174,6 +174,120 @@ class DashboardPeriodWindowTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_category_period_window_months_rules(self) -> None:
+        import config as config_mod
+
+        from ledger import migrate_ledger_db
+        from ledger import dashboard_sql as dashboard_tx_sql
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                importlib.reload(config_mod)
+
+            migrate_ledger_db()
+            conn = sqlite3.connect(config_mod.ledger_db_file)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO ledger_transaction (
+                      "תאריך", "בחובה", "בזכות", "מקור עסקה", "fingerprint", ingested_at, "קטגוריה",
+                      excluded_from_calculations
+                    ) VALUES
+                      ('2023-06-10', 100.0, 0, 'P', 'fp_2023', '2023-06-10', 'Eat', 0),
+                      ('2024-01-10', 40.0, 0, 'P', 'fp_2024a', '2024-01-10', 'Eat', 0),
+                      ('2024-08-10', 60.0, 0, 'P', 'fp_2024b', '2024-08-10', 'Ride', 0),
+                      ('2025-01-05', 999.0, 0, 'P', 'fp_exc', '2025-01-05', 'Ghost', 1),
+                      ('2025-03-10', 300.0, 0, 'P', 'fp_2025', '2025-03-10', 'Shop', 0)
+                    """
+                )
+                conn.commit()
+
+                self.assertEqual(
+                    dashboard_tx_sql.category_period_window_months(
+                        conn, "12m", start_ym="2024-01", end_ym="2024-06"
+                    ),
+                    6,
+                )
+                self.assertEqual(dashboard_tx_sql.category_period_window_months(conn, "2024"), 12)
+                self.assertEqual(dashboard_tx_sql.category_period_window_months(conn, "30d"), 1)
+                # 2023-06 .. 2025-03 inclusive
+                self.assertEqual(dashboard_tx_sql.category_period_window_months(conn, "all"), 22)
+                self.assertEqual(dashboard_tx_sql.category_period_window_months(conn, "ytd"), 3)
+                self.assertEqual(dashboard_tx_sql.category_period_window_months(conn, "12m"), 4)
+            finally:
+                conn.close()
+
+    def test_category_period_window_months_last_n_few_distinct_buckets(self) -> None:
+        import config as config_mod
+
+        from ledger import migrate_ledger_db
+        from ledger import dashboard_sql as dashboard_tx_sql
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                importlib.reload(config_mod)
+
+            migrate_ledger_db()
+            conn = sqlite3.connect(config_mod.ledger_db_file)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO ledger_transaction (
+                      "תאריך", "בחובה", "בזכות", "מקור עסקה", "fingerprint", ingested_at, "קטגוריה",
+                      excluded_from_calculations
+                    ) VALUES ('2024-03-10', 50.0, 0, 'P', 'fp_one', '2024-03-10', 'Eat', 0)
+                    """
+                )
+                conn.commit()
+                self.assertEqual(dashboard_tx_sql.category_period_window_months(conn, "12m"), 1)
+            finally:
+                conn.close()
+
+    def test_category_period_stats_api_avg_monthly_net(self) -> None:
+        import config as config_mod
+
+        from api import dashboard
+        from ledger import migrate_ledger_db
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                importlib.reload(config_mod)
+
+            migrate_ledger_db()
+            db = config_mod.ledger_db_file
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO ledger_transaction (
+                      "תאריך", "בחובה", "בזכות", "מקור עסקה", "fingerprint", ingested_at, "קטגוריה",
+                      excluded_from_calculations
+                    ) VALUES ('2024-01-10', 40.0, 0, 'P', 'fp_jan', '2024-01-10', 'Eat', 0)
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            payload = dashboard.category_period_stats(
+                period="12m", limit=40, start_ym="2024-01", end_ym="2024-06"
+            )
+            self.assertTrue(payload.get("ok"))
+            self.assertEqual(payload.get("period_months"), 6)
+            self.assertAlmostEqual(payload.get("period_net_total", 0.0), -40.0, places=6)
+            self.assertAlmostEqual(
+                payload.get("avg_monthly_net", 0.0),
+                -40.0 / 6.0,
+                places=6,
+            )
+            rows = payload.get("rows") or []
+            self.assertEqual(len(rows), 1)
+            self.assertAlmostEqual(rows[0]["net"], -40.0, places=6)
+            self.assertAlmostEqual(rows[0]["avg_monthly_net"], -40.0 / 6.0, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -210,6 +210,14 @@ function CategoryChartTooltip({
         <span>{formatMoney(row.net)}</span>
       </div>
       <div className="dash-tooltip__row">
+        <span>Avg monthly net</span>
+        <span>{formatMoney(row.avg_monthly_net)}</span>
+      </div>
+      <div className="dash-tooltip__row">
+        <span>Yr proj. net</span>
+        <span>{formatMoney(yearlyNetProjectionOf(row))}</span>
+      </div>
+      <div className="dash-tooltip__row">
         <span>% of period income</span>
         <span>{formatPct(row.pct_of_period_income)}</span>
       </div>
@@ -481,10 +489,25 @@ function yearsDescendingFromBounds(minYm: string | null, maxYm: string | null): 
   return out;
 }
 
-type CatSortKey = 'flow' | 'category' | 'income' | 'expense' | 'net' | 'txn_count' | 'pct_in' | 'pct_ex';
+type CatSortKey =
+  | 'flow'
+  | 'category'
+  | 'income'
+  | 'expense'
+  | 'net'
+  | 'avg_monthly_net'
+  | 'yearly_net_proj'
+  | 'txn_count'
+  | 'pct_in'
+  | 'pct_ex';
 
 function flowOf(r: CategoryPeriodStatRow): number {
   return r.income + r.expense;
+}
+
+/** Frontend-only: linear annualization of window avg monthly net. */
+function yearlyNetProjectionOf(r: CategoryPeriodStatRow): number {
+  return r.avg_monthly_net * 12;
 }
 
 function compareCatRows(a: CategoryPeriodStatRow, b: CategoryPeriodStatRow, key: CatSortKey, dir: 'asc' | 'desc'): number {
@@ -497,6 +520,8 @@ function compareCatRows(a: CategoryPeriodStatRow, b: CategoryPeriodStatRow, key:
     cmp = a.pct_of_period_income - b.pct_of_period_income;
   } else if (key === 'pct_ex') {
     cmp = a.pct_of_period_expense - b.pct_of_period_expense;
+  } else if (key === 'yearly_net_proj') {
+    cmp = yearlyNetProjectionOf(a) - yearlyNetProjectionOf(b);
   } else {
     cmp = a[key] - b[key];
   }
@@ -635,7 +660,9 @@ function CategoryOverviewCard() {
         <div className="dash-cat-head__main">
           <h3 className="dash-card__title dash-card__title--inline">Category overview</h3>
           <p className="dash-card__sub dash-card__sub--tight">
-            Ranked by income + expense; columns are comparable at a glance.{' '}
+            Ranked by income + expense; <strong>Avg/mo net</strong> divides each category&apos;s period net by
+            the window month count; <strong>Yr proj.</strong> is that average × 12 (not annualized for partial
+            windows).{' '}
             <a className="dash-inline-link" href="/heatmap">
               Full heatmap
             </a>
@@ -652,6 +679,20 @@ function CategoryOverviewCard() {
               {' — '}
               <span className="dash-card-meta-line__hint">
                 sums include every included transaction (not only the table below).
+              </span>
+            </p>
+          ) : null}
+          {data?.avg_monthly_net != null && data?.period_months != null && data?.period_net_total != null ? (
+            <p className="dash-card-meta-line dash-card-meta-line--small">
+              Overall avg monthly net:{' '}
+              <strong className={data.avg_monthly_net >= 0 ? 'dash-num--in' : 'dash-num--out'}>
+                {formatMoney(data.avg_monthly_net)}
+              </strong>
+              <span className="dash-card-meta-line__hint">
+                {' '}
+                ({formatMoney(data.period_net_total)} net over {data.period_months}{' '}
+                {data.period_months === 1 ? 'month' : 'months'}
+                {rangeKind === 'preset' && presetPeriod === '30d' ? '; last 30 days treated as one period' : ''})
               </span>
             </p>
           ) : null}
@@ -805,6 +846,22 @@ function CategoryOverviewCard() {
                 <th scope="col" className="dash-cat-table__sort dash-num" onClick={() => cycleSort('net')}>
                   Net{sortMark('net')}
                 </th>
+                <th
+                  scope="col"
+                  className="dash-cat-table__sort dash-num"
+                  onClick={() => cycleSort('avg_monthly_net')}
+                  title="Category net divided by the selected window length in months"
+                >
+                  Avg/mo net{sortMark('avg_monthly_net')}
+                </th>
+                <th
+                  scope="col"
+                  className="dash-cat-table__sort dash-num"
+                  onClick={() => cycleSort('yearly_net_proj')}
+                  title="Avg monthly net × 12 (simple projection)"
+                >
+                  Yr proj.{sortMark('yearly_net_proj')}
+                </th>
                 <th scope="col" className="dash-cat-table__sort dash-num" onClick={() => cycleSort('txn_count')}>
                   Txns{sortMark('txn_count')}
                 </th>
@@ -839,6 +896,16 @@ function CategoryOverviewCard() {
                   <td className={`dash-num ${row.net >= 0 ? 'dash-num--in' : 'dash-num--out'}`}>
                     {formatMoney(row.net)}
                   </td>
+                  <td
+                    className={`dash-num ${row.avg_monthly_net >= 0 ? 'dash-num--in' : 'dash-num--out'}`}
+                  >
+                    {formatMoney(row.avg_monthly_net)}
+                  </td>
+                  <td
+                    className={`dash-num ${yearlyNetProjectionOf(row) >= 0 ? 'dash-num--in' : 'dash-num--out'}`}
+                  >
+                    {formatMoney(yearlyNetProjectionOf(row))}
+                  </td>
                   <td className="dash-num">{row.txn_count.toLocaleString()}</td>
                   <td className="dash-num">{formatPct(row.pct_of_period_income)}</td>
                   <td className="dash-num">{formatPct(row.pct_of_period_expense)}</td>
@@ -849,7 +916,7 @@ function CategoryOverviewCard() {
         </div>
       ) : (
         <div className="dash-cat-chart">
-          <ResponsiveContainer width="100%" height={Math.min(520, 140 + chartRows.length * 22)}>
+          <ResponsiveContainer width="100%" height={Math.min(560, 160 + chartRows.length * 24)}>
             <BarChart
               data={chartRows}
               layout="vertical"
@@ -890,9 +957,17 @@ function CategoryOverviewCard() {
                   <Cell key={`net-${i}`} onClick={() => drillCategory(r.category, 'net')} />
                 ))}
               </Bar>
+              <Bar dataKey="avg_monthly_net" name="Avg/mo net" fill="#9775fa" cursor="pointer">
+                {chartRows.map((r, i) => (
+                  <Cell key={`avg-${i}`} onClick={() => drillCategory(r.category, 'net')} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
-          <p className="dash-cat-chart__hint">Click a bar group to drill by income, expense, or net for that category.</p>
+          <p className="dash-cat-chart__hint">
+            Click a bar group to drill by income, expense, or net for that category. Avg/mo net uses the same
+            window month count as the header.
+          </p>
         </div>
       )}
     </div>

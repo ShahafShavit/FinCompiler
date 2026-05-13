@@ -193,6 +193,52 @@ def effective_month_bounds(conn: sqlite3.Connection) -> tuple[str | None, str | 
     return str(row[0]), str(row[1])
 
 
+def category_period_window_months(
+    conn: sqlite3.Connection,
+    period: str,
+    start_ym: str | None = None,
+    end_ym: str | None = None,
+) -> int:
+    """Month count divisor for period net → average monthly (aligned with ``_with_header``)."""
+    bounds = normalize_ym_range(start_ym, end_ym)
+    if bounds is not None:
+        lo, hi = bounds
+        return max(1, ym_range_span_months(lo, hi))
+
+    raw = (period or "12m").strip()
+    low = raw.lower()
+    if low == "30d":
+        return 1
+    if _YEAR_RE.fullmatch(raw):
+        return 12
+    if low == "all":
+        lo_b, hi_b = effective_month_bounds(conn)
+        if lo_b is None or hi_b is None:
+            return 1
+        return max(1, ym_range_span_months(lo_b, hi_b))
+    if low == "ytd":
+        sql_anchor = f"""WITH {TX_NORM}
+        SELECT strftime('%Y-%m', MAX(tx_date)), strftime('%Y', MAX(tx_date))
+        FROM tx_norm
+        WHERE tx_date IS NOT NULL
+        """
+        row = conn.execute(sql_anchor).fetchone()
+        if not row or row[0] is None or row[1] is None:
+            return 1
+        hi_ym = str(row[0])
+        year = str(row[1])
+        lo_ym = f"{year}-01"
+        return max(1, ym_range_span_months(lo_ym, hi_ym))
+
+    wh, params = _with_header(period, start_ym=start_ym, end_ym=end_ym)
+    sql_dist = f"""WITH {wh}
+    SELECT COUNT(DISTINCT effective_ym) FROM period_tx WHERE effective_ym IS NOT NULL
+    """
+    row = conn.execute(sql_dist, params).fetchone()
+    n = int(row[0] or 0)
+    return max(1, n)
+
+
 def _with_last_n_or_all(months: int) -> tuple[str, list[Any]]:
     if int(months) <= 0:
         return _with_period_tx_all()
@@ -278,6 +324,9 @@ def category_period_stats(
     cnt_row = conn.execute(sql_cat_count, params).fetchone()
     category_bucket_count = int(cnt_row[0] or 0)
 
+    period_months = category_period_window_months(conn, period, start_ym, end_ym)
+    pm = float(period_months) if period_months > 0 else 1.0
+
     grp_core = f"""WITH {wh}
     SELECT cat_norm,
            COALESCE(SUM(income_amt), 0.0) AS income,
@@ -308,6 +357,7 @@ def category_period_stats(
                 "income": incf,
                 "expense": expf,
                 "net": net,
+                "avg_monthly_net": net / pm,
                 "txn_count": int(cnt),
                 "pct_of_period_income": incf / period_income_total if period_income_total > 0 else 0.0,
                 "pct_of_period_expense": expf / period_expense_total if period_expense_total > 0 else 0.0,
