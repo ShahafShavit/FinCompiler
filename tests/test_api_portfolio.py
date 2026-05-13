@@ -93,6 +93,7 @@ class WebPortfolioApiTests(unittest.TestCase):
                 self.assertEqual(len(pts), 1)
                 self.assertEqual(pts[0]["snapshot_date"], "2026-05-11")
                 self.assertEqual(pts[0]["series_id"], sid111)
+                self.assertAlmostEqual(float(pts[0]["quantity"]), 10.0, places=4)
 
                 ts2 = client.get("/api/portfolio/timeseries?from=2026-05-11&to=2026-06-01")
                 self.assertEqual(ts2.status_code, 200)
@@ -100,3 +101,57 @@ class WebPortfolioApiTests(unittest.TestCase):
 
                 bad = client.get("/api/portfolio/timeseries?metric=not_a_column")
                 self.assertEqual(bad.status_code, 400)
+
+    def test_timeseries_scales_price_metrics_by_multiplier_table(self) -> None:
+        import config as config_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                importlib.reload(config_mod)
+
+            from api.main import create_app
+
+            pf = "954-SCALE/1"
+            rows = [
+                {
+                    "snapshot_date": "2026-05-11",
+                    "portfolio_account": pf,
+                    "security_number": "999",
+                    "security_name": "Scaled",
+                    "last_price": 100.0,
+                    "quantity": 1.0,
+                    "value_ils": 100.0,
+                    "price_multiplier": 0.01,
+                },
+            ]
+            upsert_trade_portfolio_snapshot(rows, db_path=config_mod.ledger_db_file)
+
+            with TestClient(create_app()) as client:
+                sid = make_series_id(pf, "999")
+                ts = client.get(
+                    "/api/portfolio/timeseries",
+                    params={
+                        "from": "2026-05-11",
+                        "to": "2026-05-11",
+                        "metric": "last_price",
+                        "series": sid,
+                    },
+                )
+                self.assertEqual(ts.status_code, 200)
+                pts = ts.json().get("points") or []
+                self.assertEqual(len(pts), 1)
+                self.assertAlmostEqual(float(pts[0]["value"]), 1.0, places=6)
+
+                ts_val = client.get(
+                    "/api/portfolio/timeseries",
+                    params={
+                        "from": "2026-05-11",
+                        "to": "2026-05-11",
+                        "metric": "value_ils",
+                        "series": sid,
+                    },
+                )
+                self.assertEqual(ts_val.status_code, 200)
+                pv = (ts_val.json().get("points") or [{}])[0].get("value")
+                self.assertAlmostEqual(float(pv), 100.0, places=6)

@@ -21,6 +21,38 @@ log = logging.getLogger(__name__)
 
 Sink = Optional[Callable[[str], None]]
 
+_MULT_UPSERT_SQL = """
+INSERT INTO trade_portfolio_position_multiplier (
+    portfolio_account, security_number, security_name, price_multiplier
+) VALUES (?,?,?,?)
+ON CONFLICT(portfolio_account, security_number) DO UPDATE SET
+    price_multiplier = excluded.price_multiplier,
+    security_name = COALESCE(
+        excluded.security_name,
+        trade_portfolio_position_multiplier.security_name
+    );
+"""
+
+
+def _row_price_multiplier(r: dict[str, Any]) -> float | None:
+    """Return a value to persist, or None to omit a child row (effective multiplier 1)."""
+    if "price_multiplier" not in r:
+        return None
+    raw = r.get("price_multiplier")
+    if raw is None:
+        return None
+    if isinstance(raw, str) and not raw.strip():
+        return None
+    try:
+        m = float(raw)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"invalid price_multiplier: {raw!r}") from e
+    if m <= 0:
+        raise ValueError(f"price_multiplier must be > 0, got {raw!r}")
+    if m == 1.0:
+        return None
+    return m
+
 
 def _notify(msg: str, sink: Sink) -> None:
     log.info(msg)
@@ -271,12 +303,14 @@ def upsert_trade_portfolio_snapshot(
 
     conn = sqlite3.connect(db)
     try:
+        conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.execute(
             "DELETE FROM trade_portfolio_position WHERE snapshot_date = ? AND portfolio_account = ?",
             (snapshot_date, portfolio_account),
         )
         deleted = cur.rowcount or 0
         batch = []
+        mult_batch: list[tuple[Any, ...]] = []
         for r in rows:
             batch.append(
                 (
@@ -296,7 +330,14 @@ def upsert_trade_portfolio_snapshot(
                     imported_at,
                 )
             )
+            pm = _row_price_multiplier(r)
+            if pm is not None:
+                mult_batch.append(
+                    (r["portfolio_account"], r["security_number"], r.get("security_name"), pm)
+                )
         conn.executemany(sql, batch)
+        if mult_batch:
+            conn.executemany(_MULT_UPSERT_SQL, mult_batch)
         conn.commit()
         return {
             "deleted": deleted,

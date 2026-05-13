@@ -43,6 +43,8 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (13, 'drop_simila
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (14, 'ledger_excluded_from_calculations');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (15, 'add_trade_portfolio_position');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (16, 'top_categories_navigation_layout');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (17, 'trade_portfolio_position_price_multiplier');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (18, 'portfolio_instrument_multiplier_no_snapshot');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -188,6 +190,42 @@ CREATE TABLE IF NOT EXISTS trade_portfolio_position (
 
 CREATE INDEX IF NOT EXISTS idx_trade_portfolio_snapshot ON trade_portfolio_position (snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_trade_portfolio_account ON trade_portfolio_position (portfolio_account);
+
+-- Per-instrument quote scaling (no snapshot): parent = account + security number; child holds name + multiplier.
+CREATE TABLE IF NOT EXISTS portfolio_instrument (
+    portfolio_account   TEXT NOT NULL,
+    security_number     TEXT NOT NULL,
+    PRIMARY KEY (portfolio_account, security_number)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS trade_portfolio_position_multiplier (
+    portfolio_account   TEXT NOT NULL,
+    security_number     TEXT NOT NULL,
+    security_name         TEXT,
+    price_multiplier      REAL NOT NULL DEFAULT 1
+        CHECK (typeof(price_multiplier) IN ('integer', 'real') AND price_multiplier > 0),
+    PRIMARY KEY (portfolio_account, security_number),
+    FOREIGN KEY (portfolio_account, security_number)
+        REFERENCES portfolio_instrument (portfolio_account, security_number)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) STRICT;
+
+DROP TRIGGER IF EXISTS tr_trade_portfolio_position_ensure_multiplier;
+CREATE TRIGGER tr_trade_portfolio_position_ensure_multiplier
+AFTER INSERT ON trade_portfolio_position
+FOR EACH ROW
+BEGIN
+    INSERT OR IGNORE INTO portfolio_instrument (portfolio_account, security_number)
+    VALUES (NEW.portfolio_account, NEW.security_number);
+    INSERT INTO trade_portfolio_position_multiplier (
+        portfolio_account, security_number, security_name, price_multiplier
+    ) VALUES (NEW.portfolio_account, NEW.security_number, NEW.security_name, 1)
+    ON CONFLICT(portfolio_account, security_number) DO UPDATE SET
+        security_name = COALESCE(
+            excluded.security_name,
+            trade_portfolio_position_multiplier.security_name
+        );
+END;
 
 -- -----------------------------------------------------------------------------
 -- Top categories (QoL: group store_category strings for categorize UI only)

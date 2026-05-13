@@ -79,6 +79,32 @@ class TradePortfolioImportTests(unittest.TestCase):
             self.assertEqual(n, 1)
             self.assertEqual(sec, [("111",)])
 
+    def test_upsert_persists_price_multiplier_child(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "ledger.sqlite")
+            _, _, rows = parse_trade_portfolio_workbook(str(FIXTURE_MINIMAL))
+            rows[0]["price_multiplier"] = 0.01
+            upsert_trade_portfolio_snapshot(rows, db_path=db)
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute("PRAGMA foreign_keys = ON")
+                m = conn.execute(
+                    "SELECT price_multiplier FROM trade_portfolio_position_multiplier "
+                    "WHERE portfolio_account=? AND security_number=?",
+                    (rows[0]["portfolio_account"], rows[0]["security_number"]),
+                ).fetchone()
+                m2 = conn.execute(
+                    "SELECT price_multiplier FROM trade_portfolio_position_multiplier "
+                    "WHERE portfolio_account=? AND security_number=?",
+                    (rows[1]["portfolio_account"], rows[1]["security_number"]),
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertIsNotNone(m)
+            self.assertAlmostEqual(float(m[0]), 0.01, places=6)
+            self.assertIsNotNone(m2)
+            self.assertAlmostEqual(float(m2[0]), 1.0, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

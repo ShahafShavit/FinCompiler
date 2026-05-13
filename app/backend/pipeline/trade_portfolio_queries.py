@@ -29,6 +29,11 @@ METRIC_COLUMNS: frozenset[str] = frozenset(
 
 DEFAULT_METRIC = "value_ils"
 
+# Stored bank/CSV prices × ``trade_portfolio_position_multiplier.price_multiplier`` (per portfolio + security_number).
+_PRICE_METRICS: frozenset[str] = frozenset(
+    {"last_price", "avg_purchase_price", "basis_price"}
+)
+
 
 def make_series_id(portfolio_account: str, security_number: str) -> str:
     return f"{portfolio_account}{_SERIES_SEP}{security_number}"
@@ -181,13 +186,13 @@ def query_trade_portfolio_timeseries(
     params: list[Any] = []
 
     if start_date and str(start_date).strip():
-        where.append("snapshot_date >= ?")
+        where.append("p.snapshot_date >= ?")
         params.append(str(start_date).strip())
     if end_date and str(end_date).strip():
-        where.append("snapshot_date <= ?")
+        where.append("p.snapshot_date <= ?")
         params.append(str(end_date).strip())
     if portfolio_account and str(portfolio_account).strip():
-        where.append("portfolio_account = ?")
+        where.append("p.portfolio_account = ?")
         params.append(str(portfolio_account).strip())
 
     series_filter: list[tuple[str, str]] = []
@@ -203,7 +208,7 @@ def query_trade_portfolio_timeseries(
 
     if series_filter:
         ph = " OR ".join(
-            "(portfolio_account = ? AND security_number = ?)" for _ in series_filter
+            "(p.portfolio_account = ? AND p.security_number = ?)" for _ in series_filter
         )
         where.append(f"({ph})")
         for acc, sec in series_filter:
@@ -211,12 +216,24 @@ def query_trade_portfolio_timeseries(
 
     wh_clause = f"WHERE {' AND '.join(where)}" if where else ""
 
-    # Column name comes only from resolve_metric → safe for SQL fragment.
+    if col in _PRICE_METRICS:
+        v_sql = (
+            f"CASE WHEN p.{col} IS NULL THEN NULL "
+            f"ELSE p.{col} * COALESCE(m.price_multiplier, 1) END AS v"
+        )
+    else:
+        v_sql = f"p.{col} AS v"
+
+    # ``col`` is validated by resolve_metric only.
     sql = f"""
-        SELECT snapshot_date, portfolio_account, security_number, security_name, {col} AS v
-        FROM trade_portfolio_position
+        SELECT p.snapshot_date, p.portfolio_account, p.security_number, p.security_name, {v_sql},
+               p.quantity AS position_quantity
+        FROM trade_portfolio_position p
+        LEFT JOIN trade_portfolio_position_multiplier m
+          ON m.portfolio_account = p.portfolio_account
+         AND m.security_number = p.security_number
         {wh_clause}
-        ORDER BY snapshot_date, portfolio_account, security_number
+        ORDER BY p.snapshot_date, p.portfolio_account, p.security_number
     """
 
     conn = sqlite3.connect(db)
@@ -226,18 +243,23 @@ def query_trade_portfolio_timeseries(
         conn.close()
 
     points: list[dict[str, Any]] = []
-    for snap, acc, sec, sname, v in rows:
+    for snap, acc, sec, sname, v, pos_qty in rows:
         sid = make_series_id(str(acc), str(sec))
         label = str(sname).strip() if sname else str(sec)
         if v is not None and isinstance(v, (int, float)):
             val: float | None = float(v)
         else:
             val = None
+        if pos_qty is not None and isinstance(pos_qty, (int, float)):
+            qty_val: float | None = float(pos_qty)
+        else:
+            qty_val = None
         points.append(
             {
                 "snapshot_date": str(snap),
                 "series_id": sid,
                 "value": val,
+                "quantity": qty_val,
                 "label": label,
                 "portfolio_account": str(acc),
                 "security_number": str(sec),

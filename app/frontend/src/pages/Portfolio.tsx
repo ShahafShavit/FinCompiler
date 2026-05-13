@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
   Legend,
@@ -15,25 +15,61 @@ import { fetchJson, formatMoney, formatPct } from '../lib/api';
 
 import './Portfolio.css';
 
-const PALETTE = [
-  '#4c6ef5',
-  '#22b8cf',
-  '#82c91e',
-  '#fab005',
-  '#fa5252',
-  '#be4bdb',
-  '#15aabf',
-  '#9775fa',
-  '#ff922b',
-  '#37b24d',
-];
+/** Golden-angle hue steps keep neighbors well separated as `n` grows (dark-UI tuned S/L). */
+const GOLDEN_ANGLE = 137.508;
 
-function hashColor(seed: string): string {
-  let h = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+function hslToHex(h: number, s: number, l: number): string {
+  const hh = ((h % 360) + 360) % 360;
+  const sat = s / 100;
+  const light = l / 100;
+  const c = (1 - Math.abs(2 * light - 1)) * sat;
+  const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+  const m = light - c / 2;
+  let rp = 0;
+  let gp = 0;
+  let bp = 0;
+  if (hh < 60) {
+    rp = c;
+    gp = x;
+  } else if (hh < 120) {
+    rp = x;
+    gp = c;
+  } else if (hh < 180) {
+    gp = c;
+    bp = x;
+  } else if (hh < 240) {
+    gp = x;
+    bp = c;
+  } else if (hh < 300) {
+    rp = x;
+    bp = c;
+  } else {
+    rp = c;
+    bp = x;
   }
-  return PALETTE[h % PALETTE.length];
+  const byte = (n: number) => Math.round(255 * (n + m));
+  return `#${[rp, gp, bp].map((n) => byte(n).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function generateDistinctColors(count: number): string[] {
+  if (count <= 0) return [];
+  const out: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const hue = (i * GOLDEN_ANGLE) % 360;
+    out.push(hslToHex(hue, 74, 56));
+  }
+  return out;
+}
+
+/** One golden-angle hue per visible series (`visibleSeries` is sorted). Lines keep distinct strokes; crossings never share a color. */
+function strokeByVisibleSeries(visibleSeries: readonly string[]): Map<string, string> {
+  if (visibleSeries.length === 0) return new Map();
+  const palette = generateDistinctColors(visibleSeries.length);
+  const out = new Map<string, string>();
+  visibleSeries.forEach((sid, i) => {
+    out.set(sid, palette[i]!);
+  });
+  return out;
 }
 
 type Instrument = {
@@ -46,6 +82,23 @@ type Instrument = {
   last_seen: string | null;
   latest_value_ils: number | null;
 };
+
+/** Position still present on the latest snapshot date in the ledger (`meta.max_date`). */
+function isActiveOnLatestSnapshot(
+  i: Instrument,
+  ledgerMaxDate: string | null | undefined,
+): boolean {
+  return Boolean(ledgerMaxDate && i.last_seen && i.last_seen === ledgerMaxDate);
+}
+
+function defaultSelectedSeriesIds(
+  instruments: readonly Instrument[],
+  ledgerMaxDate: string | null | undefined,
+): string[] {
+  const active = instruments.filter((i) => isActiveOnLatestSnapshot(i, ledgerMaxDate));
+  if (active.length > 0) return active.map((i) => i.series_id);
+  return instruments.map((i) => i.series_id);
+}
 
 type PortfolioMeta = {
   ok?: boolean;
@@ -63,6 +116,8 @@ type TimeseriesPoint = {
   snapshot_date: string;
   series_id: string;
   value: number | null;
+  /** Units held on this snapshot; used to stop forward-fill after a full exit (qty <= 0). */
+  quantity?: number | null;
   label: string;
 };
 
@@ -101,26 +156,138 @@ function formatMetricValue(metric: string, v: number | undefined): string {
   return formatMoney(v);
 }
 
+type ObsCell = { value: number | null; quantity: number | null };
+
+/** Do not forward-fill across longer calendar gaps (likely sold out / re-entered later without a row). */
+const MAX_FORWARD_FILL_GAP_DAYS = 30;
+
+function dayDiffIso(a: string, b: string): number {
+  const t0 = Date.parse(`${a}T12:00:00`);
+  const t1 = Date.parse(`${b}T12:00:00`);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return Number.POSITIVE_INFINITY;
+  return Math.abs(t1 - t0) / 86_400_000;
+}
+
+/** Largest observation date <= d (ISO YYYY-MM-DD). */
+function floorObsLe(obsDates: readonly string[], d: string): string | undefined {
+  let lo = 0;
+  let hi = obsDates.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (obsDates[mid] <= d) {
+      ans = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return ans >= 0 ? obsDates[ans] : undefined;
+}
+
+/** Smallest observation date > d. */
+function ceilObsGt(obsDates: readonly string[], d: string): string | undefined {
+  let lo = 0;
+  let hi = obsDates.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (obsDates[mid] > d) {
+      ans = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return ans >= 0 ? obsDates[ans] : undefined;
+}
+
 function pivotForChart(
   points: TimeseriesPoint[],
   seriesIds: string[],
 ): Record<string, string | number | null | undefined>[] {
   const want = new Set(seriesIds);
-  const byDate = new Map<string, Record<string, string | number | null | undefined>>();
+  const obsByDate = new Map<string, Map<string, ObsCell>>();
+  const obsDateSets = new Map<string, Set<string>>();
+
   for (const p of points) {
     if (!want.has(p.series_id)) continue;
-    let row = byDate.get(p.snapshot_date);
-    if (!row) {
-      row = { date: p.snapshot_date };
-      byDate.set(p.snapshot_date, row);
+    let bySid = obsByDate.get(p.snapshot_date);
+    if (!bySid) {
+      bySid = new Map();
+      obsByDate.set(p.snapshot_date, bySid);
     }
-    row[p.series_id] = p.value;
+    const qRaw = p.quantity;
+    const qParsed =
+      qRaw != null && typeof qRaw === 'number' && Number.isFinite(qRaw) ? qRaw : null;
+    bySid.set(p.series_id, { value: p.value, quantity: qParsed });
+
+    let ds = obsDateSets.get(p.series_id);
+    if (!ds) {
+      ds = new Set();
+      obsDateSets.set(p.series_id, ds);
+    }
+    ds.add(p.snapshot_date);
   }
-  const dates = [...byDate.keys()].sort();
-  return dates.map((d) => {
-    const base = byDate.get(d)!;
-    return { ...base };
-  });
+
+  const obsDatesBySid = new Map<string, string[]>();
+  for (const sid of seriesIds) {
+    const ds = obsDateSets.get(sid);
+    obsDatesBySid.set(sid, ds ? [...ds].sort() : []);
+  }
+
+  const dates = [...obsByDate.keys()].sort();
+  const rows: Record<string, string | number | null | undefined>[] = dates.map((d) => ({
+    date: d,
+  }));
+
+  for (const sid of seriesIds) {
+    const obsDates = obsDatesBySid.get(sid) ?? [];
+    let lastV: number | undefined;
+    let open = false;
+
+    for (let i = 0; i < dates.length; i += 1) {
+      const d = dates[i];
+      const row = rows[i];
+      const obs = obsByDate.get(d)?.get(sid);
+
+      if (obs) {
+        const q = obs.quantity;
+        const vNum =
+          typeof obs.value === 'number' && Number.isFinite(obs.value) ? obs.value : null;
+
+        if (q !== null && q <= 0) {
+          row[sid] = vNum;
+          lastV = undefined;
+          open = false;
+        } else {
+          open = true;
+          if (vNum !== null) {
+            lastV = vNum;
+            row[sid] = vNum;
+          } else {
+            row[sid] = lastV !== undefined ? lastV : null;
+          }
+        }
+      } else if (open && lastV !== undefined && obsDates.length > 0) {
+        const prevD = floorObsLe(obsDates, d);
+        if (prevD === undefined) {
+          continue;
+        }
+        const nextD = ceilObsGt(obsDates, d);
+        if (nextD !== undefined) {
+          if (d > prevD && d < nextD && dayDiffIso(prevD, nextD) > MAX_FORWARD_FILL_GAP_DAYS) {
+            continue;
+          }
+        } else if (d > prevD) {
+          continue;
+        }
+        row[sid] = lastV;
+      }
+    }
+  }
+
+  return rows;
 }
 
 export default function Portfolio() {
@@ -158,7 +325,7 @@ export default function Portfolio() {
     setTo(meta.max_date ?? '');
     setMetric(meta.default_metric ?? 'value_ils');
     setAccount('');
-    setSelected(new Set((meta.instruments ?? []).map((i) => i.series_id)));
+    setSelected(new Set(defaultSelectedSeriesIds(meta.instruments ?? [], meta.max_date)));
     setSeeded(true);
   }, [meta, seeded]);
 
@@ -170,8 +337,8 @@ export default function Portfolio() {
     const vis = key
       ? (meta.instruments ?? []).filter((i) => i.portfolio_account === key)
       : meta.instruments ?? [];
-    setSelected(new Set(vis.map((i) => i.series_id)));
-  }, [account, seeded, meta?.ledger_exists, meta?.instruments]);
+    setSelected(new Set(defaultSelectedSeriesIds(vis, meta.max_date)));
+  }, [account, seeded, meta?.ledger_exists, meta?.instruments, meta?.max_date]);
 
   const labelBySeries = useMemo(() => {
     const m = new Map<string, string>();
@@ -231,6 +398,11 @@ export default function Portfolio() {
   const visibleSeries = useMemo(
     () => [...selected].filter((id) => scopeIds.includes(id)).sort(),
     [selected, scopeIds],
+  );
+
+  const strokeBySeries = useMemo(
+    () => strokeByVisibleSeries(visibleSeries),
+    [visibleSeries],
   );
 
   const toggleSeries = useCallback((sid: string) => {
@@ -390,7 +562,7 @@ export default function Portfolio() {
                       type="monotone"
                       dataKey={sid}
                       name={sid}
-                      stroke={hashColor(sid)}
+                      stroke={strokeBySeries.get(sid) ?? '#888888'}
                       strokeWidth={2}
                       dot={false}
                       connectNulls={false}

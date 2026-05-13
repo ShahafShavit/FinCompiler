@@ -42,11 +42,19 @@ class LedgerMigrateTests(unittest.TestCase):
                 max_v = conn.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0]
-                self.assertEqual(max_v, 16)
+                self.assertEqual(max_v, 18)
                 row_tp = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='trade_portfolio_position'"
                 ).fetchone()
                 self.assertIsNotNone(row_tp)
+                row_pi = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='portfolio_instrument'"
+                ).fetchone()
+                self.assertIsNotNone(row_pi)
+                row_tpm = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='trade_portfolio_position_multiplier'"
+                ).fetchone()
+                self.assertIsNotNone(row_tpm)
                 row_tc = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='top_categories'"
                 ).fetchone()
@@ -190,7 +198,7 @@ class LedgerMigrateTests(unittest.TestCase):
                         PRIMARY KEY (p1, p2)
                     );
                     INSERT INTO similar_category_pair (p1, p2) VALUES ('a', 'b');
-                    DELETE FROM schema_migrations WHERE version IN (13, 14, 15, 16);
+                    DELETE FROM schema_migrations WHERE version >= 13;
                     """
                 )
                 conn.commit()
@@ -206,7 +214,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 ).fetchone()
                 self.assertIsNone(gone)
                 max_v = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-                self.assertEqual(max_v, 16)
+                self.assertEqual(max_v, 18)
             finally:
                 conn.close()
 

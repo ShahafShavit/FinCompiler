@@ -21,6 +21,13 @@ heatmap, dashboard aggregates, categorize queue, and integrity anomaly checks.
 
 **v15** — ``trade_portfolio_position``: securities snapshot lines (SpreadsheetML trade-portfolio exports).
 
+**v17** — legacy snapshot-keyed ``trade_portfolio_position_multiplier`` (superseded by v18).
+
+**v18** — ``portfolio_instrument`` (PK: ``portfolio_account``, ``security_number``) and
+``trade_portfolio_position_multiplier`` (FK to that parent, ``security_name``, ``price_multiplier`` default 1).
+``AFTER INSERT`` on ``trade_portfolio_position`` ensures parent + multiplier rows; chart/API joins on
+account + security number only (no snapshot date).
+
 Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile upsert implements MIG-E2.
 """
 from __future__ import annotations
@@ -612,6 +619,139 @@ def _recreate_v_ledger_uncategorized_view(conn: sqlite3.Connection) -> None:
     )
 
 
+_TP_MULT_V18_DDL = """
+-- Parent: one row per (portfolio_account, security_number). No snapshot.
+CREATE TABLE IF NOT EXISTS portfolio_instrument (
+    portfolio_account   TEXT NOT NULL,
+    security_number     TEXT NOT NULL,
+    PRIMARY KEY (portfolio_account, security_number)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS trade_portfolio_position_multiplier (
+    portfolio_account   TEXT NOT NULL,
+    security_number     TEXT NOT NULL,
+    security_name         TEXT,
+    price_multiplier      REAL NOT NULL DEFAULT 1
+        CHECK (typeof(price_multiplier) IN ('integer', 'real') AND price_multiplier > 0),
+    PRIMARY KEY (portfolio_account, security_number),
+    FOREIGN KEY (portfolio_account, security_number)
+        REFERENCES portfolio_instrument (portfolio_account, security_number)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) STRICT;
+
+DROP TRIGGER IF EXISTS tr_trade_portfolio_position_ensure_multiplier;
+CREATE TRIGGER tr_trade_portfolio_position_ensure_multiplier
+AFTER INSERT ON trade_portfolio_position
+FOR EACH ROW
+BEGIN
+    INSERT OR IGNORE INTO portfolio_instrument (portfolio_account, security_number)
+    VALUES (NEW.portfolio_account, NEW.security_number);
+    INSERT INTO trade_portfolio_position_multiplier (
+        portfolio_account, security_number, security_name, price_multiplier
+    ) VALUES (NEW.portfolio_account, NEW.security_number, NEW.security_name, 1)
+    ON CONFLICT(portfolio_account, security_number) DO UPDATE SET
+        security_name = COALESCE(
+            excluded.security_name,
+            trade_portfolio_position_multiplier.security_name
+        );
+END;
+"""
+
+
+def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    cur = conn.execute(f'PRAGMA table_info("{table}")')
+    return any(str(r[1]) == column for r in cur.fetchall())
+
+
+def _migrate_v18_portfolio_multiplier(conn: sqlite3.Connection) -> None:
+    """
+    Replace snapshot-keyed multiplier (v17) with per-instrument rows + trigger.
+
+    Final model: ``portfolio_instrument`` (portfolio_account, security_number);
+    ``trade_portfolio_position_multiplier`` references it; trigger fills defaults on
+    each ``trade_portfolio_position`` INSERT.
+    """
+    has_mult = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='trade_portfolio_position_multiplier'"
+    ).fetchone()
+    if not has_mult:
+        conn.executescript(_TP_MULT_V18_DDL.strip())
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO portfolio_instrument (portfolio_account, security_number)
+            SELECT DISTINCT portfolio_account, security_number FROM trade_portfolio_position
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO trade_portfolio_position_multiplier (
+                portfolio_account, security_number, security_name, price_multiplier
+            )
+            SELECT i.portfolio_account, i.security_number,
+                (
+                    SELECT p.security_name FROM trade_portfolio_position p
+                    WHERE p.portfolio_account = i.portfolio_account
+                      AND p.security_number = i.security_number
+                    ORDER BY p.snapshot_date DESC LIMIT 1
+                ),
+                1
+            FROM portfolio_instrument i
+            """
+        )
+        return
+
+    if _table_has_column(conn, "trade_portfolio_position_multiplier", "snapshot_date"):
+        conn.executescript(
+            """
+            CREATE TABLE _tp_mult_v17_backup AS
+            SELECT * FROM trade_portfolio_position_multiplier;
+            DROP TABLE trade_portfolio_position_multiplier;
+            """
+        )
+        conn.executescript(_TP_MULT_V18_DDL.strip())
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO portfolio_instrument (portfolio_account, security_number)
+            SELECT DISTINCT portfolio_account, security_number FROM trade_portfolio_position
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO portfolio_instrument (portfolio_account, security_number)
+            SELECT DISTINCT portfolio_account, security_number FROM _tp_mult_v17_backup
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO trade_portfolio_position_multiplier (
+                portfolio_account, security_number, security_name, price_multiplier
+            )
+            SELECT i.portfolio_account, i.security_number,
+                (
+                    SELECT p.security_name FROM trade_portfolio_position p
+                    WHERE p.portfolio_account = i.portfolio_account
+                      AND p.security_number = i.security_number
+                    ORDER BY p.snapshot_date DESC LIMIT 1
+                ),
+                COALESCE(
+                    (
+                        SELECT b.price_multiplier FROM _tp_mult_v17_backup b
+                        WHERE b.portfolio_account = i.portfolio_account
+                          AND b.security_number = i.security_number
+                        ORDER BY b.snapshot_date DESC LIMIT 1
+                    ),
+                    1
+                )
+            FROM portfolio_instrument i
+            """
+        )
+        conn.execute("DROP TABLE IF EXISTS _tp_mult_v17_backup")
+        return
+
+    # Already v18-shaped: ensure DDL pieces (idempotent) and trigger.
+    conn.executescript(_TP_MULT_V18_DDL.strip())
+
+
 def migrate_ledger_db(db_path: str | None = None) -> None:
     """
     Ensure the ledger database exists and matches the v14 contract in ``full_schema.sql``.
@@ -725,6 +865,32 @@ CREATE INDEX IF NOT EXISTS idx_trade_portfolio_account ON trade_portfolio_positi
                 conn.executescript(TOP_CATEGORIES_V16_DDL)
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (16, 'top_categories_navigation_layout')"
+            )
+            ver = _current_schema_version(conn)
+            if ver < 17:
+                conn.executescript(
+                    """
+CREATE TABLE IF NOT EXISTS trade_portfolio_position_multiplier (
+    snapshot_date       TEXT NOT NULL CHECK (date(snapshot_date) = snapshot_date),
+    portfolio_account   TEXT NOT NULL,
+    security_number     TEXT NOT NULL,
+    price_multiplier    REAL NOT NULL DEFAULT 1
+        CHECK (typeof(price_multiplier) IN ('integer', 'real') AND price_multiplier > 0),
+    PRIMARY KEY (snapshot_date, portfolio_account, security_number),
+    FOREIGN KEY (snapshot_date, portfolio_account, security_number)
+        REFERENCES trade_portfolio_position (snapshot_date, portfolio_account, security_number)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) STRICT;
+"""
+                )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (17, 'trade_portfolio_position_price_multiplier')"
+            )
+            ver = _current_schema_version(conn)
+            if ver < 18:
+                _migrate_v18_portfolio_multiplier(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (18, 'portfolio_instrument_multiplier_no_snapshot')"
             )
             conn.commit()
         finally:
