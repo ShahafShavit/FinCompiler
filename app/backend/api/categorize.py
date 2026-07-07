@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Optional, Union
 
 import pandas as pd
@@ -242,6 +242,12 @@ def _payee_mapping_envelope_from_stores(stores_df: Optional[pd.DataFrame], store
 
 
 @dataclass(frozen=True)
+class CategorySuggestionDisplay:
+    category: str
+    confidence_pct: float
+
+
+@dataclass(frozen=True)
 class FluidStorePrompt:
     """Existing store with fluid (non-static) categories — pick or type a category."""
 
@@ -253,6 +259,7 @@ class FluidStorePrompt:
     digits: Optional[Any]
     dynamic_categories: tuple[str, ...]
     all_categories: tuple[str, ...]
+    category_suggestions: tuple[CategorySuggestionDisplay, ...] = ()
     ledger_id: Any = None
     additional_detail: Any = None
     notes: Any = None
@@ -277,6 +284,10 @@ class FluidStorePrompt:
                 "digits": _scalar_for_json(self.digits),
                 "dynamic_categories": list(self.dynamic_categories),
                 "all_categories": list(self.all_categories),
+                "category_suggestions": [
+                    {"category": s.category, "confidence_pct": s.confidence_pct}
+                    for s in self.category_suggestions
+                ],
             },
             self,
         )
@@ -334,6 +345,7 @@ class NewStorePrompt:
     details: Optional[Any]
     digits: Optional[Any]
     all_categories: tuple[str, ...]
+    category_suggestions: tuple[CategorySuggestionDisplay, ...] = ()
     ledger_id: Any = None
     additional_detail: Any = None
     notes: Any = None
@@ -357,6 +369,10 @@ class NewStorePrompt:
                 "details": _scalar_for_json(self.details),
                 "digits": _scalar_for_json(self.digits),
                 "all_categories": list(self.all_categories),
+                "category_suggestions": [
+                    {"category": s.category, "confidence_pct": s.confidence_pct}
+                    for s in self.category_suggestions
+                ],
             },
             self,
         )
@@ -470,6 +486,28 @@ class CategorizeFile:
         from ledger import load_stores_dataframe_from_ledger
 
         self.stores_df = load_stores_dataframe_from_ledger(self._ledger_db_path)
+
+    def _category_suggestions_for_row(
+        self, row_data: Union[pd.Series, Mapping]
+    ) -> tuple[CategorySuggestionDisplay, ...]:
+        from ledger.category_suggest import suggest_categories_for_row
+
+        try:
+            raw = suggest_categories_for_row(self._ledger_db_path, row_data)
+        except Exception:
+            log.exception("category suggestions failed")
+            return tuple()
+        return tuple(
+            CategorySuggestionDisplay(category=s.category, confidence_pct=s.confidence_pct) for s in raw
+        )
+
+    def _attach_category_suggestions(
+        self, prompt: ManualPrompt, row_data: Union[pd.Series, Mapping]
+    ) -> ManualPrompt:
+        if not isinstance(prompt, (FluidStorePrompt, NewStorePrompt)):
+            return prompt
+        suggestions = self._category_suggestions_for_row(row_data)
+        return replace(prompt, category_suggestions=suggestions)
 
     def save_stores(self):
         from ledger import sync_stores_to_ledger_from_dataframe
@@ -589,24 +627,27 @@ class CategorizeFile:
                 dynamic_categories = tuple(
                     self.stores_df[self.stores_df["store_name"] == store_name]["category"].tolist()
                 )
-                return FluidStorePrompt(
-                    store_name=store_name,
-                    date=date,
-                    expense=expense,
-                    income=income,
-                    details=details,
-                    digits=digits,
-                    dynamic_categories=dynamic_categories,
-                    all_categories=all_categories,
-                    ledger_id=lc["ledger_id"],
-                    additional_detail=lc["additional_detail"],
-                    notes=lc["notes"],
-                    statement_month=lc["statement_month"],
-                    row_fingerprint=lc["row_fingerprint"],
-                    ingested_at=lc["ingested_at"],
-                    payee_mapping=pem,
-                    transaction_id=transaction_id,
-                    prompt_id=pid,
+                return self._attach_category_suggestions(
+                    FluidStorePrompt(
+                        store_name=store_name,
+                        date=date,
+                        expense=expense,
+                        income=income,
+                        details=details,
+                        digits=digits,
+                        dynamic_categories=dynamic_categories,
+                        all_categories=all_categories,
+                        ledger_id=lc["ledger_id"],
+                        additional_detail=lc["additional_detail"],
+                        notes=lc["notes"],
+                        statement_month=lc["statement_month"],
+                        row_fingerprint=lc["row_fingerprint"],
+                        ingested_at=lc["ingested_at"],
+                        payee_mapping=pem,
+                        transaction_id=transaction_id,
+                        prompt_id=pid,
+                    ),
+                    row_data,
                 )
             prompt = ResolveStaticPrompt(
                 store_name=store_name,
@@ -627,23 +668,26 @@ class CategorizeFile:
                 prompt_id=pid,
             )
             return prompt
-        return NewStorePrompt(
-            store_name=store_name,
-            date=date,
-            expense=expense,
-            income=income,
-            details=details,
-            digits=digits,
-            all_categories=all_categories,
-            ledger_id=lc["ledger_id"],
-            additional_detail=lc["additional_detail"],
-            notes=lc["notes"],
-            statement_month=lc["statement_month"],
-            row_fingerprint=lc["row_fingerprint"],
-            ingested_at=lc["ingested_at"],
-            payee_mapping=pem,
-            transaction_id=transaction_id,
-            prompt_id=pid,
+        return self._attach_category_suggestions(
+            NewStorePrompt(
+                store_name=store_name,
+                date=date,
+                expense=expense,
+                income=income,
+                details=details,
+                digits=digits,
+                all_categories=all_categories,
+                ledger_id=lc["ledger_id"],
+                additional_detail=lc["additional_detail"],
+                notes=lc["notes"],
+                statement_month=lc["statement_month"],
+                row_fingerprint=lc["row_fingerprint"],
+                ingested_at=lc["ingested_at"],
+                payee_mapping=pem,
+                transaction_id=transaction_id,
+                prompt_id=pid,
+            ),
+            row_data,
         )
 
     def _persist_category_for_transaction(

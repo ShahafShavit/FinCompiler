@@ -8,6 +8,8 @@ const CAT = '/categorize';
 
 type PayeeStoreMappingRow = { category: string; is_static: number | null };
 
+type CategorySuggestionRow = { category: string; confidence_pct: number };
+
 type Pending = Record<string, unknown> & {
   kind: string;
   prompt_id?: string;
@@ -15,6 +17,7 @@ type Pending = Record<string, unknown> & {
   category?: string;
   dynamic_categories?: string[];
   all_categories?: string[];
+  category_suggestions?: CategorySuggestionRow[];
   date?: unknown;
   expense?: unknown;
   income?: unknown;
@@ -154,6 +157,10 @@ function clearTxnNotesField(textareaId: string): void {
   if (el) el.value = '';
 }
 
+function scrollCategorizePageToTop(): void {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 /** Read ``is_static`` (0 or 1) from mapping-type radio group ``name``, or ``null`` if none selected. */
 function readMappingIsStatic(groupName: string): 0 | 1 | null {
   const el = document.querySelector(
@@ -204,16 +211,84 @@ function DiscardTxnButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function categoryBadgeClassName(
+  category: string,
+  picked: string | null,
+  hoveredCategory: string | null | undefined,
+  extra = '',
+): string {
+  const isSelected = picked === category;
+  const isHovered = !isSelected && hoveredCategory === category;
+  return `categorize-cat-badge${extra}${isSelected ? ' categorize-cat-badge--selected' : ''}${
+    isHovered ? ' categorize-cat-badge--hovered' : ''
+  }`;
+}
+
+function CategorySuggestions({
+  suggestions,
+  selectedCategory,
+  hoveredCategory,
+  onPick,
+  onHoverCategory,
+}: {
+  suggestions: CategorySuggestionRow[];
+  selectedCategory?: string | null;
+  hoveredCategory?: string | null;
+  onPick: (category: string) => void;
+  onHoverCategory?: (category: string | null) => void;
+}) {
+  if (!suggestions.length) return null;
+  return (
+    <section className="categorize-suggestions" aria-label="Suggested categories">
+      <p className="categorize-suggestions-title">Suggested</p>
+      <p className="hint categorize-suggestions-hint">
+        Vote share among the 15 most similar past transactions (not accuracy).
+      </p>
+      <div className="categorize-suggestions-badges" role="group" aria-label="Suggested categories">
+        {suggestions.map((s) => {
+          const isSelected = selectedCategory === s.category;
+          return (
+            <button
+              key={`${s.category}-${s.confidence_pct}`}
+              type="button"
+              className={categoryBadgeClassName(
+                s.category,
+                selectedCategory ?? null,
+                hoveredCategory,
+                ' categorize-cat-badge--suggested',
+              )}
+              aria-pressed={isSelected}
+              onMouseEnter={() => onHoverCategory?.(s.category)}
+              onClick={() => onPick(s.category)}
+            >
+              {s.category}
+              <span className="categorize-suggestion-pct">{Math.round(s.confidence_pct)}%</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function CategoryBadgePick({
   name,
   options,
   initialPick,
   categoryColumns,
+  pickTrigger,
+  onPickedChange,
+  hoveredCategory,
+  onHoverCategory,
 }: {
   name: string;
   options: string[];
   initialPick?: string;
   categoryColumns?: CategoryColumnsPayload | null;
+  pickTrigger?: { category: string; nonce: number } | null;
+  onPickedChange?: (category: string | null) => void;
+  hoveredCategory?: string | null;
+  onHoverCategory?: (category: string | null) => void;
 }) {
   const sorted = useMemo(() => {
     const s = new Set<string>();
@@ -254,6 +329,24 @@ function CategoryBadgePick({
     if (t && sorted.includes(t)) setPicked(t);
   }, [initialPick, sorted]);
 
+  const pickCategory = (c: string) => {
+    setPicked(c);
+    onPickedChange?.(c);
+    const el = document.getElementById(customId) as HTMLInputElement | null;
+    if (el) el.value = '';
+  };
+
+  useEffect(() => {
+    if (!pickTrigger) return;
+    const t = pickTrigger.category.trim();
+    if (!t) return;
+    if (sorted.includes(t)) {
+      setPicked(t);
+      const el = document.getElementById(customId) as HTMLInputElement | null;
+      if (el) el.value = '';
+    }
+  }, [pickTrigger, sorted, customId]);
+
   return (
     <div className="categorize-cat-pick" data-cat-pick={name}>
       <p className="categorize-cat-count">
@@ -271,12 +364,9 @@ function CategoryBadgePick({
                     <button
                       key={c}
                       type="button"
-                      className={`categorize-cat-badge${picked === c ? ' categorize-cat-badge--selected' : ''}`}
-                      onClick={() => {
-                        setPicked(c);
-                        const el = document.getElementById(customId) as HTMLInputElement | null;
-                        if (el) el.value = '';
-                      }}
+                      className={categoryBadgeClassName(c, picked, hoveredCategory)}
+                      onMouseEnter={() => onHoverCategory?.(c)}
+                      onClick={() => pickCategory(c)}
                     >
                       {c}
                     </button>
@@ -293,12 +383,9 @@ function CategoryBadgePick({
                   <button
                     key={c}
                     type="button"
-                    className={`categorize-cat-badge${picked === c ? ' categorize-cat-badge--selected' : ''}`}
-                    onClick={() => {
-                      setPicked(c);
-                      const el = document.getElementById(customId) as HTMLInputElement | null;
-                      if (el) el.value = '';
-                    }}
+                    className={categoryBadgeClassName(c, picked, hoveredCategory)}
+                    onMouseEnter={() => onHoverCategory?.(c)}
+                    onClick={() => pickCategory(c)}
                   >
                     {c}
                   </button>
@@ -313,12 +400,9 @@ function CategoryBadgePick({
             <button
               key={c}
               type="button"
-              className={`categorize-cat-badge${picked === c ? ' categorize-cat-badge--selected' : ''}`}
-              onClick={() => {
-                setPicked(c);
-                const el = document.getElementById(customId) as HTMLInputElement | null;
-                if (el) el.value = '';
-              }}
+              className={categoryBadgeClassName(c, picked, hoveredCategory)}
+              onMouseEnter={() => onHoverCategory?.(c)}
+              onClick={() => pickCategory(c)}
             >
               {c}
             </button>
@@ -335,7 +419,10 @@ function CategoryBadgePick({
         autoComplete="off"
         placeholder="Name not in the list above"
         onChange={(e) => {
-          if (e.target.value.trim()) setPicked(null);
+          if (e.target.value.trim()) {
+            setPicked(null);
+            onPickedChange?.(null);
+          }
         }}
       />
     </div>
@@ -486,6 +573,9 @@ export default function Categorize() {
     session_categories: [],
   });
   const [status, setStatus] = useState('');
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
+  const [pickNonce, setPickNonce] = useState(0);
 
   const fetchNext = useCallback(async () => {
     try {
@@ -521,6 +611,7 @@ export default function Categorize() {
 
   const submit = async (body: Record<string, unknown>, opts?: { clearNotesId?: string }) => {
     setStatus('Saving…');
+    scrollCategorizePageToTop();
     try {
       const r = await fetchJson(`${CAT}/api/respond`, {
         method: 'POST',
@@ -528,6 +619,9 @@ export default function Categorize() {
         body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error((r.data as { error?: string })?.error || r.status.toString());
+      setActiveCategory(null);
+      setHoveredCategory(null);
+      setPayload((prev) => ({ ...prev, pending: { kind: 'idle' } }));
       setStatus('Saved.');
       await fetchNext();
       if (opts?.clearNotesId) clearTxnNotesField(opts.clearNotesId);
@@ -558,6 +652,19 @@ export default function Categorize() {
   );
 
   const categoryColumns = payload.category_columns;
+  const pendingPromptId = p.kind !== 'idle' ? String(p.prompt_id ?? '') : '';
+
+  useEffect(() => {
+    setActiveCategory(null);
+    setHoveredCategory(null);
+  }, [pendingPromptId]);
+
+  const pickFromSuggestion = (category: string) => {
+    setActiveCategory(category);
+    setPickNonce(Date.now());
+  };
+
+  const categoryPickTrigger = activeCategory ? { category: activeCategory, nonce: pickNonce } : null;
 
   const queueMeta =
     typeof payload.open_count === 'number' ? (
@@ -738,12 +845,28 @@ export default function Categorize() {
             <PayeeStoreMappings data={p} />
             <TransactionDetails data={p} />
             <label className="categorize-section-label">Category</label>
-            <CategoryBadgePick
-              key={`main-fluid-${String(p.prompt_id)}`}
-              name="main-fluid"
-              options={pendingOpts}
-              categoryColumns={categoryColumns}
-            />
+            <div
+              className="categorize-category-pick-zone"
+              onMouseLeave={() => setHoveredCategory(null)}
+            >
+              <CategorySuggestions
+                suggestions={Array.isArray(p.category_suggestions) ? p.category_suggestions : []}
+                selectedCategory={activeCategory}
+                hoveredCategory={hoveredCategory}
+                onPick={pickFromSuggestion}
+                onHoverCategory={setHoveredCategory}
+              />
+              <CategoryBadgePick
+                key={`main-fluid-${String(p.prompt_id)}`}
+                name="main-fluid"
+                options={pendingOpts}
+                categoryColumns={categoryColumns}
+                pickTrigger={categoryPickTrigger}
+                onPickedChange={setActiveCategory}
+                hoveredCategory={hoveredCategory}
+                onHoverCategory={setHoveredCategory}
+              />
+            </div>
             <TxnNotesField key={`txn-fluid-${p.prompt_id}`} id="notes-main-fluid" defaultNotes={esc(p.notes)} />
             <div className="categorize-action-footer">
               <div className="categorize-action-footer__row">
@@ -842,12 +965,28 @@ export default function Categorize() {
             <PayeeStoreMappings data={p} />
             <TransactionDetails data={p} />
             <label className="categorize-section-label">Category</label>
-            <CategoryBadgePick
-              key={`main-new-${String(p.prompt_id)}`}
-              name="main-new"
-              options={pendingOpts}
-              categoryColumns={categoryColumns}
-            />
+            <div
+              className="categorize-category-pick-zone"
+              onMouseLeave={() => setHoveredCategory(null)}
+            >
+              <CategorySuggestions
+                suggestions={Array.isArray(p.category_suggestions) ? p.category_suggestions : []}
+                selectedCategory={activeCategory}
+                hoveredCategory={hoveredCategory}
+                onPick={pickFromSuggestion}
+                onHoverCategory={setHoveredCategory}
+              />
+              <CategoryBadgePick
+                key={`main-new-${String(p.prompt_id)}`}
+                name="main-new"
+                options={pendingOpts}
+                categoryColumns={categoryColumns}
+                pickTrigger={categoryPickTrigger}
+                onPickedChange={setActiveCategory}
+                hoveredCategory={hoveredCategory}
+                onHoverCategory={setHoveredCategory}
+              />
+            </div>
             <MappingTypeBlock key={`map-nst-${p.prompt_id}`} groupName="nst-main" />
             <TxnNotesField key={`txn-new-${p.prompt_id}`} id="notes-main-new" defaultNotes={esc(p.notes)} />
             <div className="categorize-action-footer">
