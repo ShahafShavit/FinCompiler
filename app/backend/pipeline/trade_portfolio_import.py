@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import glob
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -91,6 +92,56 @@ _HEADER_ALIASES: dict[str, str] = {
     "שער בסיס": "basis_price",
     "מס התיק": "_portfolio_from_row",
 }
+
+_REAL_FIELDS = frozenset(
+    {
+        "avg_purchase_price",
+        "quantity",
+        "last_price",
+        "value_ils",
+        "daily_change_pct",
+        "profit_pct",
+        "profit_ils",
+        "pct_of_portfolio",
+        "basis_price",
+    }
+)
+_PCT_FIELDS = frozenset({"daily_change_pct", "profit_pct", "pct_of_portfolio"})
+# Bank workbooks use a hyphen (and similar) when a quote or % is missing.
+_MISSING_NUMERIC_TOKENS = frozenset({"", "-", "–", "—", "−", ".", "n/a", "na", "none"})
+
+
+def _coerce_optional_real(val: Any, *, field: str) -> float | None:
+    """Return a finite float for STRICT REAL columns, or None for missing cells.
+
+    Percents are stored as fractions (e.g. 0.0033). A trailing ``%`` on percent
+    fields is divided by 100.
+    """
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        raise ValueError(f"invalid {field}: {val!r}")
+    if isinstance(val, (int, float)):
+        n = float(val)
+        if not math.isfinite(n):
+            return None
+        return n
+    s = str(val).strip().replace("\u00a0", " ")
+    if s.lower() in _MISSING_NUMERIC_TOKENS:
+        return None
+    had_pct = "%" in s
+    s_num = s.replace("%", "").replace(",", "").replace(" ", "")
+    if not s_num or s_num.lower() in _MISSING_NUMERIC_TOKENS:
+        return None
+    try:
+        n = float(s_num)
+    except ValueError as e:
+        raise ValueError(f"invalid {field}: {val!r}") from e
+    if not math.isfinite(n):
+        return None
+    if had_pct and field in _PCT_FIELDS:
+        n /= 100.0
+    return n
 
 
 def _is_spreadsheetml_file(path: str) -> bool:
@@ -245,6 +296,8 @@ def parse_trade_portfolio_workbook(path: str) -> tuple[str, str, list[dict[str, 
             val = flat[idx]
             if field == "_portfolio_from_row":
                 rec["_portfolio_from_row"] = val
+            elif field in _REAL_FIELDS:
+                rec[field] = _coerce_optional_real(val, field=field)
             else:
                 rec[field] = val
 
@@ -318,15 +371,15 @@ def upsert_trade_portfolio_snapshot(
                     r["portfolio_account"],
                     r["security_number"],
                     r.get("security_name"),
-                    r.get("avg_purchase_price"),
-                    r.get("quantity"),
-                    r.get("last_price"),
-                    r.get("value_ils"),
-                    r.get("daily_change_pct"),
-                    r.get("profit_pct"),
-                    r.get("profit_ils"),
-                    r.get("pct_of_portfolio"),
-                    r.get("basis_price"),
+                    _coerce_optional_real(r.get("avg_purchase_price"), field="avg_purchase_price"),
+                    _coerce_optional_real(r.get("quantity"), field="quantity"),
+                    _coerce_optional_real(r.get("last_price"), field="last_price"),
+                    _coerce_optional_real(r.get("value_ils"), field="value_ils"),
+                    _coerce_optional_real(r.get("daily_change_pct"), field="daily_change_pct"),
+                    _coerce_optional_real(r.get("profit_pct"), field="profit_pct"),
+                    _coerce_optional_real(r.get("profit_ils"), field="profit_ils"),
+                    _coerce_optional_real(r.get("pct_of_portfolio"), field="pct_of_portfolio"),
+                    _coerce_optional_real(r.get("basis_price"), field="basis_price"),
                     imported_at,
                 )
             )

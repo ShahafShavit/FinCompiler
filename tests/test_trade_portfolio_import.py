@@ -10,9 +10,54 @@ from pathlib import Path
 
 from pipeline.route_inbox import classify_download_basename
 from pipeline.trade_portfolio_import import (
+    _coerce_optional_real,
     parse_trade_portfolio_workbook,
     upsert_trade_portfolio_snapshot,
 )
+
+_DASH_DAILY_CHANGE_XML = """<?xml version="1.0"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Worksheet ss:Name="Sheet1">
+  <Table>
+   <Row>
+    <Cell><Data ss:Type="String">תאריך:</Data></Cell>
+    <Cell><Data ss:Type="String">15.08.26</Data></Cell>
+    <Cell><Data ss:Type="String">תיק:</Data></Cell>
+    <Cell><Data ss:Type="String">954-037317/51</Data></Cell>
+   </Row>
+   <Row>
+    <Cell><Data ss:Type="String">מספר נייר</Data></Cell>
+    <Cell><Data ss:Type="String">שם הנייר</Data></Cell>
+    <Cell><Data ss:Type="String">שער קניה ממוצע</Data></Cell>
+    <Cell><Data ss:Type="String">כמות אחזקה</Data></Cell>
+    <Cell><Data ss:Type="String">שער אחרון</Data></Cell>
+    <Cell><Data ss:Type="String">שווי אחזקה ב ₪</Data></Cell>
+    <Cell><Data ss:Type="String">% שינוי יומי</Data></Cell>
+    <Cell><Data ss:Type="String">רווח ב-%</Data></Cell>
+    <Cell><Data ss:Type="String">רווח ב ₪</Data></Cell>
+    <Cell><Data ss:Type="String">%  מהתיק</Data></Cell>
+    <Cell><Data ss:Type="String">שער בסיס</Data></Cell>
+    <Cell><Data ss:Type="String">מס התיק</Data></Cell>
+   </Row>
+   <Row>
+    <Cell><Data ss:Type="String">1194976</Data></Cell>
+    <Cell><Data ss:Type="String">GLOEQ</Data></Cell>
+    <Cell><Data ss:Type="Number">130.62</Data></Cell>
+    <Cell><Data ss:Type="Number">229.67</Data></Cell>
+    <Cell><Data ss:Type="Number">196.93</Data></Cell>
+    <Cell><Data ss:Type="Number">452.29</Data></Cell>
+    <Cell><Data ss:Type="String">-</Data></Cell>
+    <Cell><Data ss:Type="Number">0.5076</Data></Cell>
+    <Cell><Data ss:Type="Number">152.29</Data></Cell>
+    <Cell><Data ss:Type="Number">0.0073</Data></Cell>
+    <Cell><Data ss:Type="Number">196.93</Data></Cell>
+    <Cell><Data ss:Type="String">954-037317/51</Data></Cell>
+   </Row>
+  </Table>
+ </Worksheet>
+</Workbook>
+"""
 
 
 FIXTURE_MINIMAL = Path(__file__).resolve().parent / "fixtures" / "trade_portfolio_minimal.xls"
@@ -104,6 +149,43 @@ class TradePortfolioImportTests(unittest.TestCase):
             self.assertAlmostEqual(float(m[0]), 0.01, places=6)
             self.assertIsNotNone(m2)
             self.assertAlmostEqual(float(m2[0]), 1.0, places=6)
+
+    def test_coerce_optional_real_missing_and_percent(self) -> None:
+        self.assertIsNone(_coerce_optional_real("-", field="daily_change_pct"))
+        self.assertIsNone(_coerce_optional_real(" — ", field="daily_change_pct"))
+        self.assertIsNone(_coerce_optional_real("", field="profit_pct"))
+        self.assertIsNone(_coerce_optional_real(None, field="value_ils"))
+        self.assertAlmostEqual(_coerce_optional_real(0.0033, field="daily_change_pct"), 0.0033, places=6)
+        self.assertAlmostEqual(_coerce_optional_real("0.40%", field="daily_change_pct"), 0.004, places=6)
+        self.assertAlmostEqual(_coerce_optional_real("12,123.12", field="value_ils"), 12123.12, places=2)
+        with self.assertRaises(ValueError):
+            _coerce_optional_real("abc", field="daily_change_pct")
+
+    def test_parse_and_upsert_hyphen_daily_change_pct(self) -> None:
+        """Bank exports use '-' when daily change is unavailable; STRICT REAL must get NULL."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "achzakot.xls")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(_DASH_DAILY_CHANGE_XML)
+            snap, pf, rows = parse_trade_portfolio_workbook(path)
+            self.assertEqual(snap, "2026-08-15")
+            self.assertEqual(pf, "954-037317/51")
+            self.assertEqual(len(rows), 1)
+            self.assertIsNone(rows[0]["daily_change_pct"])
+            self.assertAlmostEqual(rows[0]["profit_pct"], 0.5076, places=4)
+
+            db = os.path.join(tmp, "ledger.sqlite")
+            rep = upsert_trade_portfolio_snapshot(rows, db_path=db)
+            self.assertEqual(rep["inserted"], 1)
+            conn = sqlite3.connect(db)
+            try:
+                got = conn.execute(
+                    "SELECT daily_change_pct, typeof(daily_change_pct) FROM trade_portfolio_position"
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertIsNone(got[0])
+            self.assertEqual(got[1], "null")
 
 
 if __name__ == "__main__":
