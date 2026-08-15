@@ -1,69 +1,87 @@
-/* Heatmap page — RTL + grid/stats tables scoped under `.heatmap-page`. */
+/* Heatmap page — dense grid under PageShell (html already dir=rtl). */
 
 .heatmap-page {
-  direction: rtl;
-  padding: 0.5rem 1rem 2rem;
   max-width: 100%;
-}
-
-.heatmap-page h1 {
-  font-size: 1.25rem;
-  font-weight: 600;
-  margin: 0 0 0.75rem 0;
-  color: #f1f1f4;
 }
 
 .heatmap-page h2 {
   font-size: 1rem;
   font-weight: 600;
   margin: 1.25rem 0 0.5rem 0;
-  color: #c8cad4;
-  border-bottom: 1px solid #2b2c33;
+  color: var(--fg-subtle);
+  border-bottom: 1px solid var(--border);
   padding-bottom: 0.35rem;
 }
 
 .heatmap-page .subtle {
-  font-size: 0.82rem;
-  opacity: 0.65;
-  margin-bottom: 0.35rem;
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+  margin: 0 0 0.5rem;
 }
 
 .heatmap-page .err-banner {
-  background: #3a1f1f;
+  background: var(--bad);
   border: 1px solid #6b2a2a;
-  color: #ffb4b4;
+  color: var(--bad-fg);
   padding: 0.75rem 1rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   margin: 0.5rem 0 1rem;
 }
 
-.heatmap-page .heatmap-toolbar {
+.heatmap-page .heatmap-toolbar,
+.page-header__actions .heatmap-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  margin: 0.25rem 0 0.85rem;
 }
 
-.heatmap-page .heatmap-toolbar button.btn-refresh {
+.heatmap-page .heatmap-toolbar button.btn-refresh,
+.page-header__actions .heatmap-toolbar button.btn-refresh,
+.heatmap-page .hm-tool-btn,
+.page-header__actions .hm-tool-btn {
   font: inherit;
   cursor: pointer;
   padding: 0.45rem 0.8rem;
-  border-radius: 8px;
-  border: 1px solid #4c6ef5;
-  background: #4c6ef5;
-  color: #fff;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
 }
 
-.heatmap-page .heatmap-toolbar button.btn-refresh:disabled {
+.heatmap-page .heatmap-toolbar button.btn-refresh,
+.page-header__actions .heatmap-toolbar button.btn-refresh {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.heatmap-page .heatmap-toolbar button.btn-refresh:disabled,
+.page-header__actions .heatmap-toolbar button.btn-refresh:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.heatmap-page .heatmap-toolbar .refresh-status {
-  font-size: 0.82rem;
-  opacity: 0.8;
+.heatmap-page .hm-tool-btn.secondary,
+.page-header__actions .hm-tool-btn.secondary {
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid var(--border-strong);
+}
+
+.heatmap-page .hm-tool-btn.secondary:hover,
+.page-header__actions .hm-tool-btn.secondary:hover {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.heatmap-page .heatmap-toolbar .refresh-status,
+.page-header__actions .heatmap-toolbar .refresh-status {
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
   max-width: 42rem;
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
 }
 
 .heatmap-page .tabs {
@@ -77,16 +95,16 @@
   font: inherit;
   cursor: pointer;
   padding: 0.4rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid #3a3b44;
-  background: #1c1d22;
-  color: #c8cad4;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--fg-subtle);
 }
 
 .heatmap-page .tabs button.active {
-  border-color: #4c6ef5;
-  background: #2a2f4a;
-  color: #e8e8ec;
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--fg);
 }
 
 .heatmap-page .heatmap-title {
@@ -100,91 +118,161 @@
   max-width: 100%;
   margin-bottom: 1.5rem;
   max-height: 78vh;
-  border: 1px solid #2b2c33;
-  border-radius: 8px;
-  background: #0b0c0f;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
 }
 
-.heatmap-page .stats-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.25rem;
-  margin-top: 0.5rem;
+.heatmap-page.heatmap-page--focus .heatmap-wrap {
+  max-height: none;
+  height: calc(100vh - 5.5rem);
+  margin-bottom: 0;
 }
 
-.heatmap-page .stats-table-container {
-  flex: 1;
-  min-width: min(100%, 22rem);
-  overflow-x: auto;
+.heatmap-page .heatmap-wrap:fullscreen {
+  background: var(--bg);
+  padding: 0.5rem;
+  max-height: none;
+  height: 100%;
+  overflow: auto;
 }
 
 .heatmap-page .no-data {
   text-align: center;
-  color: #888;
+  color: var(--fg-muted);
   margin: 0.75rem 0;
 }
 
-/* Summary stats tables (React-rendered; heat coloring from `heatmapColors.statsColumnStyles`) */
-.heatmap-page table.styled-table {
-  border-collapse: collapse;
+/* Popovers */
+.hm-pop {
+  position: relative;
+}
+
+.hm-pop-panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  inset-inline-end: 0;
+  min-width: 14rem;
+  max-width: min(22rem, 90vw);
+  max-height: 22rem;
+  overflow: auto;
+  z-index: 40;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.hm-pop-section {
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+  margin-top: 0.35rem;
+  font-weight: 600;
+}
+
+.hm-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: var(--fs-caption);
+  color: var(--fg-subtle);
+  cursor: pointer;
+}
+
+.hm-cat-search {
   width: 100%;
-  margin: 0.75rem 0;
-  font-size: 0.88rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  margin-bottom: 0.25rem;
 }
 
-.heatmap-page .styled-table th,
-.heatmap-page .styled-table td {
-  padding: 8px 10px;
-  text-align: right;
-  border: 1px solid #2b2c33;
+.hm-cat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 12rem;
+  overflow: auto;
 }
 
-.heatmap-page .stats-table-container .styled-table td {
-  direction: ltr;
-  unicode-bidi: isolate;
-  text-align: right;
+.hm-pop-full {
+  width: 100%;
+  margin: 0.15rem 0;
 }
 
-.heatmap-page .styled-table thead th {
-  background: #2d4a2f;
-  color: #e8f5e9;
+.hm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
 }
 
-.heatmap-page .stats-table-container .styled-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+.hm-custom-range {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
-.heatmap-page .styled-table tbody tr:hover {
-  background: #1e1f24 !important;
-}
-
-/* Heatmap grid (verbatim port — sticky multi-column layout) */
+/* Density / zoom */
 .heatmap-page table.hm-grid {
   border-collapse: separate;
   border-spacing: 1px;
-  font-size: 0.74rem;
   margin: 0;
   table-layout: auto;
   width: max-content;
+  --hm-month-col-w: 7.5rem;
+  --hm-metric-col-w: 4.8rem;
+  --hm-thead2-top: 2.6rem;
+  font-size: 0.8125rem;
+}
+
+.heatmap-page.density-comfortable table.hm-grid {
+  --hm-month-col-w: 8rem;
+  --hm-metric-col-w: 5.1rem;
+  --hm-thead2-top: 2.85rem;
+  font-size: 0.875rem;
+}
+
+.heatmap-page.density-compact table.hm-grid {
   --hm-month-col-w: 7.3rem;
   --hm-metric-col-w: 4.6rem;
+  --hm-thead2-top: 2.5rem;
+  font-size: 0.8125rem;
+}
+
+.heatmap-page.zoom-90 table.hm-grid {
+  font-size: 0.8125rem;
+  transform-origin: top right;
+}
+
+.heatmap-page.zoom-90 .heatmap-wrap {
+  zoom: 0.9;
+}
+
+.heatmap-page.zoom-115 .heatmap-wrap {
+  zoom: 1.15;
 }
 
 .heatmap-page table.hm-grid th,
 .heatmap-page table.hm-grid td {
-  min-width: 4.15rem;
-  padding: 5px 7px;
+  min-width: 4.35rem;
+  padding: 6px 8px;
   text-align: center;
   vertical-align: middle;
   white-space: nowrap;
 }
 
+.heatmap-page.density-comfortable table.hm-grid th,
+.heatmap-page.density-comfortable table.hm-grid td {
+  padding: 7px 9px;
+  min-width: 4.6rem;
+}
+
 .heatmap-page table.hm-grid th {
-  background: #1c1d22;
-  color: #aeb4c0;
+  background: var(--bg-card);
+  color: var(--fg-muted);
   font-weight: 600;
   position: sticky;
   top: 0;
@@ -193,9 +281,8 @@
 
 .heatmap-page table.hm-grid th.row-h {
   position: sticky;
-  right: 0;
   z-index: 3;
-  background: #16171c;
+  background: var(--bg-elevated);
   min-width: var(--hm-month-col-w);
   text-align: right;
   padding-inline: 0.55rem;
@@ -203,19 +290,18 @@
 
 .heatmap-page table.hm-grid th.corner {
   z-index: 4;
-  right: 0;
   top: 0;
-  background: #14151a;
+  background: var(--bg-elevated);
 }
 
 .heatmap-page table.hm-grid thead th.hm-colsum {
   top: 0;
   z-index: 3;
-  background: #25262e;
-  color: #dce0ea;
-  font-size: 0.68rem;
+  background: var(--bg-card);
+  color: var(--fg-subtle);
+  font-size: var(--fs-caption);
   font-weight: 600;
-  border-bottom: 1px solid #3a3b44;
+  border-bottom: 1px solid var(--border);
 }
 
 .heatmap-page table.hm-grid thead th.hm-colsum .colsum-wrap {
@@ -232,97 +318,101 @@
 }
 
 .heatmap-page table.hm-grid thead th.hm-colsum .metric-label {
-  color: #aeb4c0;
-  font-size: 0.64rem;
+  color: var(--fg-muted);
+  font-size: var(--fs-caption);
   letter-spacing: 0.02em;
 }
 
 .heatmap-page table.hm-grid thead th.hm-colsum .metric-val {
-  color: #e6e9f0;
-  font-size: 0.7rem;
+  color: var(--fg);
+  font-size: var(--fs-caption);
   direction: ltr;
   unicode-bidi: isolate;
 }
 
 .heatmap-page table.hm-grid thead tr:nth-child(2) th {
-  top: 2.35rem;
+  top: var(--hm-thead2-top);
   z-index: 2;
-  background: #1c1d22;
+  background: var(--bg-card);
 }
 
 .heatmap-page table.hm-grid thead th.hm-metric-h {
   top: 0;
   z-index: 5;
-  background: #1a1b20;
-  color: #c4c8d4;
+  background: var(--bg-card);
+  color: var(--fg-subtle);
   min-width: var(--hm-metric-col-w);
   vertical-align: middle;
   line-height: 1.2;
-}
-
-.heatmap-page table.hm-grid th.hm-rowsum-h,
-.heatmap-page table.hm-grid td.hm-rowtot {
-  right: var(--hm-month-col-w);
-}
-
-.heatmap-page table.hm-grid th.hm-rowavg-h,
-.heatmap-page table.hm-grid td.hm-rowavg {
-  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 1));
-}
-
-.heatmap-page table.hm-grid th.hm-ytdsum-h,
-.heatmap-page table.hm-grid td.hm-ytdsum {
-  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 2));
-}
-
-.heatmap-page table.hm-grid th.hm-ytdavg-h,
-.heatmap-page table.hm-grid td.hm-ytdavg {
-  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 3));
-}
-
-.heatmap-page table.hm-grid th.hm-l12sum-h,
-.heatmap-page table.hm-grid td.hm-l12sum {
-  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 4));
-}
-
-.heatmap-page table.hm-grid th.hm-l12avg-h,
-.heatmap-page table.hm-grid td.hm-l12avg {
-  right: calc(var(--hm-month-col-w) + (var(--hm-metric-col-w) * 5));
-}
-
-.heatmap-page table.hm-grid tbody td.hm-rowtot {
   position: sticky;
-  z-index: 3;
-  background: #1a1b20;
-  color: #dce0ea;
-  font-weight: 600;
-  font-size: 0.7rem;
-  border: 1px solid #2b2c33;
+}
+
+.heatmap-page table.hm-grid thead th.hm-metric-context {
+  color: var(--amber-fg);
+}
+
+.heatmap-page table.hm-grid th.hm-cat-h {
+  cursor: pointer;
+}
+
+.heatmap-page table.hm-grid th.hm-cat-h:hover {
+  color: var(--fg);
+  background: var(--bg-elevated);
+}
+
+.heatmap-page table.hm-grid th.hm-cat-h .hm-cat-name {
+  margin-inline-end: 0.25rem;
+}
+
+.heatmap-page table.hm-grid th.hm-cat-h .hm-cat-hide {
+  font: inherit;
+  font-size: var(--fs-caption);
+  padding: 0 0.3rem;
+  line-height: 1.2;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  opacity: 0.55;
+}
+
+.heatmap-page table.hm-grid th.hm-cat-h:hover .hm-cat-hide {
+  opacity: 1;
+  border-color: var(--border);
+}
+
+.heatmap-page table.hm-grid th.hm-month-h {
+  cursor: pointer;
+}
+
+.heatmap-page table.hm-grid th.hm-month-h:hover {
+  color: var(--fg);
 }
 
 .heatmap-page table.hm-grid tbody td.hm-rowmetric {
   position: sticky;
   z-index: 3;
-  background: #191a1f;
-  color: #dce0ea;
+  background: var(--bg-elevated);
+  color: var(--fg-subtle);
   font-weight: 600;
-  font-size: 0.69rem;
-  border: 1px solid #2b2c33;
+  font-size: var(--fs-caption);
+  border: 1px solid var(--border);
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .heatmap-page table.hm-grid tbody tr:nth-child(even) th.row-h {
-  background: #1a1b22;
+  background: var(--bg-card);
 }
 
 .heatmap-page table.hm-grid tbody tr:nth-child(even) td.hm-rowmetric {
-  background: #1c1d24;
+  background: var(--bg-card);
 }
 
 .heatmap-page table.hm-grid tbody tr:nth-child(even) td.cell {
   box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.025);
 }
 
-/* Row hover: brighten full row (works with inline cell backgrounds via inset overlay) */
 .heatmap-page table.hm-grid tbody tr:hover th.row-h {
   box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.075);
 }
@@ -336,18 +426,18 @@
 }
 
 .heatmap-page table.hm-grid tbody tr.year-start th.row-h {
-  border-top: 2px solid #5d7cff;
+  border-top: 2px solid var(--accent);
 }
 
 .heatmap-page table.hm-grid tbody tr.group-boundary th.row-h {
-  border-top: 2px dashed #4a4d57;
+  border-top: 2px dashed var(--border-strong);
 }
 
 .heatmap-page table.hm-grid th.row-h .l12-chip {
-  font-size: 0.61rem;
-  color: #9da3b7;
-  background: #262a33;
-  border: 1px dashed #4a4d57;
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+  background: var(--bg-card);
+  border: 1px dashed var(--border-strong);
   border-radius: 999px;
   padding: 0.06rem 0.3rem;
 }
@@ -360,7 +450,9 @@
 }
 
 .heatmap-page table.hm-grid th.row-h .month-label {
-  color: #d9deea;
+  color: var(--fg-subtle);
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .heatmap-page table.hm-grid tbody th.row-h {
@@ -369,7 +461,7 @@
 
 .heatmap-page table.hm-grid td.cell {
   cursor: default;
-  color: #f4f6fb;
+  color: var(--fg);
   font-weight: 600;
   text-shadow: none;
   direction: ltr;
@@ -388,5 +480,51 @@
 
 .heatmap-page table.hm-grid td.cell.clickable:hover {
   filter: brightness(1.12);
-  outline: 1px solid #fff8;
+  outline: 1px solid color-mix(in srgb, var(--fg) 50%, transparent);
+}
+
+.heatmap-page table.hm-grid td.cell.cell-focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  z-index: 1;
+  position: relative;
+}
+
+/* Tooltip */
+.hm-tip {
+  min-width: 11rem;
+  max-width: 16rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+  font-size: var(--fs-caption);
+  color: var(--fg-subtle);
+  direction: rtl;
+}
+
+.hm-tip-title {
+  font-weight: 700;
+  color: var(--fg);
+  margin-bottom: 0.35rem;
+}
+
+.hm-tip-sec {
+  margin-top: 0.4rem;
+  margin-bottom: 0.15rem;
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+.hm-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.1rem 0;
+}
+
+.hm-tip-row .num {
+  direction: ltr;
+  unicode-bidi: isolate;
 }

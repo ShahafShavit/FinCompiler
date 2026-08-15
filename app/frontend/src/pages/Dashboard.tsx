@@ -1,6 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Area,
   AreaChart,
@@ -20,12 +20,15 @@ import {
   YAxis,
 } from 'recharts';
 
+import PageShell from '../components/PageShell';
 import { fetchJson, formatMoney, formatPct } from '../lib/api';
+import { CHART_EXPENSE, CHART_INCOME, CHART_NET, hashColor } from '../lib/chartColors';
 import {
   heatmapDetailCategory,
   heatmapDetailMonth,
   heatmapDetailSourceCategory,
 } from '../lib/drilldown';
+import { he } from '../lib/he';
 import type {
   AllocationRow,
   AllocationTimelineRow,
@@ -79,36 +82,15 @@ function useDashboardQuery<T>(revision: number | 'no_file' | null, url: string, 
   });
 }
 
-const PALETTE = [
-  '#4c6ef5',
-  '#22b8cf',
-  '#82c91e',
-  '#fab005',
-  '#fa5252',
-  '#be4bdb',
-  '#15aabf',
-  '#9775fa',
-  '#ff922b',
-  '#37b24d',
-];
-
-function hashColor(seed: string): string {
-  let h = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  }
-  return PALETTE[h % PALETTE.length];
-}
-
 type KPIProps = {
   label: string;
   value: string;
   sub?: string;
   delta?: number | null;
-  cta?: { href: string; label: string };
+  hero?: boolean;
 };
 
-function KPI({ label, value, sub, delta, cta }: KPIProps) {
+function KPI({ label, value, sub, delta, hero }: KPIProps) {
   const dir =
     delta == null
       ? ''
@@ -122,16 +104,11 @@ function KPI({ label, value, sub, delta, cta }: KPIProps) {
       ? null
       : `${delta > 0 ? '▲' : delta < 0 ? '▼' : '·'} ${formatMoney(Math.abs(delta))}`;
   return (
-    <div className="dash-kpi">
+    <div className={`dash-kpi${hero ? ' dash-kpi--hero' : ''}`}>
       <span className="dash-kpi__label">{label}</span>
-      <span className="dash-kpi__value">{value}</span>
+      <span className="dash-kpi__value num">{value}</span>
       {sub ? <span className="dash-kpi__sub">{sub}</span> : null}
-      {deltaText ? <span className={`dash-kpi__sub ${dir}`}>{deltaText}</span> : null}
-      {cta ? (
-        <a className="dash-kpi__cta" href={cta.href}>
-          {cta.label} →
-        </a>
-      ) : null}
+      {deltaText ? <span className={`dash-kpi__sub num ${dir}`}>{deltaText}</span> : null}
     </div>
   );
 }
@@ -169,16 +146,16 @@ function CashflowMonthTooltip({
     <div className="dash-tooltip">
       <div style={{ marginBottom: '0.25rem', fontWeight: 600 }}>{label}</div>
       <div className="dash-tooltip__row">
-        <span style={{ color: '#37b24d' }}>Income</span>
-        <span>{formatMoney(row.income)}</span>
+        <span style={{ color: CHART_INCOME }}>{he.dashboard.income30d}</span>
+        <span className="num">{formatMoney(row.income)}</span>
       </div>
       <div className="dash-tooltip__row">
-        <span style={{ color: '#fa5252' }}>Expense</span>
-        <span>{formatMoney(row.expense)}</span>
+        <span style={{ color: CHART_EXPENSE }}>{he.dashboard.expense30d}</span>
+        <span className="num">{formatMoney(row.expense)}</span>
       </div>
       <div className="dash-tooltip__row">
-        <span style={{ color: '#a5b4fc' }}>Net</span>
-        <span>{formatMoney(row.net)}</span>
+        <span style={{ color: CHART_NET }}>{he.heatmap.net}</span>
+        <span className="num">{formatMoney(row.net)}</span>
       </div>
     </div>
   );
@@ -245,36 +222,39 @@ function AllocationDonutCard() {
   return (
     <div className="dash-card dash-card--compact">
       <h3 className="dash-card__title">
-        Allocation now{' '}
+        {he.dashboard.allocationNow}{' '}
         {data?.as_of_date ? (
           <span className="dash-card__meta">({data.as_of_date})</span>
         ) : null}
       </h3>
       {isPending ? (
-        <div className="dash-empty">Loading…</div>
+        <div className="dash-empty">{he.dashboard.loading}</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error.message}</div>
+        <div className="dash-empty">{error.message}</div>
       ) : filtered.length === 0 ? (
-        <div className="dash-empty">No holdings snapshot yet.</div>
+        <div className="dash-empty">{he.dashboard.empty}</div>
       ) : (
-        <ResponsiveContainer width="100%" height={240}>
-          <PieChart>
-            <Pie
-              data={filtered}
-              dataKey="balance_ils"
-              nameKey="activity_type"
-              innerRadius={52}
-              outerRadius={88}
-              paddingAngle={1}
-            >
-              {filtered.map((row) => (
-                <Cell key={row.activity_type} fill={hashColor(row.activity_type)} />
-              ))}
-            </Pie>
-            <Tooltip content={<MoneyTooltip />} />
-            <Legend wrapperStyle={{ fontSize: '0.74rem' }} />
-          </PieChart>
-        </ResponsiveContainer>
+        <div className="dash-chart-ltr" dir="ltr">
+          <ResponsiveContainer width="100%" height={240}>
+            <PieChart>
+              <Pie
+                data={filtered}
+                dataKey="balance_ils"
+                nameKey="activity_type"
+                cx="38%"
+                innerRadius={52}
+                outerRadius={88}
+                paddingAngle={1}
+              >
+                {filtered.map((row) => (
+                  <Cell key={row.activity_type} fill={hashColor(row.activity_type)} />
+                ))}
+              </Pie>
+              <Tooltip content={<MoneyTooltip />} />
+              <Legend layout="vertical" align="right" verticalAlign="middle" wrapperStyle={{ fontSize: '0.74rem' }} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
       )}
     </div>
   );
@@ -310,38 +290,37 @@ function NetWorthStackedCard() {
   }, [data]);
   return (
     <div className="dash-card dash-card--compact dash-card--grow">
-      <h3 className="dash-card__title">Net worth over time</h3>
-      <p className="dash-card__sub">
-        Stacked balances by activity type; total height = net worth per snapshot.
-      </p>
+      <h3 className="dash-card__title">{he.dashboard.netWorthOverTime}</h3>
       {isPending ? (
-        <div className="dash-empty">Loading…</div>
+        <div className="dash-empty">{he.dashboard.loading}</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error.message}</div>
+        <div className="dash-empty">{error.message}</div>
       ) : rows.length === 0 ? (
-        <div className="dash-empty">No holdings snapshots yet.</div>
+        <div className="dash-empty">{he.dashboard.empty}</div>
       ) : (
-        <ResponsiveContainer width="100%" height={260}>
-          <AreaChart data={rows} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2b2c33" />
-            <XAxis dataKey="as_of_date" stroke="#aeb4c0" fontSize={11} />
-            <YAxis stroke="#aeb4c0" fontSize={11} tickFormatter={(v) => formatMoney(v as number, '')} />
-            <Tooltip content={<MoneyTooltip />} />
-            <Legend wrapperStyle={{ fontSize: '0.72rem' }} />
-            {types.map((t) => (
-              <Area
-                key={t}
-                type="monotone"
-                dataKey={t}
-                stackId="1"
-                name={t}
-                stroke={hashColor(t)}
-                fill={hashColor(t)}
-                fillOpacity={0.7}
-              />
-            ))}
-          </AreaChart>
-        </ResponsiveContainer>
+        <div className="dash-chart-ltr" dir="ltr">
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={rows} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="as_of_date" stroke="var(--fg-muted)" fontSize={11} />
+              <YAxis stroke="var(--fg-muted)" fontSize={11} tickFormatter={(v) => formatMoney(v as number, '')} />
+              <Tooltip content={<MoneyTooltip />} />
+              <Legend wrapperStyle={{ fontSize: '0.72rem' }} />
+              {types.map((t) => (
+                <Area
+                  key={t}
+                  type="monotone"
+                  dataKey={t}
+                  stackId="1"
+                  name={t}
+                  stroke={hashColor(t)}
+                  fill={hashColor(t)}
+                  fillOpacity={0.7}
+                />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
       )}
     </div>
   );
@@ -368,39 +347,38 @@ function CashflowCard() {
   );
   return (
     <div className="dash-card dash-card--chart-click">
-      <h3 className="dash-card__title">Monthly cash flow</h3>
-      <p className="dash-card__sub">
-        Last 24 months · green = income above 0, red = expense below 0 (outflows), blue = net cash flow (income − expense).
-        Click a bar or net point to drill.{' '}
-        <a className="dash-inline-link" href="/heatmap">
-          Category heatmap
-        </a>
-      </p>
+      <h3 className="dash-card__title">
+        {he.dashboard.monthlyCashFlow}{' '}
+        <Link className="dash-inline-link" to="/heatmap">
+          {he.nav.heatmap}
+        </Link>
+      </h3>
       {isPending ? (
-        <div className="dash-empty">Loading…</div>
+        <div className="dash-empty">{he.dashboard.loading}</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error.message}</div>
+        <div className="dash-empty">{error.message}</div>
       ) : rows.length === 0 ? (
-        <div className="dash-empty">No transactions yet.</div>
+        <div className="dash-empty">{he.dashboard.empty}</div>
       ) : (
+        <div className="dash-chart-ltr" dir="ltr">
         <ResponsiveContainer width="100%" height={300}>
           <ComposedChart
             data={rows}
             margin={{ top: 8, right: 10, left: 4, bottom: 0 }}
             barCategoryGap="18%"
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="#2b2c33" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
             <ReferenceLine
               yAxisId="left"
               y={0}
-              stroke="#e8e8ec"
+              stroke="var(--fg)"
               strokeWidth={2}
               strokeLinecap="square"
             />
-            <XAxis dataKey="month" stroke="#aeb4c0" fontSize={11} />
+            <XAxis dataKey="month" stroke="var(--fg-muted)" fontSize={11} />
             <YAxis
               yAxisId="left"
-              stroke="#aeb4c0"
+              stroke="var(--fg-muted)"
               fontSize={11}
               tickFormatter={(v) => formatMoney(v as number, '')}
             />
@@ -409,8 +387,8 @@ function CashflowCard() {
             <Bar
               yAxisId="left"
               dataKey="income"
-              name="Income"
-              fill="#37b24d"
+              name={he.heatmap.income}
+              fill={CHART_INCOME}
               maxBarSize={44}
               cursor="pointer"
               onClick={(d: unknown) => {
@@ -421,8 +399,8 @@ function CashflowCard() {
             <Bar
               yAxisId="left"
               dataKey="expenseNeg"
-              name="Expense (outflow)"
-              fill="#fa5252"
+              name={he.heatmap.expense}
+              fill={CHART_EXPENSE}
               maxBarSize={44}
               cursor="pointer"
               onClick={(d: unknown) => {
@@ -434,8 +412,8 @@ function CashflowCard() {
               yAxisId="left"
               type="monotone"
               dataKey="net"
-              name="Net"
-              stroke="#a5b4fc"
+              name={he.heatmap.net}
+              stroke={CHART_NET}
               strokeWidth={2}
               isAnimationActive={false}
               dot={(dotProps: { cx?: number; cy?: number; payload?: CashflowRow }) => {
@@ -446,8 +424,8 @@ function CashflowCard() {
                     cx={cx}
                     cy={cy}
                     r={4}
-                    fill="#a5b4fc"
-                    stroke="#121316"
+                    fill={CHART_NET}
+                    stroke="var(--bg)"
                     strokeWidth={1}
                     cursor="pointer"
                     onClick={() => {
@@ -459,6 +437,7 @@ function CashflowCard() {
             />
           </ComposedChart>
         </ResponsiveContainer>
+        </div>
       )}
     </div>
   );
@@ -658,14 +637,11 @@ function CategoryOverviewCard() {
     <div className="dash-card">
       <div className="dash-cat-head">
         <div className="dash-cat-head__main">
-          <h3 className="dash-card__title dash-card__title--inline">Category overview</h3>
+          <h3 className="dash-card__title dash-card__title--inline">{he.dashboard.categoryOverview}</h3>
           <p className="dash-card__sub dash-card__sub--tight">
-            Ranked by income + expense; <strong>Avg/mo net</strong> divides each category&apos;s period net by
-            the window month count; <strong>Yr proj.</strong> is that average × 12 (not annualized for partial
-            windows).{' '}
-            <a className="dash-inline-link" href="/heatmap">
-              Full heatmap
-            </a>
+            <Link className="dash-inline-link" to="/heatmap">
+              {he.nav.heatmap}
+            </Link>
           </p>
           {windowHint ? (
             <p className="dash-card-meta-line dash-card-meta-line--muted">
@@ -1073,68 +1049,77 @@ function KpiStrip() {
   const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
   const summary = useDashboardQuery<DashboardSummary>(rev, '/api/dashboard/summary', meta.isSuccess);
 
-  if (meta.isPending) return <div className="dash-empty">Loading KPIs…</div>;
+  if (meta.isPending) return <div className="dash-empty">{he.dashboard.loading}</div>;
   if (meta.isError) return null;
-  if (summary.isPending) return <div className="dash-empty">Loading KPIs…</div>;
-  if (summary.error) return <div className="dash-empty">Error: {summary.error.message}</div>;
+  if (summary.isPending) return <div className="dash-empty">{he.dashboard.loading}</div>;
+  if (summary.error) return <div className="dash-empty">{summary.error.message}</div>;
   const data = summary.data;
   if (!data?.ledger_exists) {
     return (
       <div className="dash-empty">
-        Ledger database not found. Run the pipeline (or compile a dataset) to populate <code>data/ledger.sqlite</code>.
+        לא נמצא לדג׳ר. הריצו את ה־Pipeline כדי למלא את <code>data/ledger.sqlite</code>.
       </div>
     );
   }
   const k = data.kpis;
   return (
-    <div className="dash-kpi-grid">
-      <KPI
-        label="Net worth"
-        value={formatMoney(k.net_worth_latest)}
-        sub={k.net_worth_latest_date ? `as of ${k.net_worth_latest_date}` : ''}
-        delta={k.net_worth_delta_mom}
-      />
-      <KPI label="Last 30d income" value={formatMoney(k.income_30d)} />
-      <KPI label="Last 30d expense" value={formatMoney(k.expense_30d)} />
-      <KPI
-        label="Last 30d net"
-        value={formatMoney(k.net_30d)}
-        sub={k.savings_rate_30d != null ? `Savings rate ${formatPct(k.savings_rate_30d)}` : ''}
-      />
-      <KPI
-        label="Transactions"
-        value={k.transaction_count != null ? k.transaction_count.toLocaleString() : '—'}
-        sub={k.last_ingest_date ? `Last ingest ${k.last_ingest_date}` : ''}
-      />
-      <KPI
-        label="Need category"
-        value={k.uncategorized_count != null ? k.uncategorized_count.toLocaleString() : '—'}
-        cta={
-          k.uncategorized_count && k.uncategorized_count > 0 ? { href: '/categorize/', label: 'Open queue' } : undefined
-        }
-      />
+    <div className="dash-hero-block">
+      <div className="dash-hero-row">
+        <KPI
+          hero
+          label={he.dashboard.netWorth}
+          value={formatMoney(k.net_worth_latest)}
+          sub={k.net_worth_latest_date ? `${he.dashboard.asOf}${k.net_worth_latest_date}` : ''}
+          delta={k.net_worth_delta_mom}
+        />
+        {k.uncategorized_count != null && k.uncategorized_count > 0 ? (
+          <Link className="cta-chip" to="/categorize">
+            {he.dashboard.needCategory}
+            <span className="num">{k.uncategorized_count}</span>
+            <span>{he.dashboard.openQueue}</span>
+          </Link>
+        ) : null}
+      </div>
+      <div className="dash-kpi-strip">
+        <KPI label={he.dashboard.income30d} value={formatMoney(k.income_30d)} />
+        <KPI label={he.dashboard.expense30d} value={formatMoney(k.expense_30d)} />
+        <KPI
+          label={he.dashboard.net30d}
+          value={formatMoney(k.net_30d)}
+          sub={k.savings_rate_30d != null ? `${he.dashboard.savingsRate} ${formatPct(k.savings_rate_30d)}` : ''}
+        />
+        <div className="dash-kpi dash-kpi--meta">
+          <span className="dash-kpi__label">{he.dashboard.transactions}</span>
+          <span className="dash-kpi__value num">
+            {k.transaction_count != null ? k.transaction_count.toLocaleString('he-IL') : '—'}
+          </span>
+          {k.last_ingest_date ? (
+            <span className="dash-kpi__sub">
+              {he.dashboard.lastIngest} {k.last_ingest_date}
+            </span>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
 
 export default function Dashboard() {
   const meta = useLedgerMetaQuery();
+  const [catTab, setCatTab] = useState<'table' | 'matrix'>('table');
   return (
-    <div className="app-page dash-page">
-      <header className="dash-header">
-        <h1>Dashboard</h1>
-        <p className="sub">Holdings, cash flow, and category activity in one place.</p>
-      </header>
+    <PageShell title={he.dashboard.title} sub={he.dashboard.sub} width="default" className="dash-page">
       {meta.isError ? (
-        <div className="dash-empty" role="alert">
-          Could not read ledger revision: {meta.error instanceof Error ? meta.error.message : String(meta.error)}
+        <div className="banner banner--err" role="alert">
+          {he.dashboard.ledgerError}:{' '}
+          {meta.error instanceof Error ? meta.error.message : String(meta.error)}
         </div>
       ) : null}
       <KpiStrip />
 
       <section className="dash-section" aria-labelledby="dash-holdings-heading">
         <h2 id="dash-holdings-heading" className="dash-section__title">
-          Holdings
+          {he.dashboard.holdings}
         </h2>
         <div className="dash-grid dash-grid--wealth">
           <AllocationDonutCard />
@@ -1144,20 +1129,33 @@ export default function Dashboard() {
 
       <section className="dash-section" aria-labelledby="dash-cash-heading">
         <h2 id="dash-cash-heading" className="dash-section__title">
-          Cash flow
+          {he.dashboard.cashFlow}
         </h2>
         <CashflowCard />
       </section>
 
       <section className="dash-section" aria-labelledby="dash-cat-heading">
         <h2 id="dash-cat-heading" className="dash-section__title">
-          Categories & sources
+          {he.dashboard.categories}
         </h2>
-        <div className="dash-stack">
-          <CategoryOverviewCard />
-          <SourceCategoryMatrixCard />
+        <div className="dash-seg" role="tablist" aria-label={he.dashboard.categories}>
+          <button
+            type="button"
+            className={catTab === 'table' ? 'active' : ''}
+            onClick={() => setCatTab('table')}
+          >
+            {he.dashboard.categoryOverview}
+          </button>
+          <button
+            type="button"
+            className={catTab === 'matrix' ? 'active' : ''}
+            onClick={() => setCatTab('matrix')}
+          >
+            {he.dashboard.sourceMatrix}
+          </button>
         </div>
+        <div className="dash-stack">{catTab === 'table' ? <CategoryOverviewCard /> : <SourceCategoryMatrixCard />}</div>
       </section>
-    </div>
+    </PageShell>
   );
 }

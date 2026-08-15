@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import PageShell from '../components/PageShell';
 import { fetchJson, postJson, putJson } from '../lib/api';
+import { he } from '../lib/he';
 
-import './Pipeline.css';
 import './Settings.css';
 
 type CredApi = {
@@ -158,7 +159,13 @@ export default function Settings() {
         const doc = dr.data as Record<string, unknown>;
         const next = rowsFromDropRulesApi(doc);
         setDropRulesRows(next.length > 0 ? next : [emptyDropRuleRow()]);
-        setDropRulesAdvancedJson(JSON.stringify(buildDropRulesPayload(next.length > 0 ? next : [emptyDropRuleRow()]), null, 2));
+        setDropRulesAdvancedJson(
+          JSON.stringify(
+            buildDropRulesPayload(next.length > 0 ? next : [emptyDropRuleRow()]),
+            null,
+            2,
+          ),
+        );
       } else {
         setDropRulesRows([emptyDropRuleRow()]);
         setDropRulesAdvancedJson(JSON.stringify({ version: 1, rules: [] }, null, 2));
@@ -185,6 +192,7 @@ export default function Settings() {
   }, [load]);
 
   async function save() {
+    if (!window.confirm(he.settings.confirmSaveProviders)) return;
     setErr(null);
     setMsg(null);
     const body: Record<string, unknown> = {
@@ -221,15 +229,17 @@ export default function Settings() {
       investment_portfolio: { enabled: invPortEn },
     };
 
-    const r = await putJson<{ ok?: boolean; error?: string; message?: string; config?: ProvidersApi }>(
-      '/api/providers-config',
-      body,
-    );
+    const r = await putJson<{
+      ok?: boolean;
+      error?: string;
+      message?: string;
+      config?: ProvidersApi;
+    }>('/api/providers-config', body);
     if (!r.ok || !r.data.ok) {
       setErr((r.data as { message?: string }).message || `Save failed (${r.status})`);
       return;
     }
-    setMsg('Saved.');
+    setMsg(he.settings.saved);
     if (r.data.config) setCfg(r.data.config);
     setBankPass('');
     setMaxPass('');
@@ -268,7 +278,7 @@ export default function Settings() {
     const rowsToSet = next.length > 0 ? next : [emptyDropRuleRow()];
     setDropRulesRows(rowsToSet);
     setDropRulesAdvancedJson(JSON.stringify(buildDropRulesPayload(rowsToSet), null, 2));
-    setDropRulesMsg('Table updated from JSON.');
+    setDropRulesMsg(he.settings.tableFromJson);
   }
 
   async function saveDropRules() {
@@ -281,20 +291,20 @@ export default function Settings() {
     }
     const body = buildDropRulesPayload(dropRulesRows);
     if (body.rules.length === 0) {
-      const ok = window.confirm(
-        'Save with zero rules? No workbook rows will be dropped by this list at compile time.',
-      );
+      const ok = window.confirm(he.settings.confirmZeroRules);
       if (!ok) return;
     }
-    const r = await putJson<{ ok?: boolean; error?: string; message?: string; config?: Record<string, unknown> }>(
-      '/api/transaction-drop-rules',
-      body,
-    );
+    const r = await putJson<{
+      ok?: boolean;
+      error?: string;
+      message?: string;
+      config?: Record<string, unknown>;
+    }>('/api/transaction-drop-rules', body);
     if (!r.ok || !r.data.ok) {
       setDropRulesErr((r.data as { message?: string }).message || `Save failed (${r.status})`);
       return;
     }
-    setDropRulesMsg('Transaction drop rules saved.');
+    setDropRulesMsg(he.settings.dropRulesSaved);
     if (r.data.config && typeof r.data.config === 'object') {
       const next = rowsFromDropRulesApi(r.data.config as Record<string, unknown>);
       setDropRulesRows(next.length > 0 ? next : [emptyDropRuleRow()]);
@@ -339,6 +349,7 @@ export default function Settings() {
   }
 
   async function importEnv() {
+    if (!window.confirm(he.settings.confirmImportEnv)) return;
     setErr(null);
     setMsg(null);
     const r = await postJson<{
@@ -358,23 +369,16 @@ export default function Settings() {
   }
 
   return (
-    <div className="pipe-page settings-page">
-      <header className="pipe-header">
-        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Providers, pipeline rules &amp; secrets</h1>
-      </header>
+    <PageShell title={he.settings.title} sub={he.settings.sub} width="narrow">
       {loading ? (
-        <p className="pipe-status settings-loading-banner" role="status">
-          Loading configuration from the server…
+        <p className="settings-loading-banner" role="status">
+          {he.settings.loading}
         </p>
       ) : null}
-      <p className="settings-hint">
-        Passwords are stored in <code>data/private/providers.json</code> (created on first save). Leave password
-        fields empty to keep the current value. Use &quot;Import from .env&quot; once if you are migrating from
-        legacy environment variables.
-      </p>
+      <p className="settings-hint">{he.settings.hint}</p>
       {cfg?.providers_file ? (
         <p className="settings-path">
-          <span className="muted">Resolved file:</span> <code>{cfg.providers_file}</code>
+          <span className="muted">{he.settings.resolvedFile}:</span> <code>{cfg.providers_file}</code>
         </p>
       ) : null}
       {err ? <p className="settings-error">{err}</p> : null}
@@ -382,15 +386,11 @@ export default function Settings() {
       {dropRulesErr ? <p className="settings-error">{dropRulesErr}</p> : null}
       {dropRulesMsg ? <p className="settings-msg">{dropRulesMsg}</p> : null}
 
-      <section className="settings-section card">
-        <h2>Bank portal</h2>
+      <section className="card">
+        <h2>{he.settings.bankPortal}</h2>
         <label className="settings-label">
-          Provider
-          <select
-            className="pipe-combo"
-            value={bankProvider}
-            onChange={(e) => setBankProvider(e.target.value)}
-          >
+          {he.settings.provider}
+          <select value={bankProvider} onChange={(e) => setBankProvider(e.target.value)}>
             {BANK_OPTIONS.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.label}
@@ -399,123 +399,144 @@ export default function Settings() {
           </select>
         </label>
         <label className="settings-label">
-          Username
+          {he.settings.username}
           <input
-            className="pipe-input-text settings-input-wide"
+            className="settings-input-wide"
             autoComplete="off"
             value={bankUser}
             onChange={(e) => setBankUser(e.target.value)}
           />
         </label>
         <label className="settings-label">
-          Password {cfg?.bank?.credentials?.password_set ? <span className="muted">(set)</span> : null}
+          {he.settings.password}{' '}
+          {cfg?.bank?.credentials?.password_set ? (
+            <span className="muted">{he.settings.passwordSet}</span>
+          ) : null}
           <input
-            className="pipe-input-text settings-input-wide"
+            className="settings-input-wide"
             type="password"
             autoComplete="new-password"
             value={bankPass}
             onChange={(e) => setBankPass(e.target.value)}
-            placeholder="leave blank to keep"
+            placeholder={he.settings.leaveBlank}
           />
         </label>
-        <label className="pipe-row">
+        <label className="settings-check">
           <input type="checkbox" checked={invPortEn} onChange={(e) => setInvPortEn(e.target.checked)} />
-          <span>Enable LTI trade portfolio fetch (uses same bank login; separate browser session from holdings)</span>
+          <span>{he.settings.enableLti}</span>
         </label>
       </section>
 
-      <section className="settings-section card">
-        <h2>Max (credit)</h2>
-        <label className="pipe-row">
+      <section className="card">
+        <h2>{he.settings.max}</h2>
+        <label className="settings-check">
           <input type="checkbox" checked={maxEn} onChange={(e) => setMaxEn(e.target.checked)} />
-          <span>Enabled for fetch</span>
+          <span>{he.settings.enabledFetch}</span>
         </label>
         <label className="settings-label">
-          Username
+          {he.settings.username}
           <input
-            className="pipe-input-text settings-input-wide"
+            className="settings-input-wide"
             autoComplete="off"
             value={maxUser}
             onChange={(e) => setMaxUser(e.target.value)}
           />
         </label>
         <label className="settings-label">
-          Password{' '}
+          {he.settings.password}{' '}
           {(cfg?.credit_cards ?? []).find((c) => c.id === 'max')?.credentials?.password_set ? (
-            <span className="muted">(set)</span>
+            <span className="muted">{he.settings.passwordSet}</span>
           ) : null}
           <input
-            className="pipe-input-text settings-input-wide"
+            className="settings-input-wide"
             type="password"
             autoComplete="new-password"
             value={maxPass}
             onChange={(e) => setMaxPass(e.target.value)}
-            placeholder="leave blank to keep"
+            placeholder={he.settings.leaveBlank}
           />
         </label>
       </section>
 
-      <section className="settings-section card">
-        <h2>Isracard</h2>
-        <label className="pipe-row">
+      <section className="card">
+        <h2>{he.settings.isracard}</h2>
+        <label className="settings-check">
           <input type="checkbox" checked={isrEn} onChange={(e) => setIsrEn(e.target.checked)} />
-          <span>Enabled for fetch</span>
+          <span>{he.settings.enabledFetch}</span>
         </label>
         <label className="settings-label">
-          Username
+          {he.settings.username}
           <input
-            className="pipe-input-text settings-input-wide"
+            className="settings-input-wide"
             autoComplete="off"
             value={isrUser}
             onChange={(e) => setIsrUser(e.target.value)}
           />
         </label>
         <label className="settings-label">
-          Password{' '}
+          {he.settings.password}{' '}
           {(cfg?.credit_cards ?? []).find((c) => c.id === 'isracard')?.credentials?.password_set ? (
-            <span className="muted">(set)</span>
+            <span className="muted">{he.settings.passwordSet}</span>
           ) : null}
           <input
-            className="pipe-input-text settings-input-wide"
+            className="settings-input-wide"
             type="password"
             autoComplete="new-password"
             value={isrPass}
             onChange={(e) => setIsrPass(e.target.value)}
-            placeholder="leave blank to keep"
+            placeholder={he.settings.leaveBlank}
           />
         </label>
         <label className="settings-label">
-          Last 6 digits{' '}
+          {he.settings.last6}{' '}
           {(cfg?.credit_cards ?? []).find((c) => c.id === 'isracard')?.credentials?.last6_set ? (
-            <span className="muted">(set)</span>
+            <span className="muted">{he.settings.passwordSet}</span>
           ) : null}
           <input
-            className="pipe-input-text settings-input-narrow"
+            className="settings-input-narrow"
             autoComplete="off"
             value={isrLast6}
             onChange={(e) => setIsrLast6(e.target.value)}
-            placeholder="leave blank to keep"
+            placeholder={he.settings.leaveBlank}
             maxLength={6}
           />
         </label>
       </section>
 
-      <section className="settings-section card">
-        <h2>Transaction drop rules</h2>
-        <p className="settings-hint">
-          Stored in <code>data/private/transaction_drop_rules.json</code> (created on first use). Each rule removes
-          workbook rows where the column exactly equals the value before compile. Wildcards are not special.
-        </p>
+      <section className="card">
+        <h2>{he.settings.sheets}</h2>
+        <label className="settings-label">
+          {he.settings.saPath}
+          <input
+            className="settings-input-wide"
+            value={gPath}
+            onChange={(e) => setGPath(e.target.value)}
+            placeholder="e.g. data/static/your-project.json"
+          />
+        </label>
+        <label className="settings-label">
+          {he.settings.spreadsheetId}
+          <input
+            className="settings-input-wide"
+            value={gSheet}
+            onChange={(e) => setGSheet(e.target.value)}
+          />
+        </label>
+      </section>
+
+      <section className="card">
+        <h2>{he.settings.dropRules}</h2>
+        <p className="settings-hint">{he.settings.dropRulesHint}</p>
         <div className="settings-drop-rules-toolbar">
-          <button type="button" className="settings-btn-secondary" onClick={addDropRuleRow}>
-            Add rule
+          <button type="button" className="secondary" onClick={addDropRuleRow}>
+            {he.settings.addRule}
           </button>
-          <button type="button" className="settings-btn-secondary" onClick={removeEmptyDropRuleRows}>
-            Remove empty rows
+          <button type="button" className="secondary" onClick={removeEmptyDropRuleRows}>
+            {he.settings.removeEmpty}
           </button>
         </div>
         {dropRulesRows.length === 0 ? (
-          <p className="settings-drop-rules-empty">No rows loaded yet.</p>
+          <p className="settings-drop-rules-empty">{he.dashboard.empty}</p>
         ) : (
           <div className="settings-drop-rules-list">
             {dropRulesRows.map((row, idx) => (
@@ -523,122 +544,105 @@ export default function Settings() {
                 key={row.key}
                 className={`settings-drop-rule-row${rowLooksIncomplete(row) ? ' settings-drop-rule-row--invalid' : ''}`}
               >
-                <span className="settings-drop-rule-num">Rule {idx + 1}</span>
+                <span className="settings-drop-rule-num">
+                  {he.settings.ruleN} {idx + 1}
+                </span>
                 <div className="settings-drop-rule-fields">
-                  <label className="settings-label" style={{ margin: 0 }}>
-                    Column
+                  <label className="settings-label">
+                    {he.settings.column}
                     <input
-                      className="pipe-input-text settings-input-wide"
+                      className="settings-input-wide"
                       spellCheck={false}
                       value={row.column}
                       onChange={(e) => updateDropRuleRow(row.key, { column: e.target.value })}
-                      placeholder="e.g. מקור עסקה"
+                      placeholder="מקור עסקה"
                     />
                   </label>
-                  <label className="settings-label" style={{ margin: 0 }}>
-                    Value
+                  <label className="settings-label">
+                    {he.settings.value}
                     <input
-                      className="pipe-input-text settings-input-wide mono"
+                      className="settings-input-wide mono"
                       spellCheck={false}
                       value={row.value}
                       onChange={(e) => updateDropRuleRow(row.key, { value: e.target.value })}
-                      placeholder="exact cell text to drop"
                     />
                   </label>
                 </div>
                 <div className="settings-drop-rule-actions">
                   <button
                     type="button"
-                    className="settings-btn-secondary"
-                    title="Move up"
+                    className="secondary"
+                    title={he.settings.up}
                     disabled={idx === 0}
                     onClick={() => moveDropRuleRow(row.key, -1)}
                   >
-                    Up
+                    {he.settings.up}
                   </button>
                   <button
                     type="button"
-                    className="settings-btn-secondary"
-                    title="Move down"
+                    className="secondary"
+                    title={he.settings.down}
                     disabled={idx === dropRulesRows.length - 1}
                     onClick={() => moveDropRuleRow(row.key, 1)}
                   >
-                    Down
+                    {he.settings.down}
                   </button>
-                  <button type="button" className="settings-btn-secondary" onClick={() => removeDropRuleRow(row.key)}>
-                    Remove
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => removeDropRuleRow(row.key)}
+                  >
+                    {he.settings.remove}
                   </button>
                 </div>
               </div>
             ))}
           </div>
         )}
-        <div className="settings-actions" style={{ marginTop: '0.75rem' }}>
-          <button type="button" className="settings-btn-primary" onClick={() => void saveDropRules()}>
-            Save drop rules
+        <div className="settings-actions settings-actions--inline">
+          <button type="button" onClick={() => void saveDropRules()}>
+            {he.settings.saveDropRules}
           </button>
         </div>
         <details className="settings-drop-rules-advanced">
-          <summary>Advanced: edit as JSON</summary>
+          <summary>{he.settings.advancedJson}</summary>
           <div className="settings-drop-rules-advanced-inner">
             <p className="settings-hint" style={{ marginTop: 0 }}>
-              Paste or edit the full document, then apply to the table. Save drop rules still sends the table state
-              (use Save after applying if needed).
+              {he.settings.advancedJsonHint}
             </p>
             <div className="settings-drop-rules-toolbar">
               <button
                 type="button"
-                className="settings-btn-secondary"
+                className="secondary"
                 onClick={() => syncAdvancedJsonFromRows(dropRulesRows)}
               >
-                Load current rules into editor
+                {he.settings.loadJson}
               </button>
-              <button type="button" className="settings-btn-secondary" onClick={applyJsonToDropRulesTable}>
-                Apply JSON to table
+              <button type="button" className="secondary" onClick={applyJsonToDropRulesTable}>
+                {he.settings.applyJson}
               </button>
             </div>
             <textarea
               value={dropRulesAdvancedJson}
               onChange={(e) => setDropRulesAdvancedJson(e.target.value)}
               spellCheck={false}
-              aria-label="Transaction drop rules JSON"
+              aria-label={he.settings.advancedJson}
             />
           </div>
         </details>
       </section>
 
-      <section className="settings-section card">
-        <h2>Google Sheets</h2>
-        <label className="settings-label">
-          Service account JSON path
-          <input
-            className="pipe-input-text settings-input-wide"
-            value={gPath}
-            onChange={(e) => setGPath(e.target.value)}
-            placeholder="e.g. data/static/your-project.json"
-          />
-        </label>
-        <label className="settings-label">
-          Spreadsheet ID
-          <input
-            className="pipe-input-text settings-input-wide"
-            value={gSheet}
-            onChange={(e) => setGSheet(e.target.value)}
-          />
-        </label>
-      </section>
-
       <div className="settings-actions">
-        <button type="button" className="settings-btn-primary" onClick={() => void save()}>
-          Save
+        <button type="button" onClick={() => void save()}>
+          {he.settings.save}
         </button>
-        <button type="button" className="settings-btn-secondary" onClick={() => void load()}>
-          Reload
+        <button type="button" className="secondary" onClick={() => void load()}>
+          {he.settings.reload}
         </button>
-        <button type="button" className="settings-btn-secondary" onClick={() => void importEnv()}>
-          Import from .env
+        <button type="button" className="secondary" onClick={() => void importEnv()}>
+          {he.settings.importEnv}
         </button>
       </div>
-    </div>
+    </PageShell>
   );
 }

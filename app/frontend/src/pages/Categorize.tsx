@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import PageShell from '../components/PageShell';
 import { fetchJson, postJson } from '../lib/api';
+import { he } from '../lib/he';
 
 import './Categorize.css';
 
@@ -133,42 +135,19 @@ function esc(s: unknown): string {
   return String(s);
 }
 
-function idSafe(s: string): string {
-  return String(s).replace(/[^a-zA-Z0-9_-]/g, '_');
+function resolveCategory(picked: string | null, custom: string): string {
+  const c = custom.trim();
+  if (c) return c;
+  return (picked ?? '').trim();
 }
 
-function readPickedCategory(pickName: string): string {
-  const custom = (document.getElementById(`${pickName}-custom`) as HTMLInputElement | null)?.value.trim() ?? '';
-  if (custom) return custom;
-  const wrap = document.querySelector(`[data-cat-pick="${pickName}"]`);
-  if (!wrap) return '';
-  const sel = wrap.querySelector('.categorize-cat-badge--selected');
-  return sel?.textContent?.trim() ?? '';
-}
-
-function readTxnNotes(textareaId: string): string {
-  const raw = (document.getElementById(textareaId) as HTMLTextAreaElement | null)?.value ?? '';
-  const t = raw.trim();
+function clipNotes(notes: string): string {
+  const t = notes.trim();
   return t.length > 8000 ? t.slice(0, 8000) : t;
-}
-
-function clearTxnNotesField(textareaId: string): void {
-  const el = document.getElementById(textareaId) as HTMLTextAreaElement | null;
-  if (el) el.value = '';
 }
 
 function scrollCategorizePageToTop(): void {
   window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-/** Read ``is_static`` (0 or 1) from mapping-type radio group ``name``, or ``null`` if none selected. */
-function readMappingIsStatic(groupName: string): 0 | 1 | null {
-  const el = document.querySelector(
-    `input[type="radio"][name=${JSON.stringify(groupName)}]:checked`,
-  ) as HTMLInputElement | null;
-  if (!el?.value) return null;
-  const v = parseInt(el.value, 10);
-  return v === 0 ? 0 : 1;
 }
 
 function DiscardTrashIcon() {
@@ -202,11 +181,11 @@ function DiscardTxnButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       className="categorize-discard-btn categorize-discard-btn--footer"
-      title="Exclude from totals and add a compile-time drop rule for this source"
+      title={he.categorize.discard}
       onClick={onClick}
     >
       <DiscardTrashIcon />
-      <span>Discard</span>
+      <span>{he.categorize.discard}</span>
     </button>
   );
 }
@@ -239,12 +218,10 @@ function CategorySuggestions({
 }) {
   if (!suggestions.length) return null;
   return (
-    <section className="categorize-suggestions" aria-label="Suggested categories">
-      <p className="categorize-suggestions-title">Suggested</p>
-      <p className="hint categorize-suggestions-hint">
-        Vote share among the 15 most similar past transactions (not accuracy).
-      </p>
-      <div className="categorize-suggestions-badges" role="group" aria-label="Suggested categories">
+    <section className="categorize-suggestions" aria-label={he.categorize.suggestions}>
+      <p className="categorize-suggestions-title">{he.categorize.suggestions}</p>
+      <p className="hint categorize-suggestions-hint">{he.categorize.suggestionsHint}</p>
+      <div className="categorize-suggestions-badges" role="group" aria-label={he.categorize.suggestions}>
         {suggestions.map((s) => {
           const isSelected = selectedCategory === s.category;
           return (
@@ -272,21 +249,21 @@ function CategorySuggestions({
 }
 
 function CategoryBadgePick({
-  name,
   options,
-  initialPick,
+  picked,
+  custom,
+  onPick,
+  onCustomChange,
   categoryColumns,
-  pickTrigger,
-  onPickedChange,
   hoveredCategory,
   onHoverCategory,
 }: {
-  name: string;
   options: string[];
-  initialPick?: string;
+  picked: string | null;
+  custom: string;
+  onPick: (category: string) => void;
+  onCustomChange: (value: string) => void;
   categoryColumns?: CategoryColumnsPayload | null;
-  pickTrigger?: { category: string; nonce: number } | null;
-  onPickedChange?: (category: string | null) => void;
   hoveredCategory?: string | null;
   onHoverCategory?: (category: string | null) => void;
 }) {
@@ -299,9 +276,7 @@ function CategoryBadgePick({
     return [...s].sort((a, b) => a.localeCompare(b));
   }, [options]);
 
-  const useGrouped = Boolean(
-    categoryColumns?.columns && categoryColumns.columns.length > 0,
-  );
+  const useGrouped = Boolean(categoryColumns?.columns && categoryColumns.columns.length > 0);
 
   const grouped = useMemo(() => {
     if (!useGrouped || !categoryColumns) return null;
@@ -321,40 +296,16 @@ function CategoryBadgePick({
     return { cols, unBlock };
   }, [useGrouped, categoryColumns, sorted]);
 
-  const [picked, setPicked] = useState<string | null>(null);
-  const customId = `${name}-custom`;
-
-  useEffect(() => {
-    const t = (initialPick || '').trim();
-    if (t && sorted.includes(t)) setPicked(t);
-  }, [initialPick, sorted]);
-
-  const pickCategory = (c: string) => {
-    setPicked(c);
-    onPickedChange?.(c);
-    const el = document.getElementById(customId) as HTMLInputElement | null;
-    if (el) el.value = '';
-  };
-
-  useEffect(() => {
-    if (!pickTrigger) return;
-    const t = pickTrigger.category.trim();
-    if (!t) return;
-    if (sorted.includes(t)) {
-      setPicked(t);
-      const el = document.getElementById(customId) as HTMLInputElement | null;
-      if (el) el.value = '';
-    }
-  }, [pickTrigger, sorted, customId]);
+  const effectivePicked = custom.trim() ? null : picked;
 
   return (
-    <div className="categorize-cat-pick" data-cat-pick={name}>
+    <div className="categorize-cat-pick">
       <p className="categorize-cat-count">
         {sorted.length} {sorted.length === 1 ? 'category' : 'categories'}
         {useGrouped && grouped ? ' (grouped)' : ' (sorted A–Z)'}
       </p>
       {useGrouped && grouped ? (
-        <div className="categorize-cat-groups" role="group" aria-label="Pick a category">
+        <div className="categorize-cat-groups" role="group" aria-label={he.categorize.pickCategory}>
           {grouped.cols.map((col) =>
             col.subs.length === 0 ? null : (
               <div key={col.top_name} className="categorize-cat-group">
@@ -364,9 +315,9 @@ function CategoryBadgePick({
                     <button
                       key={c}
                       type="button"
-                      className={categoryBadgeClassName(c, picked, hoveredCategory)}
+                      className={categoryBadgeClassName(c, effectivePicked, hoveredCategory)}
                       onMouseEnter={() => onHoverCategory?.(c)}
-                      onClick={() => pickCategory(c)}
+                      onClick={() => onPick(c)}
                     >
                       {c}
                     </button>
@@ -383,9 +334,9 @@ function CategoryBadgePick({
                   <button
                     key={c}
                     type="button"
-                    className={categoryBadgeClassName(c, picked, hoveredCategory)}
+                    className={categoryBadgeClassName(c, effectivePicked, hoveredCategory)}
                     onMouseEnter={() => onHoverCategory?.(c)}
-                    onClick={() => pickCategory(c)}
+                    onClick={() => onPick(c)}
                   >
                     {c}
                   </button>
@@ -395,66 +346,82 @@ function CategoryBadgePick({
           ) : null}
         </div>
       ) : (
-        <div className="categorize-cat-badges" role="group" aria-label="Pick a category">
+        <div className="categorize-cat-badges" role="group" aria-label={he.categorize.pickCategory}>
           {sorted.map((c) => (
             <button
               key={c}
               type="button"
-              className={categoryBadgeClassName(c, picked, hoveredCategory)}
+              className={categoryBadgeClassName(c, effectivePicked, hoveredCategory)}
               onMouseEnter={() => onHoverCategory?.(c)}
-              onClick={() => pickCategory(c)}
+              onClick={() => onPick(c)}
             >
               {c}
             </button>
           ))}
         </div>
       )}
-      <label className="categorize-cat-custom-label" htmlFor={customId}>
-        Or type a category
-      </label>
+      <label className="categorize-cat-custom-label">{he.categorize.customCategory}</label>
       <input
-        id={customId}
         className="categorize-cat-custom"
         type="text"
         autoComplete="off"
-        placeholder="Name not in the list above"
-        onChange={(e) => {
-          if (e.target.value.trim()) {
-            setPicked(null);
-            onPickedChange?.(null);
-          }
-        }}
+        placeholder={he.categorize.customCategory}
+        value={custom}
+        onChange={(e) => onCustomChange(e.target.value)}
       />
     </div>
   );
 }
 
-function MappingTypeBlock({ groupName }: { groupName: string }) {
-  const staticId = `${groupName}-map-static`;
-  const dynamicId = `${groupName}-map-dynamic`;
+function MappingTypeBlock({
+  idPrefix,
+  value,
+  onChange,
+}: {
+  idPrefix: string;
+  value: 0 | 1 | null;
+  onChange: (v: 0 | 1) => void;
+}) {
+  const staticId = `${idPrefix}-map-static`;
+  const dynamicId = `${idPrefix}-map-dynamic`;
   return (
     <fieldset className="categorize-mapping-block categorize-mapping-radios" aria-required="true">
       <legend className="categorize-mapping-legend">Mapping type (required)</legend>
       <p className="hint categorize-mapping-help">
-        <strong>Static</strong> — this payee name is tied to one category for good: new ledger rows with the same payee
-        get this category automatically (after compile / auto-categorize), and other uncategorized rows for that payee
-        can be forward-filled when you save. Use for subscriptions or merchants that should never change category.{' '}
-        <br />
-        <strong>Dynamic</strong> — only this row is labeled now; you can map the same payee to different categories on
-        other rows. The app keeps several (store, category) pairs per payee and will keep asking when it is unsure.
+        <strong>{he.categorize.staticMapping}</strong> — this payee name is tied to one category for good: new ledger
+        rows with the same payee get this category automatically (after compile / auto-categorize), and other
+        uncategorized rows for that payee can be forward-filled when you save. Use for subscriptions or merchants that
+        should never change category. <br />
+        <strong>{he.categorize.dynamicMapping}</strong> — only this row is labeled now; you can map the same payee to
+        different categories on other rows. The app keeps several (store, category) pairs per payee and will keep asking
+        when it is unsure.
       </p>
       <div className="categorize-mapping-radio-options" role="presentation">
         <label className="categorize-mapping-radio-tile" htmlFor={staticId}>
-          <input type="radio" name={groupName} id={staticId} value="1" />
+          <input
+            type="radio"
+            name={idPrefix}
+            id={staticId}
+            value="1"
+            checked={value === 1}
+            onChange={() => onChange(1)}
+          />
           <span className="categorize-mapping-radio-tile-body">
-            <span className="categorize-mapping-radio-title">Static</span>
+            <span className="categorize-mapping-radio-title">{he.categorize.staticMapping}</span>
             <span className="categorize-mapping-radio-desc">Always use this category for this payee.</span>
           </span>
         </label>
         <label className="categorize-mapping-radio-tile" htmlFor={dynamicId}>
-          <input type="radio" name={groupName} id={dynamicId} value="0" />
+          <input
+            type="radio"
+            name={idPrefix}
+            id={dynamicId}
+            value="0"
+            checked={value === 0}
+            onChange={() => onChange(0)}
+          />
           <span className="categorize-mapping-radio-tile-body">
-            <span className="categorize-mapping-radio-title">Dynamic</span>
+            <span className="categorize-mapping-radio-title">{he.categorize.dynamicMapping}</span>
             <span className="categorize-mapping-radio-desc">Pick per row; multiple categories allowed.</span>
           </span>
         </label>
@@ -463,12 +430,27 @@ function MappingTypeBlock({ groupName }: { groupName: string }) {
   );
 }
 
-function TxnNotesField({ id, defaultNotes }: { id: string; defaultNotes: string }) {
+function TxnNotesField({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   return (
     <div className="categorize-notes-field">
-      <label htmlFor={id}>Transaction notes</label>
+      <label htmlFor={id}>{he.categorize.notes}</label>
       <p className="hint">Saved on this ledger row with the category (does not change the payee mapping).</p>
-      <textarea id={id} className="categorize-notes-input" rows={3} defaultValue={defaultNotes} spellCheck={true} />
+      <textarea
+        id={id}
+        className="categorize-notes-input"
+        rows={3}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        spellCheck={true}
+      />
     </div>
   );
 }
@@ -538,7 +520,11 @@ function PayeeStoreMappings({ data }: { data: Pending }) {
             <li key={`${r.category}-${i}`}>
               <span className="mono">{esc(r.category)}</span>
               <span className="categorize-payee-flag">
-                {r.is_static === 1 ? ' — Static' : r.is_static === 0 ? ' — Dynamic' : ' — Uncertain flag'}
+                {r.is_static === 1
+                  ? ` — ${he.categorize.staticMapping}`
+                  : r.is_static === 0
+                    ? ` — ${he.categorize.dynamicMapping}`
+                    : ' — Uncertain flag'}
               </span>
             </li>
           ))}
@@ -566,6 +552,198 @@ function TransactionDetails({ data }: { data: Pending }) {
   );
 }
 
+type HistoryHandlers = {
+  sessionCats: string[];
+  categoryColumns?: CategoryColumnsPayload;
+  onRevise: (body: Record<string, unknown>) => void;
+  onStatus: (msg: string) => void;
+};
+
+function HistoryFluidItem({ item, sessionCats, categoryColumns, onRevise, onStatus }: HistoryHandlers & { item: HistoryItem }) {
+  const [category, setCategory] = useState<string | null>(item.response?.category ?? null);
+  const [custom, setCustom] = useState('');
+  const [notes, setNotes] = useState('');
+  const opts = useMemo(
+    () =>
+      mergeCategoryOptions(sessionCats, {
+        kind: 'fluid',
+        dynamic_categories: [],
+        all_categories: [],
+      } as Pending),
+    [sessionCats],
+  );
+
+  const pick = (c: string) => {
+    setCategory(c);
+    setCustom('');
+  };
+
+  return (
+    <div className="hist-item">
+      <p className="mono">{esc(item.store_name)}</p>
+      <CategoryBadgePick
+        options={opts}
+        picked={category}
+        custom={custom}
+        onPick={pick}
+        onCustomChange={(v) => {
+          setCustom(v);
+          if (v.trim()) setCategory(null);
+        }}
+        categoryColumns={categoryColumns}
+      />
+      <TxnNotesField id={`hist-notes-fluid-${item.prompt_id}`} value={notes} onChange={setNotes} />
+      <button
+        type="button"
+        className="small secondary"
+        onClick={() => {
+          const cat = resolveCategory(category, custom);
+          if (!cat) {
+            onStatus(he.categorize.pickCategory);
+            return;
+          }
+          onRevise({
+            kind: 'fluid',
+            prompt_id: item.prompt_id,
+            category: cat,
+            notes: clipNotes(notes),
+          });
+          setNotes('');
+        }}
+      >
+        Update category
+      </button>
+    </div>
+  );
+}
+
+function HistoryNewStoreItem({
+  item,
+  sessionCats,
+  categoryColumns,
+  onRevise,
+  onStatus,
+}: HistoryHandlers & { item: HistoryItem }) {
+  const initialStatic =
+    item.response?.is_static === 0 || item.response?.is_static === 1
+      ? (item.response.is_static as 0 | 1)
+      : null;
+  const [category, setCategory] = useState<string | null>(item.response?.category ?? null);
+  const [custom, setCustom] = useState('');
+  const [notes, setNotes] = useState('');
+  const [isStatic, setIsStatic] = useState<0 | 1 | null>(initialStatic);
+  const opts = useMemo(
+    () =>
+      mergeCategoryOptions(sessionCats, {
+        kind: 'new_store',
+        all_categories: [],
+      } as Pending),
+    [sessionCats],
+  );
+
+  const pick = (c: string) => {
+    setCategory(c);
+    setCustom('');
+  };
+
+  return (
+    <div className="hist-item">
+      <p className="mono">
+        {esc(item.store_name)} <span className="hint">(new payee)</span>
+      </p>
+      <CategoryBadgePick
+        options={opts}
+        picked={category}
+        custom={custom}
+        onPick={pick}
+        onCustomChange={(v) => {
+          setCustom(v);
+          if (v.trim()) setCategory(null);
+        }}
+        categoryColumns={categoryColumns}
+      />
+      <MappingTypeBlock idPrefix={`hnst-${item.prompt_id}`} value={isStatic} onChange={setIsStatic} />
+      <TxnNotesField id={`hist-notes-new-${item.prompt_id}`} value={notes} onChange={setNotes} />
+      <button
+        type="button"
+        className="small secondary"
+        onClick={() => {
+          const cat = resolveCategory(category, custom);
+          if (!cat) {
+            onStatus(he.categorize.pickCategory);
+            return;
+          }
+          if (isStatic === null) {
+            onStatus(`${he.categorize.staticMapping} / ${he.categorize.dynamicMapping}`);
+            return;
+          }
+          onRevise({
+            kind: 'new_store',
+            prompt_id: item.prompt_id,
+            category: cat,
+            is_static: isStatic,
+            notes: clipNotes(notes),
+          });
+          setNotes('');
+        }}
+      >
+        Update
+      </button>
+    </div>
+  );
+}
+
+function HistoryResolveStaticItem({
+  item,
+  onRevise,
+}: {
+  item: HistoryItem;
+  onRevise: (body: Record<string, unknown>) => void;
+}) {
+  const [notes, setNotes] = useState('');
+
+  return (
+    <div className="hist-item">
+      <p>
+        <span className="mono">{esc(item.store_name)}</span> — <span className="mono">{esc(item.category)}</span>
+      </p>
+      <TxnNotesField id={`hist-notes-rs-${item.prompt_id}`} value={notes} onChange={setNotes} />
+      <div className="row2">
+        <button
+          type="button"
+          className="small secondary"
+          onClick={() => {
+            onRevise({
+              kind: 'resolve_static',
+              prompt_id: item.prompt_id,
+              is_static: 0,
+              notes: clipNotes(notes),
+            });
+            setNotes('');
+          }}
+        >
+          {he.categorize.dynamicMapping}
+        </button>
+        <button
+          type="button"
+          className="small"
+          onClick={() => {
+            onRevise({
+              kind: 'resolve_static',
+              prompt_id: item.prompt_id,
+              is_static: 1,
+              notes: clipNotes(notes),
+            });
+            setNotes('');
+          }}
+        >
+          {he.categorize.staticMapping}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Categorize() {
   const [payload, setPayload] = useState<CatApi>({
     pending: { kind: 'idle' },
@@ -573,9 +751,12 @@ export default function Categorize() {
     session_categories: [],
   });
   const [status, setStatus] = useState('');
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
-  const [pickNonce, setPickNonce] = useState(0);
+
+  const [mainCategory, setMainCategory] = useState<string | null>(null);
+  const [mainCustom, setMainCustom] = useState('');
+  const [mainNotes, setMainNotes] = useState('');
+  const [mainIsStatic, setMainIsStatic] = useState<0 | 1 | null>(null);
 
   const fetchNext = useCallback(async () => {
     try {
@@ -592,7 +773,7 @@ export default function Categorize() {
     void fetchNext();
   }, [fetchNext]);
 
-  const postRevise = async (body: Record<string, unknown>, opts?: { clearNotesId?: string }) => {
+  const postRevise = async (body: Record<string, unknown>) => {
     setStatus('Updating…');
     try {
       const r = await fetchJson(`${CAT}/api/revise`, {
@@ -603,13 +784,12 @@ export default function Categorize() {
       if (!r.ok) throw new Error((r.data as { error?: string })?.error || r.status.toString());
       setStatus('Updated.');
       await fetchNext();
-      if (opts?.clearNotesId) clearTxnNotesField(opts.clearNotesId);
     } catch (e) {
       setStatus(`Error: ${e}`);
     }
   };
 
-  const submit = async (body: Record<string, unknown>, opts?: { clearNotesId?: string }) => {
+  const submit = async (body: Record<string, unknown>) => {
     setStatus('Saving…');
     scrollCategorizePageToTop();
     try {
@@ -619,18 +799,17 @@ export default function Categorize() {
         body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error((r.data as { error?: string })?.error || r.status.toString());
-      setActiveCategory(null);
       setHoveredCategory(null);
       setPayload((prev) => ({ ...prev, pending: { kind: 'idle' } }));
       setStatus('Saved.');
       await fetchNext();
-      if (opts?.clearNotesId) clearTxnNotesField(opts.clearNotesId);
     } catch (e) {
       setStatus(`Error: ${e}`);
     }
   };
 
   const postDiscard = async (promptId: string) => {
+    if (!window.confirm(he.categorize.discardConfirm)) return;
     setStatus('Discarding…');
     try {
       const r = await postJson<{ ok?: boolean; error?: string }>(`${CAT}/api/discard`, { prompt_id: promptId });
@@ -655,16 +834,24 @@ export default function Categorize() {
   const pendingPromptId = p.kind !== 'idle' ? String(p.prompt_id ?? '') : '';
 
   useEffect(() => {
-    setActiveCategory(null);
+    setMainCategory(null);
+    setMainCustom('');
+    setMainNotes(p.kind !== 'idle' ? esc(p.notes) : '');
+    setMainIsStatic(null);
     setHoveredCategory(null);
+    // Reset form when the pending prompt changes; notes seed from that prompt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset on prompt id
   }, [pendingPromptId]);
 
-  const pickFromSuggestion = (category: string) => {
-    setActiveCategory(category);
-    setPickNonce(Date.now());
+  const pickMain = (category: string) => {
+    setMainCategory(category);
+    setMainCustom('');
   };
 
-  const categoryPickTrigger = activeCategory ? { category: activeCategory, nonce: pickNonce } : null;
+  const onMainCustomChange = (value: string) => {
+    setMainCustom(value);
+    if (value.trim()) setMainCategory(null);
+  };
 
   const queueMeta =
     typeof payload.open_count === 'number' ? (
@@ -674,161 +861,26 @@ export default function Categorize() {
         }`}
       >
         {payload.open_count === 0
-          ? 'Nothing waiting in the categorize queue.'
-          : `${payload.open_count} transaction(s) still need a category.`}
+          ? he.categorize.queueClear
+          : `${payload.open_count} · ${he.categorize.queuePending}`}
       </p>
     ) : null;
 
+  const historyHandlers: HistoryHandlers = {
+    sessionCats,
+    categoryColumns,
+    onRevise: (body) => void postRevise(body),
+    onStatus: setStatus,
+  };
+
+  const suggestions = Array.isArray(p.category_suggestions) ? p.category_suggestions : [];
+  const selectedForSuggestions = mainCustom.trim() ? null : mainCategory;
+
   return (
-    <div className="app-page app-page--narrow categorize-page">
-      <h1>Manual categorization</h1>
+    <PageShell title={he.categorize.title} sub={he.categorize.sub} width="narrow" className="categorize-page">
       {queueMeta}
 
-      {history.length > 0 && (
-        <section className="categorize-card">
-          <h2>This session (you can correct answers)</h2>
-          {history.map((item) => {
-            const hid = idSafe(item.prompt_id);
-            const histFluidOpts = mergeCategoryOptions(
-              sessionCats,
-              { kind: 'fluid', dynamic_categories: [], all_categories: [] } as Pending,
-            );
-            return (
-              <div key={item.prompt_id} className="hist-item">
-                {item.kind === 'fluid' && (
-                  <>
-                    <p className="mono">{esc(item.store_name)}</p>
-                    <CategoryBadgePick
-                      key={`hb-${item.prompt_id}`}
-                      name={`hist-fluid-${hid}`}
-                      options={histFluidOpts}
-                      initialPick={item.response?.category}
-                      categoryColumns={categoryColumns}
-                    />
-                    <TxnNotesField id={`hist-notes-fluid-${hid}`} defaultNotes="" />
-                    <button
-                      type="button"
-                      className="small secondary"
-                      onClick={() => {
-                        const cat = readPickedCategory(`hist-fluid-${hid}`);
-                        if (!cat) {
-                          setStatus('Choose a category');
-                          return;
-                        }
-                        void postRevise(
-                          {
-                            kind: 'fluid',
-                            prompt_id: item.prompt_id,
-                            category: cat,
-                            notes: readTxnNotes(`hist-notes-fluid-${hid}`),
-                          },
-                          { clearNotesId: `hist-notes-fluid-${hid}` },
-                        );
-                      }}
-                    >
-                      Update category
-                    </button>
-                  </>
-                )}
-                {item.kind === 'new_store' && (
-                  <>
-                    <p className="mono">
-                      {esc(item.store_name)} <span className="hint">(new payee)</span>
-                    </p>
-                    <CategoryBadgePick
-                      key={`hn-${item.prompt_id}`}
-                      name={`hist-new-${hid}`}
-                      options={mergeCategoryOptions(sessionCats, {
-                        kind: 'new_store',
-                        all_categories: [],
-                      } as Pending)}
-                      initialPick={item.response?.category}
-                      categoryColumns={categoryColumns}
-                    />
-                    <MappingTypeBlock key={`map-hnst-${item.prompt_id}`} groupName={`hnst-${hid}`} />
-                    <TxnNotesField id={`hist-notes-new-${hid}`} defaultNotes="" />
-                    <button
-                      type="button"
-                      className="small secondary"
-                      onClick={() => {
-                        const cat = readPickedCategory(`hist-new-${hid}`);
-                        if (!cat) {
-                          setStatus('Choose a category');
-                          return;
-                        }
-                        const is_static = readMappingIsStatic(`hnst-${hid}`);
-                        if (is_static === null) {
-                          setStatus('Choose Static or Dynamic mapping');
-                          return;
-                        }
-                        void postRevise(
-                          {
-                            kind: 'new_store',
-                            prompt_id: item.prompt_id,
-                            category: cat,
-                            is_static,
-                            notes: readTxnNotes(`hist-notes-new-${hid}`),
-                          },
-                          { clearNotesId: `hist-notes-new-${hid}` },
-                        );
-                      }}
-                    >
-                      Update
-                    </button>
-                  </>
-                )}
-                {item.kind === 'resolve_static' && (
-                  <>
-                    <p>
-                      <span className="mono">{esc(item.store_name)}</span> —{' '}
-                      <span className="mono">{esc(item.category)}</span>
-                    </p>
-                    <TxnNotesField id={`hist-notes-rs-${hid}`} defaultNotes="" />
-                    <div className="row2">
-                      <button
-                        type="button"
-                        className="small secondary"
-                        onClick={() =>
-                          void postRevise(
-                            {
-                              kind: 'resolve_static',
-                              prompt_id: item.prompt_id,
-                              is_static: 0,
-                              notes: readTxnNotes(`hist-notes-rs-${hid}`),
-                            },
-                            { clearNotesId: `hist-notes-rs-${hid}` },
-                          )
-                        }
-                      >
-                        Dynamic
-                      </button>
-                      <button
-                        type="button"
-                        className="small"
-                        onClick={() =>
-                          void postRevise(
-                            {
-                              kind: 'resolve_static',
-                              prompt_id: item.prompt_id,
-                              is_static: 1,
-                              notes: readTxnNotes(`hist-notes-rs-${hid}`),
-                            },
-                            { clearNotesId: `hist-notes-rs-${hid}` },
-                          )
-                        }
-                      >
-                        Static
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </section>
-      )}
-
-      <section className="categorize-card">
+      <section className="categorize-card categorize-card--hero">
         {payload.error && p.kind === 'idle' && (
           <p className="hint" role="alert">
             Queue: {esc(payload.error)}
@@ -836,7 +888,7 @@ export default function Categorize() {
         )}
         {!p || p.kind === 'idle' ? (
           <>
-            <p>No transaction is waiting for a category right now.</p>
+            <p>{he.categorize.queueClear}</p>
             <p className="hint">When a new row appears, it will show here after you save or refresh.</p>
           </>
         ) : p.kind === 'fluid' ? (
@@ -844,53 +896,47 @@ export default function Categorize() {
             <p className="mono">{esc(p.store_name)}</p>
             <PayeeStoreMappings data={p} />
             <TransactionDetails data={p} />
-            <label className="categorize-section-label">Category</label>
-            <div
-              className="categorize-category-pick-zone"
-              onMouseLeave={() => setHoveredCategory(null)}
-            >
+            <label className="categorize-section-label">{he.categorize.pickCategory}</label>
+            <div className="categorize-category-pick-zone" onMouseLeave={() => setHoveredCategory(null)}>
               <CategorySuggestions
-                suggestions={Array.isArray(p.category_suggestions) ? p.category_suggestions : []}
-                selectedCategory={activeCategory}
+                suggestions={suggestions}
+                selectedCategory={selectedForSuggestions}
                 hoveredCategory={hoveredCategory}
-                onPick={pickFromSuggestion}
+                onPick={pickMain}
                 onHoverCategory={setHoveredCategory}
               />
               <CategoryBadgePick
-                key={`main-fluid-${String(p.prompt_id)}`}
-                name="main-fluid"
                 options={pendingOpts}
+                picked={mainCategory}
+                custom={mainCustom}
+                onPick={pickMain}
+                onCustomChange={onMainCustomChange}
                 categoryColumns={categoryColumns}
-                pickTrigger={categoryPickTrigger}
-                onPickedChange={setActiveCategory}
                 hoveredCategory={hoveredCategory}
                 onHoverCategory={setHoveredCategory}
               />
             </div>
-            <TxnNotesField key={`txn-fluid-${p.prompt_id}`} id="notes-main-fluid" defaultNotes={esc(p.notes)} />
+            <TxnNotesField id="notes-main-fluid" value={mainNotes} onChange={setMainNotes} />
             <div className="categorize-action-footer">
               <div className="categorize-action-footer__row">
                 <button
                   type="button"
                   className="categorize-btn-save"
                   onClick={() => {
-                    const cat = readPickedCategory('main-fluid');
+                    const cat = resolveCategory(mainCategory, mainCustom);
                     if (!cat) {
-                      setStatus('Pick a category or type one');
+                      setStatus(he.categorize.pickCategory);
                       return;
                     }
-                    void submit(
-                      {
-                        kind: 'fluid',
-                        prompt_id: p.prompt_id,
-                        category: cat,
-                        notes: readTxnNotes('notes-main-fluid'),
-                      },
-                      { clearNotesId: 'notes-main-fluid' },
-                    );
+                    void submit({
+                      kind: 'fluid',
+                      prompt_id: p.prompt_id,
+                      category: cat,
+                      notes: clipNotes(mainNotes),
+                    });
                   }}
                 >
-                  Save
+                  {he.categorize.save}
                 </button>
                 <DiscardTxnButton onClick={() => void postDiscard(String(p.prompt_id))} />
               </div>
@@ -909,43 +955,38 @@ export default function Categorize() {
             <TransactionDetails data={p} />
             <p className="hint categorize-mapping-help">
               You are deciding whether the <strong>existing</strong> mapping for this payee and category is{' '}
-              <strong>Static</strong> (always use this category for this payee going forward, with forward-fill) or{' '}
-              <strong>Dynamic</strong> (this payee may keep multiple categories; you will pick per row when needed).
+              <strong>{he.categorize.staticMapping}</strong> (always use this category for this payee going forward, with
+              forward-fill) or <strong>{he.categorize.dynamicMapping}</strong> (this payee may keep multiple
+              categories; you will pick per row when needed).
             </p>
-            <TxnNotesField key={`txn-resolve-${p.prompt_id}`} id="notes-main-resolve" defaultNotes={esc(p.notes)} />
+            <TxnNotesField id="notes-main-resolve" value={mainNotes} onChange={setMainNotes} />
             <div className="row2">
               <button
                 type="button"
                 className="secondary"
                 onClick={() =>
-                  void submit(
-                    {
-                      kind: 'resolve_static',
-                      prompt_id: p.prompt_id,
-                      is_static: 0,
-                      notes: readTxnNotes('notes-main-resolve'),
-                    },
-                    { clearNotesId: 'notes-main-resolve' },
-                  )
+                  void submit({
+                    kind: 'resolve_static',
+                    prompt_id: p.prompt_id,
+                    is_static: 0,
+                    notes: clipNotes(mainNotes),
+                  })
                 }
               >
-                Dynamic (0)
+                {he.categorize.dynamicMapping}
               </button>
               <button
                 type="button"
                 onClick={() =>
-                  void submit(
-                    {
-                      kind: 'resolve_static',
-                      prompt_id: p.prompt_id,
-                      is_static: 1,
-                      notes: readTxnNotes('notes-main-resolve'),
-                    },
-                    { clearNotesId: 'notes-main-resolve' },
-                  )
+                  void submit({
+                    kind: 'resolve_static',
+                    prompt_id: p.prompt_id,
+                    is_static: 1,
+                    notes: clipNotes(mainNotes),
+                  })
                 }
               >
-                Static (1)
+                {he.categorize.staticMapping}
               </button>
             </div>
             <div className="categorize-action-footer">
@@ -964,60 +1005,53 @@ export default function Categorize() {
             </p>
             <PayeeStoreMappings data={p} />
             <TransactionDetails data={p} />
-            <label className="categorize-section-label">Category</label>
-            <div
-              className="categorize-category-pick-zone"
-              onMouseLeave={() => setHoveredCategory(null)}
-            >
+            <label className="categorize-section-label">{he.categorize.pickCategory}</label>
+            <div className="categorize-category-pick-zone" onMouseLeave={() => setHoveredCategory(null)}>
               <CategorySuggestions
-                suggestions={Array.isArray(p.category_suggestions) ? p.category_suggestions : []}
-                selectedCategory={activeCategory}
+                suggestions={suggestions}
+                selectedCategory={selectedForSuggestions}
                 hoveredCategory={hoveredCategory}
-                onPick={pickFromSuggestion}
+                onPick={pickMain}
                 onHoverCategory={setHoveredCategory}
               />
               <CategoryBadgePick
-                key={`main-new-${String(p.prompt_id)}`}
-                name="main-new"
                 options={pendingOpts}
+                picked={mainCategory}
+                custom={mainCustom}
+                onPick={pickMain}
+                onCustomChange={onMainCustomChange}
                 categoryColumns={categoryColumns}
-                pickTrigger={categoryPickTrigger}
-                onPickedChange={setActiveCategory}
                 hoveredCategory={hoveredCategory}
                 onHoverCategory={setHoveredCategory}
               />
             </div>
-            <MappingTypeBlock key={`map-nst-${p.prompt_id}`} groupName="nst-main" />
-            <TxnNotesField key={`txn-new-${p.prompt_id}`} id="notes-main-new" defaultNotes={esc(p.notes)} />
+            <MappingTypeBlock idPrefix="nst-main" value={mainIsStatic} onChange={setMainIsStatic} />
+            <TxnNotesField id="notes-main-new" value={mainNotes} onChange={setMainNotes} />
             <div className="categorize-action-footer">
               <div className="categorize-action-footer__row">
                 <button
                   type="button"
                   className="categorize-btn-save"
                   onClick={() => {
-                    const cat = readPickedCategory('main-new');
+                    const cat = resolveCategory(mainCategory, mainCustom);
                     if (!cat) {
-                      setStatus('Pick a category or type one');
+                      setStatus(he.categorize.pickCategory);
                       return;
                     }
-                    const is_static = readMappingIsStatic('nst-main');
-                    if (is_static === null) {
-                      setStatus('Choose Static or Dynamic mapping');
+                    if (mainIsStatic === null) {
+                      setStatus(`${he.categorize.staticMapping} / ${he.categorize.dynamicMapping}`);
                       return;
                     }
-                    void submit(
-                      {
-                        kind: 'new_store',
-                        prompt_id: p.prompt_id,
-                        category: cat,
-                        is_static,
-                        notes: readTxnNotes('notes-main-new'),
-                      },
-                      { clearNotesId: 'notes-main-new' },
-                    );
+                    void submit({
+                      kind: 'new_store',
+                      prompt_id: p.prompt_id,
+                      category: cat,
+                      is_static: mainIsStatic,
+                      notes: clipNotes(mainNotes),
+                    });
                   }}
                 >
-                  Save
+                  {he.categorize.save}
                 </button>
                 <DiscardTxnButton onClick={() => void postDiscard(String(p.prompt_id))} />
               </div>
@@ -1032,7 +1066,31 @@ export default function Categorize() {
         )}
       </section>
 
+      {history.length > 0 && (
+        <section className="categorize-card categorize-card--history">
+          <h2>{he.categorize.session}</h2>
+          {history.map((item) => {
+            if (item.kind === 'fluid') {
+              return <HistoryFluidItem key={item.prompt_id} item={item} {...historyHandlers} />;
+            }
+            if (item.kind === 'new_store') {
+              return <HistoryNewStoreItem key={item.prompt_id} item={item} {...historyHandlers} />;
+            }
+            if (item.kind === 'resolve_static') {
+              return (
+                <HistoryResolveStaticItem
+                  key={item.prompt_id}
+                  item={item}
+                  onRevise={(body) => void postRevise(body)}
+                />
+              );
+            }
+            return null;
+          })}
+        </section>
+      )}
+
       <p className="categorize-status">{status}</p>
-    </div>
+    </PageShell>
   );
 }

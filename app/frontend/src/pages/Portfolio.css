@@ -1,82 +1,60 @@
-.portfolio-page {
-  max-width: 92rem;
-  margin-inline: auto;
-  padding: 0 1rem 2rem;
+.portfolio-page .page-header__actions {
+  max-width: 100%;
 }
 
-.portfolio-header h1 {
-  margin: 0 0 0.25rem;
-  font-size: 1.45rem;
-}
-
-.portfolio-header__sub {
-  margin: 0;
-  color: var(--fg-muted);
-  font-size: 0.88rem;
-  max-width: 52rem;
+.portfolio-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  align-items: flex-end;
 }
 
 .portfolio-msg {
-  margin-top: 1rem;
+  margin-top: 0.5rem;
   color: var(--fg-muted);
 }
 
 .portfolio-msg--err {
-  color: #fa5252;
-}
-
-.portfolio-filters {
-  margin-top: 1.25rem;
-  padding: 1rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.15);
-}
-
-.portfolio-filters__row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  align-items: flex-end;
+  color: var(--bad-fg);
 }
 
 .portfolio-field {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--fg-muted);
 }
 
 .portfolio-field input,
 .portfolio-field select {
-  min-width: 11rem;
+  min-width: 10rem;
   padding: 0.35rem 0.5rem;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--surface, #12131a);
-  color: var(--fg, #e9e9ee);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
 }
 
 .portfolio-securities {
-  margin-top: 1rem;
+  margin-top: 1.25rem;
 }
 
 .portfolio-securities__head {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   color: var(--fg-muted);
 }
 
 .portfolio-linkish {
   background: none;
   border: none;
-  color: var(--accent, #4c6ef5);
+  color: var(--accent);
   cursor: pointer;
   padding: 0;
   font: inherit;
@@ -90,7 +68,8 @@
   max-height: 12rem;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
+  background: var(--bg-card);
 }
 
 .portfolio-securities__list li {
@@ -112,17 +91,19 @@
 }
 
 .portfolio-cb__meta {
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   color: var(--fg-muted);
   white-space: nowrap;
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .portfolio-chart-wrap {
-  margin-top: 1.25rem;
+  margin-top: 0.25rem;
   min-height: 560px;
   width: 100%;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 0.5rem;
-  background: rgba(0, 0, 0, 0.12);
+  background: var(--bg-card);
 }

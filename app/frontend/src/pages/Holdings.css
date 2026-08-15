@@ -1,52 +1,135 @@
-/* Holdings explorer — complements global theme */
+/* Holdings — dense timeline under PageShell (html already dir=rtl). */
+
 .holdings-page {
-  max-width: 70rem;
+  /* width from PageShell */
 }
 
-.holdings-page .row {
+.holdings-page .holdings-timeline {
+  margin-top: 0;
+}
+
+.holdings-page .holdings-add {
+  margin-top: 1rem;
+}
+
+.holdings-toolbar {
   display: flex;
   gap: 0.6rem;
   flex-wrap: wrap;
   align-items: end;
 }
 
-.holdings-page .col {
+.holdings-toolbar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.holdings-field {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
 }
 
-.holdings-page table {
-  border-collapse: collapse;
-  width: 100%;
+.holdings-field--acts {
+  min-width: 16rem;
 }
 
-.holdings-page th,
-.holdings-page td {
-  border: 1px solid var(--border);
-  padding: 0.4rem 0.5rem;
-  text-align: right;
-}
-
-.holdings-page th {
-  background: #1a1b20;
-  position: sticky;
-  top: 0;
+.holdings-meta,
+.holdings-summary {
+  margin-top: 0.45rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .holdings-scroll {
-  max-height: 26rem;
+  max-height: min(42rem, 70vh);
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  margin-top: 0.65rem;
 }
 
-.holdings-page .mode {
-  display: none;
+.holdings-page table.holdings-tl {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
 }
 
-.holdings-page .mode.active {
-  display: block;
+.holdings-page .holdings-tl th,
+.holdings-page .holdings-tl td {
+  border-bottom: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
+  padding: 0.28rem 0.45rem;
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.holdings-page .holdings-tl thead th {
+  background: var(--bg-card);
+  color: var(--fg-muted);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.holdings-page .holdings-tl tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.holdings-page .holdings-tl tbody tr:hover td {
+  background: rgba(61, 184, 154, 0.06);
+}
+
+.holdings-page .holdings-tl__total {
+  font-weight: 600;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: right;
+}
+
+.holdings-page .tl_date_input,
+.holdings-page .tl_cell_input {
+  width: 100%;
+  min-width: 6.5rem;
+  box-sizing: border-box;
+  padding: 0.18rem 0.3rem;
+  border-radius: var(--radius-sm);
+  font-variant-numeric: tabular-nums;
+  font-size: inherit;
+}
+
+.holdings-page .tl_cell_input {
+  text-align: right;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.holdings-page .tl_date_input[readonly],
+.holdings-page .tl_cell_input[readonly] {
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 0;
+  pointer-events: none;
+  color: var(--fg);
+}
+
+.holdings-page .mode-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+  flex-wrap: wrap;
 }
 
 .holdings-page .activity-row {
@@ -56,40 +139,44 @@
   margin: 0.45rem 0;
 }
 
-@media (max-width: 900px) {
-  .holdings-page .activity-row {
-    grid-template-columns: 1fr;
-  }
+.holdings-page .activity-row input {
+  font-variant-numeric: tabular-nums;
+}
+
+.holdings-add__actions {
+  margin-top: 0.75rem;
 }
 
 .holdings-page .status {
   white-space: pre-wrap;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 0.6rem;
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+  max-height: 14rem;
+  overflow: auto;
 }
 
-.holdings-page .tl_cell_input {
+.holdings-page textarea {
   width: 100%;
-  min-width: 7rem;
-  text-align: right;
-  box-sizing: border-box;
-  padding: 0.2rem 0.35rem;
-  border-radius: 6px;
+  min-height: 8rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
-.holdings-page .tl_cell_input[readonly] {
-  border-color: transparent;
-  background: transparent;
-  padding-left: 0;
-  padding-right: 0;
-  pointer-events: none;
-}
+@media (max-width: 900px) {
+  .holdings-page .activity-row {
+    grid-template-columns: 1fr;
+  }
 
-.holdings-page .mode-row {
-  display: flex;
-  gap: 0.4rem;
-  margin-bottom: 0.6rem;
+  .holdings-field--acts {
+    min-width: 100%;
+  }
 }

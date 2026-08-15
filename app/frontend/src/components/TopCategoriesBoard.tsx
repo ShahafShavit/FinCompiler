@@ -15,6 +15,7 @@ import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } 
 import { CSS } from '@dnd-kit/utilities';
 
 import { putJson } from '../lib/api';
+import { he } from '../lib/he';
 
 export type TopCatColumn = { top_name: string; sub_categories: string[] };
 
@@ -99,13 +100,13 @@ function ColumnShell({
         <span className="intg-top-column-title">{title}</span>
         {onDeleteColumn ? (
           <button type="button" className="intg-btn intg-btn--small intg-btn--secondary" onClick={onDeleteColumn}>
-            Remove
+            {he.integrity.remove}
           </button>
         ) : null}
       </div>
       <SortableContext id={colKey} items={subs.map(itemId)} strategy={verticalListSortingStrategy}>
         <div ref={setNodeRef} className="intg-top-column-body">
-          {subs.length === 0 ? <p className="intg-top-column-empty">Drag categories here</p> : null}
+          {subs.length === 0 ? <p className="intg-top-column-empty">{he.integrity.dragHere}</p> : null}
           {subs.map((s) => (
             <SortableChip key={s} sub={s} />
           ))}
@@ -274,18 +275,18 @@ export default function TopCategoriesBoard({
       setMsg(typeof p.message === 'string' ? p.message : `HTTP ${r.status}`);
       return;
     }
-    setMsg('Saved.');
+    setMsg(he.integrity.saved);
     onSaved();
   };
 
   const addColumn = () => {
-    const name = window.prompt('New column name (top category label)?', '');
+    const name = window.prompt(he.integrity.newColumnPrompt, '');
     if (name === null) return;
     const t = name.trim();
     if (!t) return;
     setBoard((prev) => {
       if (prev.columns.some((c) => c.top_name === t)) {
-        window.alert('A column with that name already exists.');
+        window.alert(he.integrity.columnExists);
         return prev;
       }
       return { ...prev, columns: [...prev.columns, { top_name: t, subs: [] }] };
@@ -309,17 +310,14 @@ export default function TopCategoriesBoard({
 
   return (
     <section className="intg-card">
-      <h2 className="intg-card-title">Top categories (categorize navigation)</h2>
-      <p className="intg-hint">
-        Group store category names into columns for the categorize queue only. This does not change how categories are
-        stored on transactions. Drag chips between columns, add columns as needed, then Save.
-      </p>
+      <h2 className="intg-card-title">{he.integrity.topCategories}</h2>
+      <p className="intg-hint">{he.integrity.topCategoriesHint}</p>
       <div className="intg-top-toolbar">
         <button type="button" className="intg-btn intg-btn--secondary" onClick={addColumn}>
-          Add column
+          {he.integrity.addColumn}
         </button>
         <button type="button" className="intg-btn" disabled={busy} onClick={() => void onSave()}>
-          {busy ? 'Saving…' : 'Save layout'}
+          {busy ? he.integrity.saving : he.integrity.saveLayout}
         </button>
       </div>
       {msg ? <p className="intg-msg">{msg}</p> : null}
@@ -333,7 +331,7 @@ export default function TopCategoriesBoard({
         onDragCancel={clearDragUi}
       >
         <div ref={boardScrollRef} className="intg-top-board">
-          <ColumnShell colKey="__unassigned__" title="Unassigned" subs={board.unassigned} />
+          <ColumnShell colKey="__unassigned__" title={he.integrity.unassigned} subs={board.unassigned} />
           {board.columns.map((c, idx) => (
             <ColumnShell
               key={c.top_name}

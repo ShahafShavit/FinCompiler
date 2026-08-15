@@ -223,7 +223,8 @@ def _reorder_pivot_columns_recency_weighted(pivot: pd.DataFrame) -> pd.DataFrame
 
     Rows are newest-first (``YearMonth`` descending). The last ``_RECENCY_MONTHS`` rows are the
     "recent" window. Each category gets ``log1p`` total abs activity for recent and all-time,
-    min–max normalized across columns, then blended. Lower score → left, higher → right.
+    min–max normalized across columns, then blended. Higher score → right (near sticky freeze in
+    RTL), lower → left.
     """
     if pivot.empty or pivot.shape[1] == 0:
         return pivot
@@ -246,7 +247,7 @@ def _reorder_pivot_columns_recency_weighted(pivot: pd.DataFrame) -> pd.DataFrame
             },
             index=pivot.columns,
         )
-        .sort_values(by=["score", "alltime", "name"], ascending=[True, False, True])
+        .sort_values(by=["score", "alltime", "name"], ascending=[False, False, True])
         .index.tolist()
     )
     return pivot[order]

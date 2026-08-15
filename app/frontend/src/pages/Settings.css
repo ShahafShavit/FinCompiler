@@ -1,35 +1,27 @@
 .settings-loading-banner {
   padding: 0.5rem 0.65rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--bg-card);
-  margin: 0.5rem 0 0.75rem;
+  background: var(--bg-elevated);
+  margin: 0 0 0.75rem;
+  color: var(--fg-muted);
 }
 
-.settings-page .settings-hint {
-  font-size: 0.9rem;
-  opacity: 0.92;
+.settings-hint {
+  font-size: 0.88rem;
   line-height: 1.45;
-  max-width: 44rem;
+  color: var(--fg-muted);
+  margin: 0.35rem 0 0.75rem;
 }
 
-.settings-page .settings-path {
+.settings-path {
   font-size: 0.85rem;
   margin: 0.35rem 0 0.75rem;
 }
 
-.settings-page .muted {
+.muted {
   opacity: 0.75;
   font-size: 0.88em;
-}
-
-.settings-section {
-  margin-top: 1rem;
-}
-
-.settings-section h2 {
-  margin-top: 0;
-  font-size: 1.05rem;
 }
 
 .settings-label {
@@ -40,21 +32,36 @@
   font-size: 0.9rem;
 }
 
+.settings-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.55rem 0;
+  cursor: pointer;
+}
+
+.settings-check input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
 .settings-input-wide {
-  max-width: 28rem !important;
+  width: 100%;
+  max-width: 28rem;
 }
 
 .settings-input-narrow {
-  max-width: 8rem !important;
+  width: 100%;
+  max-width: 8rem;
 }
 
 .settings-error {
-  color: #f87171;
+  color: var(--bad-fg);
   font-size: 0.9rem;
 }
 
 .settings-msg {
-  color: #86efac;
+  color: var(--good-fg);
   font-size: 0.9rem;
 }
 
@@ -65,29 +72,8 @@
   margin: 1.25rem 0 2rem;
 }
 
-.settings-btn-primary,
-.settings-btn-secondary {
-  padding: 0.45rem 0.85rem;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 0.9rem;
-}
-
-.settings-btn-primary {
-  background: #3730a3;
-  border-color: #4f46e5;
-  color: #eef2ff;
-}
-
-.settings-btn-primary:hover {
-  filter: brightness(1.08);
-}
-
-.settings-btn-secondary:hover {
-  filter: brightness(1.06);
+.settings-actions--inline {
+  margin: 0.75rem 0 0.5rem;
 }
 
 .settings-drop-rules-toolbar {
@@ -102,7 +88,6 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-width: 44rem;
   margin-top: 0.35rem;
 }
 
@@ -110,11 +95,10 @@
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  padding: 0.5rem 0.55rem;
-  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--bg-card, rgba(0, 0, 0, 0.12));
-  max-width: 44rem;
+  background: var(--bg-elevated);
 }
 
 .settings-drop-rule-fields {
@@ -130,14 +114,16 @@
   }
 }
 
-.settings-page .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+.mono {
+  font-family: var(--font-mono);
   font-size: 0.88em;
+  direction: ltr;
+  text-align: start;
 }
 
 .settings-drop-rule-row--invalid {
-  border-color: #b45309;
-  box-shadow: 0 0 0 1px rgba(180, 83, 9, 0.35);
+  border-color: var(--amber);
+  box-shadow: 0 0 0 1px var(--amber-dim);
 }
 
 .settings-drop-rule-actions {
@@ -154,20 +140,19 @@
 }
 
 .settings-drop-rule-num {
-  font-size: 0.75rem;
+  font-size: var(--fs-caption);
   opacity: 0.75;
-  margin-bottom: 0.1rem;
 }
 
 .settings-drop-rules-advanced {
   margin-top: 1rem;
-  max-width: 44rem;
 }
 
 .settings-drop-rules-advanced summary {
   cursor: pointer;
   font-size: 0.9rem;
   user-select: none;
+  color: var(--fg-muted);
 }
 
 .settings-drop-rules-advanced-inner {
@@ -180,14 +165,11 @@
 .settings-drop-rules-advanced textarea {
   width: 100%;
   min-height: 10rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   line-height: 1.35;
-  padding: 0.5rem 0.6rem;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--text);
+  direction: ltr;
+  text-align: start;
   resize: vertical;
 }
 

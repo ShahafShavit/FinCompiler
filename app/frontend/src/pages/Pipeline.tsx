@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
+import PageShell from '../components/PageShell';
 import { fetchJson, getJson, postJson } from '../lib/api';
+import { he } from '../lib/he';
 import { useEventStream } from '../lib/useEventStream';
 
 import './Pipeline.css';
@@ -33,7 +36,6 @@ type PipelineOptions = {
 };
 
 export default function Pipeline() {
-  // Pipeline checkbox state.
   const [dl, setDl] = useState(false);
   const [dlH, setDlH] = useState(false);
   const [dlM, setDlM] = useState(false);
@@ -50,13 +52,11 @@ export default function Pipeline() {
   const [backup, setBackup] = useState(false);
   const [auto, setAuto] = useState(false);
 
-  // Sheets card.
   const [sheetsForce, setSheetsForce] = useState(false);
   const [sheetsOut, setSheetsOut] = useState('');
   const [sheetsStatusText, setSheetsStatusText] = useState('');
   const [sheetsBusy, setSheetsBusy] = useState(false);
 
-  // Live log + connection / running state.
   const [logText, setLogText] = useState('');
   const [statusText, setStatusText] = useState('');
   const [running, setRunning] = useState(false);
@@ -71,7 +71,6 @@ export default function Pipeline() {
   const runningRef = useRef(false);
   const queryClient = useQueryClient();
 
-  // Derived dependencies (mirrors `syncPipelineDeps` from the legacy HTML page).
   const dlChildrenDisabled = !dl;
   const backupDisabled = !(procT || procH || ingestTp);
   const autoDisabled = !procT;
@@ -98,12 +97,10 @@ export default function Pipeline() {
     }
   };
 
-  // SSE: live log + state.
   const conn = useEventStream('/api/events', {
     log: (msg) => {
       setLogText((prev) => {
         const next = prev + msg + '\n';
-        // Keep memory bounded — last ~500 KB.
         return next.length > 500_000 ? next.slice(-500_000) : next;
       });
     },
@@ -120,13 +117,11 @@ export default function Pipeline() {
     },
   });
 
-  // Auto-scroll log.
   useEffect(() => {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [logText]);
 
-  // Polling: status + categorize queue.
   useEffect(() => {
     let cancelled = false;
     async function pollStatus() {
@@ -155,13 +150,13 @@ export default function Pipeline() {
         const j = await getJson<QueueResp>('/categorize/api/summary');
         if (cancelled) return;
         if (!j.compiled_exists) {
-          setQueueHint({ text: 'no ledger DB', ok: null });
+          setQueueHint({ text: he.pipeline.noLedger, ok: null });
           return;
         }
         if (j.open_count) {
-          setQueueHint({ text: `${j.open_count} need category`, ok: false });
+          setQueueHint({ text: `${j.open_count} ${he.pipeline.queueNeed}`, ok: false });
         } else {
-          setQueueHint({ text: 'queue empty', ok: true });
+          setQueueHint({ text: he.pipeline.queueEmpty, ok: true });
         }
       } catch {
         // ignore
@@ -175,7 +170,6 @@ export default function Pipeline() {
     };
   }, []);
 
-  // Initial: sheets status + control config.
   useEffect(() => {
     let cancelled = false;
     async function loadSheets() {
@@ -214,24 +208,32 @@ export default function Pipeline() {
   }, []);
 
   const busyPill = useMemo(() => {
-    if (busyError) return { cls: 'pill err', text: 'error: ' + busyError };
-    if (running) return { cls: 'pill run', text: 'running: ' + (currentJob || 'job') };
-    return { cls: 'pill', text: '' };
+    if (busyError) return { cls: 'pill err', text: `${he.common.error}: ${busyError}` };
+    if (running)
+      return {
+        cls: 'pill run',
+        text: `${he.pipeline.runningJob}: ${currentJob || 'job'}`,
+      };
+    return { cls: 'pill', text: he.pipeline.idle };
   }, [busyError, running, currentJob]);
+
   const queuePill = useMemo(() => {
     if (queueHint.ok === true) return 'pill run';
     return 'pill';
   }, [queueHint.ok]);
+
+  const ssePill = useMemo(() => {
+    if (conn === 'open') return { cls: 'pill run', text: he.pipeline.sseConnected };
+    if (conn === 'closed') return { cls: 'pill err', text: he.pipeline.sseDisconnected };
+    return { cls: 'pill', text: he.pipeline.ssePending };
+  }, [conn]);
 
   async function postSheetsAction(action: 'preview' | 'push') {
     setSheetsOut(action === 'preview' ? 'Loading…' : 'Running…');
     if (action === 'push') setSheetsBusy(true);
     try {
       const url = '/api/sheets/' + action;
-      const body =
-        action === 'preview'
-          ? {}
-          : { force: sheetsForce };
+      const body = action === 'preview' ? {} : { force: sheetsForce };
       const r = await postJson<unknown>(url, body);
       setSheetsOut(JSON.stringify(r.data, null, 2));
       if (r.ok && action === 'push') {
@@ -277,17 +279,18 @@ export default function Pipeline() {
       }
       setRunning(true);
       setCurrentJob(j.job_id || action);
-      setStatusText('Started: ' + (j.job_id || action));
+      setStatusText(`${he.pipeline.started}: ${j.job_id || action}`);
     } catch (e) {
-      setStatusText('Error: ' + (e instanceof Error ? e.message : String(e)));
+      setStatusText(`${he.common.error}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   async function runPipeline() {
     if (!dl && !route && !procH && !procT && !ingestTp) {
-      setStatusText(
-        'Choose at least one step (download, route, or a compile option).',
-      );
+      setStatusText(he.pipeline.chooseStep);
+      return;
+    }
+    if (dl && !window.confirm(he.pipeline.confirmDownload)) {
       return;
     }
     const opts: PipelineOptions = {
@@ -313,31 +316,40 @@ export default function Pipeline() {
     void postJob('categorize', {});
   }
 
-  return (
-    <div className="pipe-page">
-      <h1>Finance pipeline control</h1>
-      <p className="sub pipe-header">
-        <span>Local dashboard for fetches, routing, compile, and categorization.</span>
-        <a href="/categorize/">Categorization</a>
-        <span className={queuePill}>{queueHint.text}</span>
-        <span className={`pill ${conn === 'open' ? 'run' : conn === 'closed' ? 'err' : ''}`}>
-          {conn === 'open' ? 'SSE connected' : conn === 'closed' ? 'SSE disconnected' : 'SSE …'}
-        </span>
-        <span className={busyPill.cls}>{busyPill.text}</span>
-      </p>
+  const headerActions = (
+    <div className="pipe-status-row">
+      <Link to="/categorize" className="pipe-cat-link">
+        {he.pipeline.openCategorize}
+      </Link>
+      <span className={queuePill}>{queueHint.text}</span>
+      <span className={ssePill.cls}>{ssePill.text}</span>
+      <span className={busyPill.cls}>{busyPill.text}</span>
+    </div>
+  );
 
-      <div className="card">
-        <h2>Pipeline</h2>
-        <p className="hint">
-          Check what this run should do, then click <strong>Run pipeline</strong>. Order is always:
-          optional downloads → optional route → compile portfolio (if checked) → compile holdings (if
-          checked) → compile transactions (if checked).
-        </p>
+  return (
+    <PageShell
+      title={he.pipeline.title}
+      sub={he.pipeline.sub}
+      width="narrow"
+      actions={headerActions}
+      className="pipe-shell"
+    >
+      <div className="pipe-sticky-run">
+        <button type="button" className="pipe-run-btn" disabled={running} onClick={() => void runPipeline()}>
+          {running ? he.pipeline.busy : he.pipeline.run}
+        </button>
+      </div>
+
+      <section className="card">
+        <h2>{he.pipeline.pipeline}</h2>
+        <p className="hint">{he.pipeline.hintOrder}</p>
 
         <label className="pipe-row">
           <input type="checkbox" checked={dl} onChange={(e) => onToggleDl(e.target.checked)} />
-          <strong>Browser download</strong> — Chrome/Selenium saves exports into{' '}
-          <code>data/input/</code>
+          <span>
+            <strong>{he.pipeline.download}</strong> — {he.pipeline.downloadHint} <code>data/input/</code>
+          </span>
         </label>
         <div className="pipe-indent">
           <label className="pipe-row">
@@ -347,7 +359,7 @@ export default function Pipeline() {
               disabled={dlChildrenDisabled}
               onChange={(e) => setDlH(e.target.checked)}
             />{' '}
-            Bank holdings
+            {he.pipeline.bankHoldings}
           </label>
           <label className="pipe-row">
             <input
@@ -356,7 +368,7 @@ export default function Pipeline() {
               disabled={dlChildrenDisabled}
               onChange={(e) => setDlM(e.target.checked)}
             />{' '}
-            Max + Isracard
+            {he.pipeline.maxIsracard}
           </label>
           <label className="pipe-row">
             <input
@@ -365,7 +377,7 @@ export default function Pipeline() {
               disabled={dlChildrenDisabled}
               onChange={(e) => setDlBc(e.target.checked)}
             />{' '}
-            Leumi credit export
+            {he.pipeline.leumiCredit}
           </label>
           <label className="pipe-row">
             <input
@@ -374,7 +386,7 @@ export default function Pipeline() {
               disabled={dlChildrenDisabled}
               onChange={(e) => setDlOsh(e.target.checked)}
             />{' '}
-            Leumi account (osh)
+            {he.pipeline.leumiOsh}
           </label>
           <label className="pipe-row">
             <input
@@ -383,29 +395,29 @@ export default function Pipeline() {
               disabled={dlChildrenDisabled}
               onChange={(e) => setDlTp(e.target.checked)}
             />{' '}
-            Leumi LTI trade portfolio (Excel)
+            {he.pipeline.leumiTrade}
           </label>
           <div className="pipe-grid2" style={{ marginTop: '0.5rem' }}>
             <div>
-              <label>Osh from (DD.MM.YY)</label>
+              <label>{he.pipeline.oshFrom}</label>
               <br />
               <input
                 type="text"
                 className="pipe-input-text"
                 value={fromD}
-                placeholder="optional"
+                placeholder={he.pipeline.optional}
                 disabled={dlChildrenDisabled}
                 onChange={(e) => setFromD(e.target.value)}
               />
             </div>
             <div>
-              <label>Osh to (DD.MM.YY)</label>
+              <label>{he.pipeline.oshTo}</label>
               <br />
               <input
                 type="text"
                 className="pipe-input-text"
                 value={toD}
-                placeholder="optional"
+                placeholder={he.pipeline.optional}
                 disabled={dlChildrenDisabled}
                 onChange={(e) => setToD(e.target.value)}
               />
@@ -419,19 +431,13 @@ export default function Pipeline() {
             checked={route}
             disabled={routeForcedOn}
             onChange={(e) => setRoute(e.target.checked)}
-            title={
-              routeForcedOn
-                ? 'Required when compiling so files are sorted into pipeline inboxes first.'
-                : ''
-            }
+            title={routeForcedOn ? he.pipeline.routeForced : ''}
           />
-          <strong>Route inbox</strong> — move <code>data/input/*.xls*</code> into pipeline holdings /
-          transactions folders
+          <span>
+            <strong>{he.pipeline.routeInbox}</strong> — {he.pipeline.routeHint}
+          </span>
         </label>
-        <p className="hint">
-          Automatically stays on when you compile (so new downloads reach the right pipeline
-          folders).
-        </p>
+        <p className="hint">{he.pipeline.routeForced}</p>
 
         <label className="pipe-row">
           <input
@@ -439,21 +445,27 @@ export default function Pipeline() {
             checked={ingestTp}
             onChange={(e) => setIngestTp(e.target.checked)}
           />
-          <strong>Compile portfolio</strong> → <code>data/ledger.sqlite</code> (trade_portfolio_position)
+          <span>
+            <strong>{he.pipeline.compilePortfolio}</strong> → <code>data/ledger.sqlite</code>{' '}
+            (trade_portfolio_position)
+          </span>
         </label>
 
         <label className="pipe-row">
           <input type="checkbox" checked={procH} onChange={(e) => setProcH(e.target.checked)} />
-          <strong>Compile holdings</strong> → <code>data/ledger.sqlite</code> (holdings_balance)
+          <span>
+            <strong>{he.pipeline.compileHoldings}</strong> → <code>data/ledger.sqlite</code>{' '}
+            (holdings_balance)
+          </span>
         </label>
         <label className="pipe-row">
           <input type="checkbox" checked={procT} onChange={(e) => setProcT(e.target.checked)} />
-          <strong>Compile transactions</strong> → <code>data/ledger.sqlite</code> (transactions
-          ledger)
+          <span>
+            <strong>{he.pipeline.compileTx}</strong> → <code>data/ledger.sqlite</code> (transactions)
+          </span>
         </label>
         <p className="hint pipe-indent">
-          Row-drop rules for the transaction workbooks live in Settings → <strong>Transaction drop rules</strong>{' '}
-          (<code>data/private/transaction_drop_rules.json</code>).
+          {he.pipeline.dropRulesHint} (<code>data/private/transaction_drop_rules.json</code>).
         </p>
         <label className="pipe-row">
           <input
@@ -462,8 +474,10 @@ export default function Pipeline() {
             disabled={backupDisabled}
             onChange={(e) => setBackup(e.target.checked)}
           />
-          <strong>Backup snapshot first</strong> — copy export tree, static, ledger, and <code>web/data</code>{' '}
-          into <code>data/_backups/&lt;timestamp&gt;/</code> before compile steps
+          <span>
+            <strong>{he.pipeline.backupFirst}</strong> — {he.pipeline.backupHint}{' '}
+            <code>data/_backups/&lt;timestamp&gt;/</code>
+          </span>
         </label>
         <label className="pipe-row">
           <input
@@ -472,40 +486,30 @@ export default function Pipeline() {
             disabled={autoDisabled}
             onChange={(e) => setAuto(e.target.checked)}
           />
-          <strong>Auto-categorize</strong> after transactions compile (rows still missing a category
-          → <a href="/categorize/">/categorize/</a>)
+          <span>
+            <strong>{he.pipeline.autoCategorize}</strong> →{' '}
+            <Link to="/categorize">{he.pipeline.openCategorize}</Link>
+          </span>
         </label>
 
-        <div style={{ marginTop: '0.85rem' }}>
-          <button type="button" disabled={running} onClick={() => void runPipeline()}>
-            Run pipeline
-          </button>
-        </div>
-        <p className="hint">
-          Manual categories: <code>{catUrl}</code>
-        </p>
-      </div>
+        {catUrl ? (
+          <p className="hint">
+            <code>{catUrl}</code>
+          </p>
+        ) : null}
+      </section>
 
-      <div className="card">
-        <h2>Categorization only</h2>
-        <p className="hint">
-          Runs an auto pass on the SQLite ledger. Open <a href="/categorize/">/categorize/</a> any
-          time to answer whatever is still missing a category (no separate &quot;session&quot;).
-        </p>
+      <section className="card">
+        <h2>{he.pipeline.categorizeOnly}</h2>
+        <p className="hint">{he.pipeline.categorizeCardHint}</p>
         <button type="button" disabled={running} onClick={() => void runCategorize()}>
-          Run auto-categorize
+          {he.pipeline.runCategorize}
         </button>
-      </div>
+      </section>
 
-      <div className="card">
-        <h2>Google Sheets (push only)</h2>
-        <p className="hint">
-          <strong>Preview</strong> compares each worksheet to local data (holdings CSV + SQLite
-          ledger export for Totals when <code>ledger.sqlite</code> exists).{' '}
-          <strong>Push</strong> updates the cloud; there is no pull. Use <strong>Force</strong> to
-          push even when preview reports differences. Heatmap reads from the ledger —{' '}
-          <a href="/heatmap">/heatmap</a>.
-        </p>
+      <section className="card">
+        <h2>{he.pipeline.sheets}</h2>
+        <p className="hint">{he.pipeline.sheetsHint}</p>
         <p className="hint">{sheetsStatusText}</p>
         <label className="pipe-row">
           <input
@@ -513,37 +517,33 @@ export default function Pipeline() {
             checked={sheetsForce}
             onChange={(e) => setSheetsForce(e.target.checked)}
           />
-          <strong>Force</strong> — push even when preview reports problems
+          <strong>{he.pipeline.force}</strong>
         </label>
-        <div style={{ marginTop: '0.65rem' }}>
+        <div className="pipe-sheets-actions">
           <button
             type="button"
             className="secondary"
             disabled={sheetsBusy}
             onClick={() => void postSheetsAction('preview')}
           >
-            Preview sync
+            {he.pipeline.previewSync}
           </button>
-          <button
-            type="button"
-            disabled={sheetsBusy}
-            onClick={() => void postSheetsAction('push')}
-          >
-            Push to Sheets
+          <button type="button" disabled={sheetsBusy} onClick={() => void postSheetsAction('push')}>
+            {he.pipeline.pushSheets}
           </button>
         </div>
         <pre className="pipe-sheets-out" aria-live="polite">
           {sheetsOut}
         </pre>
-      </div>
+      </section>
 
-      <div className="card">
-        <h2>Live log</h2>
+      <section className="card pipe-log-dock" aria-label={he.pipeline.liveLog}>
+        <h2>{he.pipeline.liveLog}</h2>
         <div ref={logRef} className="pipe-log">
           {logText}
         </div>
         <p className="pipe-status">{statusText}</p>
-      </div>
-    </div>
+      </section>
+    </PageShell>
   );
 }

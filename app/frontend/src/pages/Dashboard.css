@@ -1,6 +1,80 @@
 .dash-page {
-  max-width: 1200px;
-  margin-inline: auto;
+  /* width from PageShell */
+}
+
+.dash-hero-block {
+  margin-bottom: 0.5rem;
+}
+
+.dash-hero-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.dash-kpi--hero {
+  background: var(--bg-card);
+  background-image: linear-gradient(165deg, rgba(61, 184, 154, 0.08) 0%, transparent 50%);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem 1.1rem;
+  box-shadow: var(--shadow-card);
+  min-width: min(100%, 16rem);
+}
+
+.dash-kpi--hero .dash-kpi__value {
+  font-family: var(--font-display);
+  font-size: var(--fs-hero);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.dash-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+@media (max-width: 900px) {
+  .dash-kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.dash-kpi--meta .dash-kpi__value {
+  font-size: 1.15rem;
+}
+
+.dash-chart-ltr {
+  width: 100%;
+  direction: ltr;
+}
+
+.dash-seg {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  padding: 0.2rem;
+  background: var(--bg-input);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.dash-seg button {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.dash-seg button.active {
+  background: var(--accent-dim);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--accent-glow);
 }
 
 .dash-header .sub {
@@ -12,7 +86,7 @@
 }
 
 .dash-section__title {
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -60,7 +134,7 @@
 .dash-card__meta {
   font-weight: 400;
   color: var(--fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
 }
 
 .dash-card__sub--tight {
@@ -69,7 +143,7 @@
 }
 
 .dash-card-meta-line {
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--fg-muted);
   margin: 0 0 0.65rem;
 }
@@ -80,7 +154,7 @@
 }
 
 .dash-card-meta-line--small {
-  font-size: 0.74rem;
+  font-size: var(--fs-caption);
   margin-top: -0.4rem;
   margin-bottom: 0.65rem;
   opacity: 0.95;
@@ -127,7 +201,7 @@
 }
 
 .dash-cat-period-label {
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -141,7 +215,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.4rem 0.65rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   font-family: inherit;
   cursor: pointer;
   width: 100%;
@@ -174,7 +248,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.38rem 0.55rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   font-family: inherit;
   width: 100%;
   min-width: 0;
@@ -208,7 +282,7 @@
   background: transparent;
   border: none;
   padding: 0.4rem 0.85rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--fg-muted);
   cursor: pointer;
   font-family: inherit;
@@ -243,7 +317,7 @@
   background: var(--bg-input);
   color: var(--fg-muted);
   font-weight: 600;
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   border-bottom: 1px solid var(--border);
@@ -308,7 +382,7 @@
 }
 
 .dash-cat-chart__hint {
-  font-size: 0.72rem;
+  font-size: var(--fs-caption);
   color: var(--fg-muted);
   margin: 0.5rem 0 0;
 }
@@ -331,7 +405,7 @@
 }
 
 .dash-kpi__label {
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   letter-spacing: 0.02em;
   color: var(--fg-muted);
   text-transform: uppercase;
@@ -345,7 +419,7 @@
 }
 
 .dash-kpi__sub {
-  font-size: 0.75rem;
+  font-size: var(--fs-caption);
   color: var(--fg-muted);
 }
 
@@ -358,7 +432,7 @@
 }
 
 .dash-kpi__cta {
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   margin-top: 0.2rem;
 }
 
@@ -382,7 +456,7 @@
 }
 
 .dash-card__hint {
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--fg-muted);
   margin: -0.35rem 0 0.5rem;
 }
@@ -414,7 +488,7 @@
 }
 
 .dash-card__sub {
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--fg-muted);
   margin: -0.4rem 0 0.6rem;
 }
@@ -442,7 +516,7 @@
   text-align: right;
   color: var(--fg-muted);
   font-weight: 600;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
 }
 
 .dash-source-table th:first-child,
@@ -469,7 +543,7 @@
 
 .dash-matrix-table {
   border-collapse: collapse;
-  font-size: 0.75rem;
+  font-size: var(--fs-caption);
   min-width: 100%;
 }
 

@@ -1,11 +1,24 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
+import PageShell from '../components/PageShell';
 import { fetchJson, patchJson } from '../lib/api';
+import { he } from '../lib/he';
 
 import './HeatmapDetail.css';
 
 const SAFE_PATCH_COLUMNS = new Set(['notes', 'קטגוריה', '4 ספרות', 'statement_month']);
+
+const LTR_COLUMNS = new Set([
+  'id',
+  'בחובה',
+  'בזכות',
+  'תאריך',
+  'statement_month',
+  '4 ספרות',
+  'data_updated_at',
+  'category_updated_at',
+]);
 
 const FINGERPRINT_COLUMNS = [
   'תאריך',
@@ -55,6 +68,10 @@ function visibleColumns(columns: string[]): string[] {
   return columns.filter((c) => c !== 'id' && c !== 'fingerprint');
 }
 
+function columnDir(column: string): 'ltr' | 'auto' {
+  return LTR_COLUMNS.has(column) ? 'ltr' : 'auto';
+}
+
 async function patchLedger(
   rowId: number,
   patch: Record<string, unknown>,
@@ -77,7 +94,7 @@ async function patchLedger(
     return {
       ok: false,
       status: r.status,
-      message: msg || 'Save failed',
+      message: msg || 'שמירה נכשלה',
       code: typeof payload.error === 'string' ? payload.error : undefined,
     };
   }
@@ -171,11 +188,11 @@ function FingerprintModal({
   const submit = async () => {
     setErr('');
     if (!understood) {
-      setErr('Confirm that you understand this changes how duplicates match.');
+      setErr('אשרו שהבנתם שזה משנה את אופן התאמת הכפילויות.');
       return;
     }
     if (phrase.trim() !== REKEY_PHRASE) {
-      setErr(`Type ${REKEY_PHRASE} to confirm.`);
+      setErr(`הקלידו ${REKEY_PHRASE} לאישור.`);
       return;
     }
     let bh: number;
@@ -185,7 +202,7 @@ function FingerprintModal({
       bz = Number(String(draft['בזכות']).trim());
       if (!Number.isFinite(bh) || !Number.isFinite(bz)) throw new Error('bad amount');
     } catch {
-      setErr('בחובה and בזכות must be valid numbers.');
+      setErr('בחובה ובזכות חייבים להיות מספרים תקינים.');
       return;
     }
     const patch: Record<string, unknown> = {
@@ -200,7 +217,7 @@ function FingerprintModal({
     try {
       const out = await patchLedger(rid, patch, { confirmFingerprint: true, phrase });
       if (!out.ok) {
-        setErr(out.message || 'Save failed');
+        setErr(out.message || 'שמירה נכשלה');
         return;
       }
       await onSaved();
@@ -265,7 +282,9 @@ function FingerprintModal({
           אני מבין שהזיהוי הפנימי של הרשומה עלול להשתנות ויכול ליצור התנגשות עם תנועה קיימת.
         </label>
         <label className="hm-detail-modal-field">
-          <span>אשר הקלדה: <code>{REKEY_PHRASE}</code></span>
+          <span>
+            אשר הקלדה: <code>{REKEY_PHRASE}</code>
+          </span>
           <input
             type="text"
             className="hm-detail-modal-input"
@@ -278,7 +297,7 @@ function FingerprintModal({
         {err ? <p className="hm-detail-modal-err">{err}</p> : null}
         <div className="hm-detail-modal-actions">
           <button type="button" className="secondary" onClick={onClose} disabled={busy}>
-            ביטול
+            {he.common.cancel}
           </button>
           <button type="button" onClick={() => void submit()} disabled={busy}>
             {busy ? 'שומר…' : 'שמור שינוי זהות'}
@@ -300,36 +319,39 @@ export default function HeatmapDetail() {
   const [fpRow, setFpRow] = useState<Record<string, unknown> | null>(null);
   const [excludingRowId, setExcludingRowId] = useState<number | null>(null);
 
-  const loadDetail = useCallback(async (opts?: { preserveExisting?: boolean }) => {
-    if (!queryString) {
-      setErr('Missing query parameters.');
-      setData(null);
-      return;
-    }
-    setErr('');
-    if (!opts?.preserveExisting) {
-      setData(null);
-    }
-    try {
-      const r = await fetchJson<HeatmapDetailResponse>(`/heatmap/api/detail?${queryString}`, {
-        cache: 'no-store',
-      });
-      if (!r.ok || !r.data.ok) {
-        const msg =
-          r.data.message ||
-          r.data.error ||
-          (r.status === 404 ? 'No matching transactions.' : `HTTP ${r.status}`);
-        setErr(msg);
+  const loadDetail = useCallback(
+    async (opts?: { preserveExisting?: boolean }) => {
+      if (!queryString) {
+        setErr(he.heatmap.noParams);
         setData(null);
         return;
       }
-      setData(r.data);
       setErr('');
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setData(null);
-    }
-  }, [queryString]);
+      if (!opts?.preserveExisting) {
+        setData(null);
+      }
+      try {
+        const r = await fetchJson<HeatmapDetailResponse>(`/heatmap/api/detail?${queryString}`, {
+          cache: 'no-store',
+        });
+        if (!r.ok || !r.data.ok) {
+          const msg =
+            r.data.message ||
+            r.data.error ||
+            (r.status === 404 ? 'לא נמצאו תנועות מתאימות.' : `HTTP ${r.status}`);
+          setErr(msg);
+          setData(null);
+          return;
+        }
+        setData(r.data);
+        setErr('');
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+        setData(null);
+      }
+    },
+    [queryString],
+  );
 
   useEffect(() => {
     void loadDetail();
@@ -342,7 +364,10 @@ export default function HeatmapDetail() {
     if (normalized === undefined) {
       setRowErr((m) => ({
         ...m,
-        [id]: column === 'statement_month' ? 'statement_month must be YYYY-MM or empty.' : 'Invalid value.',
+        [id]:
+          column === 'statement_month'
+            ? 'statement_month חייב להיות YYYY-MM או ריק.'
+            : 'ערך לא תקין.',
       }));
       return;
     }
@@ -362,7 +387,7 @@ export default function HeatmapDetail() {
 
     const out = await patchLedger(id, { [column]: normalized });
     if (!out.ok) {
-      setRowErr((m) => ({ ...m, [id]: out.message || 'Save failed' }));
+      setRowErr((m) => ({ ...m, [id]: out.message || 'שמירה נכשלה' }));
       return;
     }
     setRowErr((m) => {
@@ -385,7 +410,7 @@ export default function HeatmapDetail() {
     try {
       const out = await patchLedger(id, { excluded_from_calculations: 1 });
       if (!out.ok) {
-        setRowErr((m) => ({ ...m, [id]: out.message || 'Exclude failed' }));
+        setRowErr((m) => ({ ...m, [id]: out.message || 'החרגה נכשלה' }));
         return;
       }
       await loadDetail({ preserveExisting: true });
@@ -395,46 +420,55 @@ export default function HeatmapDetail() {
   };
 
   const fpModalOpen = fpRow != null;
+  const pageTitle = data?.title || he.heatmap.title;
 
   return (
-    <div className="hm-detail-page">
+    <PageShell
+      title={pageTitle}
+      sub={he.heatmap.sub}
+      width="full"
+      className="hm-detail-page"
+      actions={
+        <div className="hm-detail-toolbar">
+          <button type="button" className="secondary hm-detail-back" onClick={() => navigate('/heatmap')}>
+            {he.heatmap.title}
+          </button>
+          <button type="button" className="secondary hm-detail-back" onClick={() => navigate(-1)}>
+            {he.heatmap.back}
+          </button>
+        </div>
+      }
+    >
       <FingerprintModal
         row={fpRow}
         open={fpModalOpen}
         onClose={() => setFpRow(null)}
         onSaved={() => loadDetail({ preserveExisting: true })}
       />
-      <div className="hm-detail-toolbar">
-        <button type="button" className="secondary hm-detail-back" onClick={() => navigate('/heatmap')}>
-          ← Heatmap
-        </button>
-        <button type="button" className="secondary hm-detail-back" onClick={() => navigate(-1)}>
-          Back
-        </button>
-      </div>
       {!queryString ? (
-        <p className="hm-detail-empty">No drill-down parameters in the URL.</p>
+        <p className="hm-detail-empty">{he.heatmap.noParams}</p>
       ) : err ? (
         <p className="hm-detail-error">{err}</p>
       ) : !data?.title ? (
-        <p className="hm-detail-empty">Loading…</p>
+        <p className="hm-detail-empty">{he.heatmap.loading}</p>
       ) : (
         <>
-          <h1 className="hm-detail-title">{data.title}</h1>
           {(data.sections ?? []).map((sec, si) => {
             const cols = visibleColumns(sec.columns);
             return (
               <section key={si} className="hm-detail-section">
                 {sec.subtitle ? <h2 className="hm-detail-sub">{sec.subtitle}</h2> : null}
                 {!sec.rows.length ? (
-                  <p className="hm-detail-empty">אין נתונים</p>
+                  <p className="hm-detail-empty">{he.heatmap.empty}</p>
                 ) : (
                   <div className="hm-detail-table-wrap">
                     <table className="hm-detail-table">
                       <thead>
                         <tr>
                           {cols.map((c) => (
-                            <th key={c}>{c}</th>
+                            <th key={c} dir={columnDir(c)}>
+                              {c}
+                            </th>
                           ))}
                           <th className="hm-detail-actions-th">פעולות</th>
                         </tr>
@@ -449,7 +483,7 @@ export default function HeatmapDetail() {
                             <Fragment key={rowRefreshKey}>
                               <tr>
                                 {cols.map((c) => (
-                                  <td key={c}>
+                                  <td key={c} dir={columnDir(c)}>
                                     {rid != null && SAFE_PATCH_COLUMNS.has(c) ? (
                                       c === 'notes' ? (
                                         <textarea
@@ -468,7 +502,7 @@ export default function HeatmapDetail() {
                                         <input
                                           type="text"
                                           className="hm-detail-cell-input"
-                                          dir={c === 'statement_month' ? 'ltr' : 'auto'}
+                                          dir={c === 'statement_month' || c === '4 ספרות' ? 'ltr' : 'auto'}
                                           defaultValue={
                                             row[c] == null
                                               ? ''
@@ -499,7 +533,7 @@ export default function HeatmapDetail() {
                                       <button
                                         type="button"
                                         className="secondary hm-detail-exclude"
-                                        title="Row stays in DB but is omitted from heatmaps, KPIs, and categorize queue. Restore from Data Integrity."
+                                        title="השורה נשארת במסד אך מושמטת ממפות חום, מדדים ותור סיווג. שחזור מתוך שלמות נתונים."
                                         disabled={excludingRowId != null}
                                         onClick={() => void excludeFromCalculations(row)}
                                       >
@@ -528,6 +562,6 @@ export default function HeatmapDetail() {
           })}
         </>
       )}
-    </div>
+    </PageShell>
   );
 }

@@ -11,63 +11,18 @@ import {
   YAxis,
 } from 'recharts';
 
+import PageShell from '../components/PageShell';
 import { fetchJson, formatMoney, formatPct } from '../lib/api';
+import { seriesColor } from '../lib/chartColors';
+import { he } from '../lib/he';
 
 import './Portfolio.css';
 
-/** Golden-angle hue steps keep neighbors well separated as `n` grows (dark-UI tuned S/L). */
-const GOLDEN_ANGLE = 137.508;
-
-function hslToHex(h: number, s: number, l: number): string {
-  const hh = ((h % 360) + 360) % 360;
-  const sat = s / 100;
-  const light = l / 100;
-  const c = (1 - Math.abs(2 * light - 1)) * sat;
-  const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
-  const m = light - c / 2;
-  let rp = 0;
-  let gp = 0;
-  let bp = 0;
-  if (hh < 60) {
-    rp = c;
-    gp = x;
-  } else if (hh < 120) {
-    rp = x;
-    gp = c;
-  } else if (hh < 180) {
-    gp = c;
-    bp = x;
-  } else if (hh < 240) {
-    gp = x;
-    bp = c;
-  } else if (hh < 300) {
-    rp = x;
-    bp = c;
-  } else {
-    rp = c;
-    bp = x;
-  }
-  const byte = (n: number) => Math.round(255 * (n + m));
-  return `#${[rp, gp, bp].map((n) => byte(n).toString(16).padStart(2, '0')).join('')}`;
-}
-
-function generateDistinctColors(count: number): string[] {
-  if (count <= 0) return [];
-  const out: string[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const hue = (i * GOLDEN_ANGLE) % 360;
-    out.push(hslToHex(hue, 74, 56));
-  }
-  return out;
-}
-
-/** One golden-angle hue per visible series (`visibleSeries` is sorted). Lines keep distinct strokes; crossings never share a color. */
 function strokeByVisibleSeries(visibleSeries: readonly string[]): Map<string, string> {
   if (visibleSeries.length === 0) return new Map();
-  const palette = generateDistinctColors(visibleSeries.length);
   const out = new Map<string, string>();
   visibleSeries.forEach((sid, i) => {
-    out.set(sid, palette[i]!);
+    out.set(sid, seriesColor(i));
   });
   return out;
 }
@@ -128,17 +83,7 @@ type TimeseriesPayload = {
   points?: TimeseriesPoint[];
 };
 
-const METRIC_LABELS: Record<string, string> = {
-  value_ils: 'Value (₪)',
-  quantity: 'Quantity',
-  last_price: 'Last price',
-  avg_purchase_price: 'Avg purchase price',
-  profit_ils: 'Profit (₪)',
-  basis_price: 'Basis price',
-  daily_change_pct: 'Daily change %',
-  profit_pct: 'Profit %',
-  pct_of_portfolio: '% of portfolio',
-};
+const METRIC_LABELS: Record<string, string> = he.portfolio.metrics;
 
 function formatMetricValue(metric: string, v: number | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
@@ -151,7 +96,7 @@ function formatMetricValue(metric: string, v: number | undefined): string {
     metric === 'avg_purchase_price' ||
     metric === 'basis_price'
   ) {
-    return v.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    return v.toLocaleString('he-IL', { maximumFractionDigits: 4 });
   }
   return formatMoney(v);
 }
@@ -422,104 +367,74 @@ export default function Portfolio() {
     setSelected(new Set());
   }, []);
 
-  return (
-    <div className="portfolio-page">
-      <header className="portfolio-header">
-        <h1>Portfolio</h1>
-        <p className="portfolio-header__sub">
-          Securities snapshots from the ledger (<code>trade_portfolio_position</code>). One line per
-          position over snapshot dates.
-        </p>
-      </header>
+  const hasRows = Boolean(meta?.ledger_exists && (meta.row_count ?? 0) > 0);
 
+  const filterBar = hasRows ? (
+    <div className="portfolio-toolbar" aria-label={he.portfolio.filters}>
+      <label className="portfolio-field">
+        <span>{he.portfolio.from}</span>
+        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+      </label>
+      <label className="portfolio-field">
+        <span>{he.portfolio.to}</span>
+        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </label>
+      <label className="portfolio-field">
+        <span>{he.portfolio.account}</span>
+        <select value={account} onChange={(e) => setAccount(e.target.value)}>
+          <option value="">{he.portfolio.allAccounts}</option>
+          {(meta?.portfolio_accounts ?? []).map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="portfolio-field">
+        <span>{he.portfolio.metric}</span>
+        <select value={metric} onChange={(e) => setMetric(e.target.value)}>
+          {(meta?.metrics ?? []).map((m) => (
+            <option key={m} value={m}>
+              {METRIC_LABELS[m as keyof typeof METRIC_LABELS] ?? m}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  ) : null;
+
+  return (
+    <PageShell
+      title={he.portfolio.title}
+      sub={he.portfolio.sub}
+      width="wide"
+      className="portfolio-page"
+      actions={filterBar}
+    >
       {metaQuery.isError && (
-        <p className="portfolio-msg portfolio-msg--err">Could not load portfolio metadata.</p>
+        <p className="portfolio-msg portfolio-msg--err">{he.portfolio.metaError}</p>
       )}
 
       {meta && !meta.ledger_exists && (
-        <p className="portfolio-msg">No ledger database found yet. Run the pipeline import first.</p>
+        <p className="portfolio-msg">{he.portfolio.noLedger}</p>
       )}
 
       {meta?.ledger_exists && (meta.row_count ?? 0) === 0 && (
-        <p className="portfolio-msg">
-          No trade-portfolio rows in the ledger. Import an אחזקות export from the Pipeline page.
-        </p>
+        <p className="portfolio-msg">{he.portfolio.noRows}</p>
       )}
 
-      {meta?.ledger_exists && (meta.row_count ?? 0) > 0 && (
+      {hasRows && (
         <>
-          <section className="portfolio-filters" aria-label="Chart filters">
-            <div className="portfolio-filters__row">
-              <label className="portfolio-field">
-                <span>From</span>
-                <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-              </label>
-              <label className="portfolio-field">
-                <span>To</span>
-                <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-              </label>
-              <label className="portfolio-field">
-                <span>Account</span>
-                <select value={account} onChange={(e) => setAccount(e.target.value)}>
-                  <option value="">All accounts</option>
-                  {(meta.portfolio_accounts ?? []).map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="portfolio-field">
-                <span>Metric</span>
-                <select value={metric} onChange={(e) => setMetric(e.target.value)}>
-                  {(meta.metrics ?? []).map((m) => (
-                    <option key={m} value={m}>
-                      {METRIC_LABELS[m] ?? m}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="portfolio-securities">
-              <div className="portfolio-securities__head">
-                <span>Securities</span>
-                <button type="button" className="portfolio-linkish" onClick={selectAll}>
-                  All
-                </button>
-                <button type="button" className="portfolio-linkish" onClick={selectNone}>
-                  None
-                </button>
-              </div>
-              <ul className="portfolio-securities__list">
-                {listInstruments.map((i) => (
-                  <li key={i.series_id}>
-                    <label className="portfolio-cb">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(i.series_id)}
-                        onChange={() => toggleSeries(i.series_id)}
-                      />
-                      <span>{i.label}</span>
-                      <span className="portfolio-cb__meta">
-                        {i.first_seen} → {i.last_seen}
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </section>
-
           {timeseriesQuery.isError && (
-            <p className="portfolio-msg portfolio-msg--err">Failed to load chart data.</p>
+            <p className="portfolio-msg portfolio-msg--err">{he.portfolio.chartError}</p>
           )}
 
           {selected.size === 0 && (
-            <p className="portfolio-msg">Select at least one security to plot.</p>
+            <p className="portfolio-msg">{he.portfolio.selectOne}</p>
           )}
 
           {selected.size > 0 && (
-            <div className="portfolio-chart-wrap">
+            <div className="portfolio-chart-wrap" dir="ltr">
               <ResponsiveContainer width="100%" height={560}>
                 <LineChart data={chartRows} margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.2)" />
@@ -530,7 +445,7 @@ export default function Portfolio() {
                       typeof v === 'number'
                         ? activeMetric.includes('pct')
                           ? `${(v * 100).toFixed(1)}%`
-                          : v.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                          : v.toLocaleString('he-IL', { maximumFractionDigits: 2 })
                         : String(v)
                     }
                   />
@@ -550,7 +465,7 @@ export default function Portfolio() {
                         labelBySeries.get(String(name)) ?? String(name),
                       ];
                     }}
-                    labelFormatter={(l) => `Date: ${l}`}
+                    labelFormatter={(l) => `${he.portfolio.date}: ${l}`}
                   />
                   <Legend
                     wrapperStyle={{ maxHeight: 140, overflowY: 'auto' }}
@@ -573,8 +488,37 @@ export default function Portfolio() {
               </ResponsiveContainer>
             </div>
           )}
+
+          <section className="portfolio-securities" aria-label={he.portfolio.securities}>
+            <div className="portfolio-securities__head">
+              <span>{he.portfolio.securities}</span>
+              <button type="button" className="portfolio-linkish" onClick={selectAll}>
+                {he.portfolio.all}
+              </button>
+              <button type="button" className="portfolio-linkish" onClick={selectNone}>
+                {he.portfolio.none}
+              </button>
+            </div>
+            <ul className="portfolio-securities__list">
+              {listInstruments.map((i) => (
+                <li key={i.series_id}>
+                  <label className="portfolio-cb">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(i.series_id)}
+                      onChange={() => toggleSeries(i.series_id)}
+                    />
+                    <span>{i.label}</span>
+                    <span className="portfolio-cb__meta">
+                      {i.first_seen} → {i.last_seen}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </section>
         </>
       )}
-    </div>
+    </PageShell>
   );
 }

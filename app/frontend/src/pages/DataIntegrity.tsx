@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 
+import PageShell from '../components/PageShell';
 import TopCategoriesBoard from '../components/TopCategoriesBoard';
-import { getJson, patchJson, postJson } from '../lib/api';
+import { fetchJson, patchJson, postJson } from '../lib/api';
 import { heatmapDetailCategory, heatmapDetailSource } from '../lib/drilldown';
+import { he } from '../lib/he';
 
 import './DataIntegrity.css';
 
@@ -83,13 +86,16 @@ export default function DataIntegrity() {
     setErr(null);
     try {
       const [rpt, st, tc] = await Promise.all([
-        getJson<ReportResponse>('/api/integrity/report'),
-        getJson<StoresResponse>('/api/integrity/stores'),
-        getJson<TopCategoriesResponse>('/api/integrity/top-categories'),
+        fetchJson<ReportResponse>('/api/integrity/report', { cache: 'no-store' }),
+        fetchJson<StoresResponse>('/api/integrity/stores', { cache: 'no-store' }),
+        fetchJson<TopCategoriesResponse>('/api/integrity/top-categories', { cache: 'no-store' }),
       ]);
-      setReport(rpt);
-      setStores(st.stores ?? []);
-      setTopCats(tc);
+      if (!rpt.ok) throw new Error(`integrity report: HTTP ${rpt.status}`);
+      if (!st.ok) throw new Error(`integrity stores: HTTP ${st.status}`);
+      if (!tc.ok) throw new Error(`integrity top-categories: HTTP ${tc.status}`);
+      setReport(rpt.data);
+      setStores(st.data.stores ?? []);
+      setTopCats(tc.data);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -122,13 +128,13 @@ export default function DataIntegrity() {
       return;
     }
     if (dryRun && p.would_update) {
-      setRenameMsg(`Dry run: would update ${JSON.stringify(p.would_update)}`);
+      setRenameMsg(`תצוגה מקדימה: ${JSON.stringify(p.would_update)}`);
       return;
     }
     if (p.rows_updated) {
-      setRenameMsg(`Updated ${JSON.stringify(p.rows_updated)}`);
+      setRenameMsg(`עודכן: ${JSON.stringify(p.rows_updated)}`);
     } else {
-      setRenameMsg('Done.');
+      setRenameMsg(he.integrity.saved);
     }
     void loadAll();
   };
@@ -144,7 +150,7 @@ export default function DataIntegrity() {
       return;
     }
     if (typeof p.forward_filled_uncategorized === 'number' && p.forward_filled_uncategorized > 0) {
-      setTxnMsg(`Filled ${p.forward_filled_uncategorized} uncategorized row(s) for ${storeName}.`);
+      setTxnMsg(`מולאו ${p.forward_filled_uncategorized} שורות ללא סיווג עבור ${storeName}.`);
     }
     void loadAll();
   };
@@ -162,7 +168,11 @@ export default function DataIntegrity() {
       setTxnMsg(typeof p.message === 'string' ? p.message : `HTTP ${r.status}`);
       return;
     }
-    setTxnMsg(excluded_from_calculations === 1 ? `Row ${rowId} excluded from calculations.` : `Row ${rowId} included again.`);
+    setTxnMsg(
+      excluded_from_calculations === 1
+        ? `שורה ${rowId} הוחרגה מחישובים.`
+        : `שורה ${rowId} הוחזרה לחישובים.`,
+    );
     void loadAll();
   };
 
@@ -171,7 +181,7 @@ export default function DataIntegrity() {
     const fpTrim = quickFingerprint.trim();
     setTxnMsg(null);
     if (!idTrim && !fpTrim) {
-      setTxnMsg('Enter a ledger row ID and/or paste a fingerprint (either is enough).');
+      setTxnMsg(he.integrity.enterIdOrFp);
       return;
     }
     setTxnBusy(true);
@@ -180,7 +190,7 @@ export default function DataIntegrity() {
       const n = parseInt(idTrim, 10);
       if (!Number.isFinite(n)) {
         setTxnBusy(false);
-        setTxnMsg('Row id must be a number.');
+        setTxnMsg(he.integrity.rowIdMustBeNumber);
         return;
       }
       body.id = n;
@@ -195,8 +205,12 @@ export default function DataIntegrity() {
       return;
     }
     const rid = typeof p.id === 'number' ? p.id : null;
-    const label = rid != null ? `Row ${rid}` : 'Transaction';
-    setTxnMsg(excluded_from_calculations === 1 ? `${label} excluded from calculations.` : `${label} included again.`);
+    const label = rid != null ? `שורה ${rid}` : 'תנועה';
+    setTxnMsg(
+      excluded_from_calculations === 1
+        ? `${label} הוחרגה מחישובים.`
+        : `${label} הוחזרה לחישובים.`,
+    );
     void loadAll();
   };
 
@@ -211,23 +225,24 @@ export default function DataIntegrity() {
   );
 
   return (
-    <div className="intg-page app-page">
-      <header className="intg-header">
-        <h1 className="intg-title">Data integrity</h1>
-        <p className="intg-sub">
-          Review ledger anomalies, rename categories, adjust store static/dynamic mode, and soft-exclude rows from all
-          calculations (heatmap, dashboard, categorize queue).{' '}
-          <a href="/categorize/">Categorize queue</a>
-        </p>
+    <PageShell
+      title={he.integrity.title}
+      sub={he.integrity.sub}
+      width="full"
+      className="intg-page"
+      actions={
         <div className="intg-toolbar">
+          <Link className="intg-link" to="/categorize">
+            {he.integrity.categorizeQueue}
+          </Link>
           <button type="button" className="intg-btn" onClick={() => void loadAll()} disabled={loading}>
-            {loading ? 'Loading…' : 'Refresh'}
+            {loading ? he.integrity.loading : he.integrity.refresh}
           </button>
         </div>
-      </header>
-
+      }
+    >
       {err ? <div className="intg-error">{err}</div> : null}
-      {!report?.ledger_exists ? <p className="intg-muted">No ledger file found at configured path.</p> : null}
+      {!report?.ledger_exists ? <p className="intg-muted">{he.integrity.noLedger}</p> : null}
       {txnMsg ? <p className="intg-msg intg-msg--txn">{txnMsg}</p> : null}
 
       {topCats && report?.ledger_exists ? (
@@ -240,15 +255,11 @@ export default function DataIntegrity() {
       ) : null}
 
       <section className="intg-card">
-        <h2 className="intg-card-title">Exclude any transaction</h2>
-        <p className="intg-hint">
-          Paste the SQLite <strong>id</strong> (see any check table below, or open <code>ledger.sqlite</code>) and/or the
-          row <strong>fingerprint</strong>. If both are filled, the numeric id is used. The row is kept in the DB but
-          dropped from heatmap, dashboard totals, and categorize.
-        </p>
+        <h2 className="intg-card-title">{he.integrity.excludeAny}</h2>
+        <p className="intg-hint">{he.integrity.excludeHint}</p>
         <div className="intg-rename-row">
           <label className="intg-label">
-            Row id
+            {he.integrity.rowId}
             <input
               className="intg-input"
               type="text"
@@ -256,16 +267,16 @@ export default function DataIntegrity() {
               autoComplete="off"
               value={quickId}
               onChange={(e) => setQuickId(e.target.value)}
-              placeholder="e.g. 1842"
+              placeholder="1842"
             />
           </label>
           <label className="intg-label">
-            Fingerprint
+            {he.integrity.fingerprint}
             <input
               className="intg-input"
               value={quickFingerprint}
               onChange={(e) => setQuickFingerprint(e.target.value)}
-              placeholder="paste full fingerprint string"
+              placeholder="fingerprint"
             />
           </label>
         </div>
@@ -276,7 +287,7 @@ export default function DataIntegrity() {
             disabled={txnBusy || !report?.ledger_exists}
             onClick={() => void onQuickExclude(1)}
           >
-            Exclude from calculations
+            {he.integrity.excludeFromCalcs}
           </button>
           <button
             type="button"
@@ -284,73 +295,92 @@ export default function DataIntegrity() {
             disabled={txnBusy || !report?.ledger_exists}
             onClick={() => void onQuickExclude(0)}
           >
-            Include again
+            {he.integrity.includeAgain}
           </button>
         </div>
       </section>
 
       <section className="intg-card">
-        <h2 className="intg-card-title">Rename category</h2>
-        <p className="intg-hint">Exact string match on `קטגוריה` and `store_category`.</p>
+        <h2 className="intg-card-title">{he.integrity.renameCategory}</h2>
+        <p className="intg-hint">{he.integrity.renameHint}</p>
         <div className="intg-rename-row">
           <label className="intg-label">
-            From
+            {he.integrity.from}
             <input
               className="intg-input"
               value={renameFrom}
               onChange={(e) => setRenameFrom(e.target.value)}
-              placeholder="old name"
             />
           </label>
           <label className="intg-label">
-            To
-            <input className="intg-input" value={renameTo} onChange={(e) => setRenameTo(e.target.value)} placeholder="new name" />
+            {he.integrity.to}
+            <input
+              className="intg-input"
+              value={renameTo}
+              onChange={(e) => setRenameTo(e.target.value)}
+            />
           </label>
         </div>
         <div className="intg-rename-actions">
-          <button type="button" className="intg-btn intg-btn--secondary" disabled={renameBusy} onClick={() => void onRename(true)}>
-            Preview
+          <button
+            type="button"
+            className="intg-btn intg-btn--secondary"
+            disabled={renameBusy}
+            onClick={() => void onRename(true)}
+          >
+            {he.integrity.preview}
           </button>
-          <button type="button" className="intg-btn" disabled={renameBusy} onClick={() => void onRename(false)}>
-            Apply
+          <button
+            type="button"
+            className="intg-btn"
+            disabled={renameBusy}
+            onClick={() => void onRename(false)}
+          >
+            {he.integrity.apply}
           </button>
         </div>
         {renameMsg ? <p className="intg-msg">{renameMsg}</p> : null}
       </section>
 
       <section className="intg-card">
-        <h2 className="intg-card-title">Stores (static / dynamic)</h2>
-        <p className="intg-hint">
-          Static stores may have at most one category. Turning static on backfills uncategorized rows for that payee when possible.
-        </p>
-        {stores && stores.length === 0 ? <p className="intg-muted">No stores in ledger.</p> : null}
+        <h2 className="intg-card-title">{he.integrity.stores}</h2>
+        <p className="intg-hint">{he.integrity.storesHint}</p>
+        {stores && stores.length === 0 ? <p className="intg-muted">{he.integrity.noStores}</p> : null}
         {stores && stores.length > 0 ? (
           <div className="intg-table-wrap">
             <table className="intg-table">
               <thead>
                 <tr>
-                  <th>Store</th>
-                  <th>Mode</th>
-                  <th># cats</th>
-                  <th>Categories</th>
-                  <th>Actions</th>
+                  <th>{he.integrity.store}</th>
+                  <th>{he.integrity.mode}</th>
+                  <th>{he.integrity.catCount}</th>
+                  <th>{he.integrity.categories}</th>
+                  <th>{he.integrity.actions}</th>
                 </tr>
               </thead>
               <tbody>
                 {stores.map((s) => (
                   <tr key={s.store_name}>
                     <td>{s.store_name}</td>
-                    <td>{s.is_static === 1 ? 'static' : 'dynamic'}</td>
+                    <td>{s.is_static === 1 ? he.integrity.static : he.integrity.dynamic}</td>
                     <td>{s.category_count}</td>
                     <td className="intg-cats">{s.categories.length ? s.categories.join(', ') : '—'}</td>
                     <td>
                       {s.is_static === 1 ? (
-                        <button type="button" className="intg-btn intg-btn--small" onClick={() => void onSetStatic(s.store_name, 0)}>
-                          Set dynamic
+                        <button
+                          type="button"
+                          className="intg-btn intg-btn--small"
+                          onClick={() => void onSetStatic(s.store_name, 0)}
+                        >
+                          {he.integrity.setDynamic}
                         </button>
                       ) : (
-                        <button type="button" className="intg-btn intg-btn--small" onClick={() => void onSetStatic(s.store_name, 1)}>
-                          Set static
+                        <button
+                          type="button"
+                          className="intg-btn intg-btn--small"
+                          onClick={() => void onSetStatic(s.store_name, 1)}
+                        >
+                          {he.integrity.setStatic}
                         </button>
                       )}
                     </td>
@@ -363,14 +393,17 @@ export default function DataIntegrity() {
       </section>
 
       <section className="intg-sections">
-        <h2 className="intg-card-title">Checks</h2>
+        <h2 className="intg-card-title">{he.integrity.checks}</h2>
         {sections.map((sec) => {
           const open = !!expanded[sec.id];
           const sev = severityClass[sec.severity] ?? 'intg-sev--info';
           const cols =
             sec.rows.length > 0
               ? Array.from(new Set(sec.rows.flatMap((r) => Object.keys(r)))).filter(
-                  (k) => k !== 'fingerprint' || sec.id === 'null_fingerprint' || sec.id === 'excluded_transactions',
+                  (k) =>
+                    k !== 'fingerprint' ||
+                    sec.id === 'null_fingerprint' ||
+                    sec.id === 'excluded_transactions',
                 )
               : [];
           const canPatchRows =
@@ -381,7 +414,7 @@ export default function DataIntegrity() {
               <button type="button" className="intg-check-hd" onClick={() => toggleSection(sec.id)}>
                 <span className="intg-check-title">{sec.title}</span>
                 <span className="intg-badge">{sec.count}</span>
-                <span className="intg-chevron">{open ? '▼' : '▶'}</span>
+                <span className="intg-chevron">{open ? '▼' : '◀'}</span>
               </button>
               {sec.note ? <p className="intg-note">{sec.note}</p> : null}
               {open && sec.rows.length > 0 ? (
@@ -392,7 +425,7 @@ export default function DataIntegrity() {
                         {cols.map((c) => (
                           <th key={c}>{c}</th>
                         ))}
-                        {canPatchRows ? <th>Calculations</th> : null}
+                        {canPatchRows ? <th>{he.integrity.calculations}</th> : null}
                         <th> </th>
                       </tr>
                     </thead>
@@ -411,7 +444,7 @@ export default function DataIntegrity() {
                                   disabled={txnBusy}
                                   onClick={() => void onPatchExcluded(rowTxnId(row)!, 0)}
                                 >
-                                  Include
+                                  {he.integrity.include}
                                 </button>
                               ) : rowTxnId(row) !== null && sec.id !== 'excluded_transactions' ? (
                                 <button
@@ -420,20 +453,24 @@ export default function DataIntegrity() {
                                   disabled={txnBusy}
                                   onClick={() => void onPatchExcluded(rowTxnId(row)!, 1)}
                                 >
-                                  Exclude
+                                  {he.integrity.exclude}
                                 </button>
                               ) : null}
                             </td>
                           ) : null}
                           <td className="intg-links">
                             {sec.id === 'rare_categories' && typeof row.category === 'string' ? (
-                              <a href={heatmapDetailCategory('expense', row.category)}>Heatmap</a>
+                              <Link to={heatmapDetailCategory('expense', row.category)}>
+                                {he.nav.heatmap}
+                              </Link>
                             ) : null}
                             {sec.id === 'store_category_orphans' && typeof row.category === 'string' ? (
-                              <a href={heatmapDetailCategory('expense', row.category)}>Heatmap</a>
+                              <Link to={heatmapDetailCategory('expense', row.category)}>
+                                {he.nav.heatmap}
+                              </Link>
                             ) : null}
                             {rowTxnLink(row) ? (
-                              <a href={rowTxnLink(row) ?? '#'}>Detail</a>
+                              <Link to={rowTxnLink(row) ?? '#'}>{he.integrity.detail}</Link>
                             ) : null}
                           </td>
                         </tr>
@@ -442,11 +479,13 @@ export default function DataIntegrity() {
                   </table>
                 </div>
               ) : null}
-              {open && sec.rows.length === 0 ? <p className="intg-muted">No sample rows.</p> : null}
+              {open && sec.rows.length === 0 ? (
+                <p className="intg-muted">{he.integrity.noSampleRows}</p>
+              ) : null}
             </div>
           );
         })}
       </section>
-    </div>
+    </PageShell>
   );
 }

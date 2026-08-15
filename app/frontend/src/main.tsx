@@ -3,6 +3,20 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 
+import '@fontsource/assistant/hebrew-400.css';
+import '@fontsource/assistant/hebrew-500.css';
+import '@fontsource/assistant/hebrew-600.css';
+import '@fontsource/assistant/hebrew-700.css';
+import '@fontsource/assistant/latin-400.css';
+import '@fontsource/assistant/latin-500.css';
+import '@fontsource/assistant/latin-600.css';
+import '@fontsource/assistant/latin-700.css';
+import '@fontsource/rubik/hebrew-500.css';
+import '@fontsource/rubik/hebrew-600.css';
+import '@fontsource/rubik/hebrew-700.css';
+import '@fontsource/rubik/latin-500.css';
+import '@fontsource/rubik/latin-600.css';
+import '@fontsource/rubik/latin-700.css';
 import './styles/theme.css';
 import App from './App';
 

@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import PageShell from '../components/PageShell';
 import { fetchJson } from '../lib/api';
+import { he } from '../lib/he';
 
 import './Holdings.css';
 
@@ -18,6 +20,13 @@ type Meta = {
   activity_types?: string[];
 };
 
+/** One pivot row while editing — React state is source of truth for save. */
+type TlEditRow = {
+  originalDate: string;
+  asOfDate: string;
+  cells: Record<string, string>;
+};
+
 function parseLooseNumber(v: unknown): number {
   const s = String(v == null ? '' : v)
     .trim()
@@ -27,11 +36,32 @@ function parseLooseNumber(v: unknown): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
+function fmtNum(n: number): string {
+  return n.toLocaleString('he-IL', { maximumFractionDigits: 2 });
+}
+
+function buildEditRows(
+  dates: string[],
+  acts: string[],
+  byDate: Record<string, Record<string, number>>,
+): TlEditRow[] {
+  return dates.map((d) => {
+    const cells: Record<string, string> = {};
+    for (const a of acts) {
+      const v = Number((byDate[d] && byDate[d][a]) || 0);
+      cells[a] = Number.isFinite(v) ? String(v) : '0';
+    }
+    return { originalDate: d, asOfDate: d, cells };
+  });
+}
+
 export default function Holdings() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [rowsFlat, setRowsFlat] = useState<TimelineRow[]>([]);
   const [snapshotRows, setSnapshotRows] = useState<TimelineRow[]>([]);
   const [timelineEditing, setTimelineEditing] = useState(false);
+  const [editRows, setEditRows] = useState<TlEditRow[]>([]);
+  const [editActs, setEditActs] = useState<string[]>([]);
 
   const [tlFrom, setTlFrom] = useState('');
   const [tlTo, setTlTo] = useState('');
@@ -48,9 +78,6 @@ export default function Holdings() {
   const [pasteParseHint, setPasteParseHint] = useState('');
   const [parsedPasteRows, setParsedPasteRows] = useState<TimelineRow[]>([]);
   const [ingestStatus, setIngestStatus] = useState('');
-  const [tableBump, setTableBump] = useState(0);
-
-  const tlTableRef = useRef<HTMLTableElement | null>(null);
 
   const loadMeta = useCallback(async () => {
     const r = await fetchJson<Meta>('/api/holdings/meta', { cache: 'no-store' });
@@ -73,6 +100,8 @@ export default function Holdings() {
     setRowsFlat(rowList);
     setSnapshotRows(rowList);
     setTimelineEditing(false);
+    setEditRows([]);
+    setEditActs([]);
   }, [tlFrom, tlTo, selectedActs]);
 
   useEffect(() => {
@@ -104,6 +133,24 @@ export default function Holdings() {
     return { acts, dates, byDate };
   }, [rowsFlat]);
 
+  const snapshotPivot = useMemo(() => {
+    if (!snapshotRows.length) {
+      return { byDate: {} as Record<string, Record<string, number>> };
+    }
+    const byDate: Record<string, Record<string, number>> = {};
+    snapshotRows.forEach((r) => {
+      const d = r.as_of_date;
+      if (!byDate[d]) byDate[d] = {};
+      byDate[d][r.activity_type] = Number(r.balance_ils || 0);
+    });
+    return { byDate };
+  }, [snapshotRows]);
+
+  const displayActs = timelineEditing ? editActs : pivot.acts;
+  const displayRows: TlEditRow[] = timelineEditing
+    ? editRows
+    : buildEditRows(pivot.dates, pivot.acts, pivot.byDate);
+
   const summaryLine = useMemo(() => {
     const { acts, dates, byDate } = pivot;
     if (!dates.length) return '';
@@ -115,48 +162,37 @@ export default function Holdings() {
       : 0;
     const delta = totalLatest - totalPrev;
     return (
-      `Latest total (${latest}): ${totalLatest.toLocaleString(undefined, { maximumFractionDigits: 2 })}` +
-      (prev
-        ? ` · Delta vs ${prev}: ${delta.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-        : '')
+      `${he.holdings.latestTotal} (${latest}): ${fmtNum(totalLatest)}` +
+      (prev ? ` · ${he.holdings.deltaVs} ${prev}: ${fmtNum(delta)}` : '')
     );
   }, [pivot]);
 
-  function hasTimelineChanges(): boolean {
-    const el = tlTableRef.current;
-    if (!el) return false;
-    for (const inp of el.querySelectorAll<HTMLInputElement>('.tl_date_input')) {
-      const orig = (inp.getAttribute('data-original-date') || '').trim();
-      const cur = (inp.value || '').trim();
-      if (!cur || cur !== orig) return true;
-    }
-    for (const inp of el.querySelectorAll<HTMLInputElement>('.tl_cell_input')) {
-      const orig = parseLooseNumber(inp.getAttribute('data-original'));
-      const cur = parseLooseNumber(inp.value);
-      if (!Number.isFinite(cur)) return true;
-      if (Math.abs(cur - orig) > 0.000001) return true;
+  const hasTimelineChanges = useMemo(() => {
+    if (!timelineEditing) return false;
+    for (const row of editRows) {
+      const asOf = (row.asOfDate || '').trim();
+      if (!asOf || asOf !== row.originalDate) return true;
+      const origCells = snapshotPivot.byDate[row.originalDate] || {};
+      for (const act of editActs) {
+        const orig = parseLooseNumber(origCells[act] ?? 0);
+        const cur = parseLooseNumber(row.cells[act]);
+        if (!Number.isFinite(cur)) return true;
+        if (Math.abs(cur - orig) > 0.000001) return true;
+      }
     }
     return false;
-  }
+  }, [timelineEditing, editRows, editActs, snapshotPivot]);
 
-  const saveDisabled = useMemo(
-    () => !timelineEditing || !hasTimelineChanges(),
-    [timelineEditing, tableBump, rowsFlat],
-  );
+  const saveDisabled = !timelineEditing || !hasTimelineChanges;
 
-  const timelineEditedRowsPayload = (): TimelineRow[] => {
-    const el = tlTableRef.current;
-    if (!el) return [];
+  function timelineEditedRowsPayload(): TimelineRow[] {
     const rows: TimelineRow[] = [];
     const seen = new Set<string>();
-    for (const tr of el.querySelectorAll('tbody tr')) {
-      const dateInput = tr.querySelector<HTMLInputElement>('.tl_date_input');
-      const asOfDate = String(dateInput?.value || '').trim();
+    for (const row of editRows) {
+      const asOfDate = String(row.asOfDate || '').trim();
       if (!asOfDate) throw new Error('Date is required for all timeline rows.');
-      for (const cell of tr.querySelectorAll<HTMLInputElement>('.tl_cell_input')) {
-        const activityType = String(cell.getAttribute('data-activity') || '').trim();
-        if (!activityType) continue;
-        const raw = String(cell.value || '')
+      for (const activityType of editActs) {
+        const raw = String(row.cells[activityType] ?? '')
           .trim()
           .replace(/,/g, '');
         if (raw === '') continue;
@@ -171,21 +207,44 @@ export default function Holdings() {
       }
     }
     return rows;
-  };
+  }
 
-  const timelineDateMovesPayload = (): { source_date: string; target_date: string }[] => {
-    const el = tlTableRef.current;
-    if (!el) return [];
+  function timelineDateMovesPayload(): { source_date: string; target_date: string }[] {
     const moves: { source_date: string; target_date: string }[] = [];
-    for (const tr of el.querySelectorAll('tbody tr')) {
-      const fromDate = String(tr.getAttribute('data-original-date') || '').trim();
-      const dateInput = tr.querySelector<HTMLInputElement>('.tl_date_input');
-      const toDate = String(dateInput?.value || '').trim();
+    for (const row of editRows) {
+      const fromDate = String(row.originalDate || '').trim();
+      const toDate = String(row.asOfDate || '').trim();
       if (!fromDate || !toDate || fromDate === toDate) continue;
       moves.push({ source_date: fromDate, target_date: toDate });
     }
     return moves;
-  };
+  }
+
+  function setEditDate(rowIdx: number, value: string) {
+    setEditRows((rows) => rows.map((r, i) => (i === rowIdx ? { ...r, asOfDate: value } : r)));
+  }
+
+  function setEditCell(rowIdx: number, activity: string, value: string) {
+    setEditRows((rows) =>
+      rows.map((r, i) =>
+        i === rowIdx ? { ...r, cells: { ...r.cells, [activity]: value } } : r,
+      ),
+    );
+  }
+
+  function startEdit() {
+    setSnapshotRows([...rowsFlat]);
+    setEditActs([...pivot.acts]);
+    setEditRows(buildEditRows(pivot.dates, pivot.acts, pivot.byDate));
+    setTimelineEditing(true);
+  }
+
+  function cancelEdit() {
+    setRowsFlat([...snapshotRows]);
+    setEditRows([]);
+    setEditActs([]);
+    setTimelineEditing(false);
+  }
 
   async function moveTimelineDate(sourceDate: string, targetDate: string): Promise<Record<string, unknown>> {
     const firstTry = await fetchJson('/api/holdings/move-date', {
@@ -250,21 +309,20 @@ export default function Holdings() {
   }
 
   return (
-    <div className="app-page holdings-page">
-      <h1>Holdings Control</h1>
-      <p className="hint">Explore holdings over time and ingest missing data from form rows or pasted grid.</p>
-
-      <section className="card">
-        <h2 style={{ marginTop: 0 }}>Timeline</h2>
-        <div className="row">
-          <label className="col">
-            From <input type="date" value={tlFrom} onChange={(e) => setTlFrom(e.target.value)} />
+    <PageShell title={he.holdings.title} sub={he.holdings.sub} width="default" className="holdings-page">
+      <section className="card holdings-timeline" aria-labelledby="holdings-timeline-heading">
+        <h2 id="holdings-timeline-heading">{he.holdings.timeline}</h2>
+        <div className="holdings-toolbar">
+          <label className="holdings-field">
+            {he.holdings.from}
+            <input type="date" value={tlFrom} onChange={(e) => setTlFrom(e.target.value)} />
           </label>
-          <label className="col">
-            To <input type="date" value={tlTo} onChange={(e) => setTlTo(e.target.value)} />
+          <label className="holdings-field">
+            {he.holdings.to}
+            <input type="date" value={tlTo} onChange={(e) => setTlTo(e.target.value)} />
           </label>
-          <label className="col" style={{ minWidth: '16rem' }}>
-            Activities
+          <label className="holdings-field holdings-field--acts">
+            {he.holdings.activities}
             <select
               multiple
               size={4}
@@ -281,111 +339,90 @@ export default function Holdings() {
               ))}
             </select>
           </label>
-          <button type="button" onClick={() => void loadTimeline()}>
-            Reload
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            disabled={timelineEditing}
-            onClick={() => {
-              setSnapshotRows([...rowsFlat]);
-              setTimelineEditing(true);
-            }}
-          >
-            Edit Table
-          </button>
-          <button
-            type="button"
-            disabled={saveDisabled}
-            onClick={async () => {
-              try {
-                for (const mv of timelineDateMovesPayload()) {
-                  await moveTimelineDate(mv.source_date, mv.target_date);
+          <div className="holdings-toolbar__actions">
+            <button type="button" onClick={() => void loadTimeline()}>
+              {he.holdings.reload}
+            </button>
+            <button type="button" className="secondary" disabled={timelineEditing} onClick={startEdit}>
+              {he.holdings.edit}
+            </button>
+            <button
+              type="button"
+              disabled={saveDisabled}
+              onClick={async () => {
+                try {
+                  for (const mv of timelineDateMovesPayload()) {
+                    await moveTimelineDate(mv.source_date, mv.target_date);
+                  }
+                  const rows = timelineEditedRowsPayload();
+                  await previewAndSaveRows(rows);
+                  setTimelineEditing(false);
+                  setEditRows([]);
+                  setEditActs([]);
+                } catch (e) {
+                  setIngestStatus(`Error: ${e}`);
                 }
-                const rows = timelineEditedRowsPayload();
-                await previewAndSaveRows(rows);
-                setTimelineEditing(false);
-              } catch (e) {
-                setIngestStatus(`Error: ${e}`);
-              }
-            }}
-          >
-            Save Edits
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            disabled={!timelineEditing}
-            onClick={() => {
-              setRowsFlat([...snapshotRows]);
-              setTimelineEditing(false);
-            }}
-          >
-            Cancel
-          </button>
+              }}
+            >
+              {he.holdings.save}
+            </button>
+            <button type="button" className="secondary" disabled={!timelineEditing} onClick={cancelEdit}>
+              {he.holdings.cancel}
+            </button>
+          </div>
         </div>
-        <p className="hint">
-          Rows: {meta?.row_count ?? 0} · Dates: {meta?.date_count ?? 0} · Range: {meta?.min_date ?? '-'} ..{' '}
-          {meta?.max_date ?? '-'}
+        <p className="hint holdings-meta">
+          {he.holdings.rows}: {meta?.row_count ?? 0} · {he.holdings.dates}: {meta?.date_count ?? 0} ·{' '}
+          {he.holdings.range}: {meta?.min_date ?? '—'} .. {meta?.max_date ?? '—'}
         </p>
-        <div className="hint">{summaryLine}</div>
-        <div
-          className="holdings-scroll"
-          onInput={() => setTableBump((b) => b + 1)}
-          onChange={() => setTableBump((b) => b + 1)}
-        >
-          <table ref={tlTableRef}>
+        {summaryLine ? <div className="hint holdings-summary">{summaryLine}</div> : null}
+        <div className="holdings-scroll">
+          <table className="holdings-tl">
             <thead>
               <tr>
-                <th>Date</th>
-                {pivot.acts.map((a) => (
+                <th>{he.holdings.date}</th>
+                {displayActs.map((a) => (
                   <th key={a}>{a}</th>
                 ))}
-                <th>Total</th>
+                <th>{he.holdings.total}</th>
               </tr>
             </thead>
             <tbody>
-              {pivot.dates.length === 0 ? (
+              {displayRows.length === 0 ? (
                 <tr>
-                  <td colSpan={Math.max(2, pivot.acts.length + 2)}>No data</td>
+                  <td colSpan={Math.max(2, displayActs.length + 2)}>{he.holdings.empty}</td>
                 </tr>
               ) : (
-                pivot.dates.map((d) => {
+                displayRows.map((row, rowIdx) => {
                   let rowTotal = 0;
-                  pivot.acts.forEach((a) => {
-                    rowTotal += Number((pivot.byDate[d] && pivot.byDate[d][a]) || 0);
+                  displayActs.forEach((a) => {
+                    const n = parseLooseNumber(row.cells[a]);
+                    if (Number.isFinite(n)) rowTotal += n;
                   });
                   return (
-                    <tr key={d} data-original-date={d}>
+                    <tr key={row.originalDate || `row-${rowIdx}`}>
                       <td>
                         <input
                           className="tl_date_input"
-                          data-original-date={d}
                           type="date"
-                          defaultValue={d}
+                          value={row.asOfDate}
                           readOnly={!timelineEditing}
-                          onChange={() => setTableBump((b) => b + 1)}
+                          onChange={(e) => setEditDate(rowIdx, e.target.value)}
                         />
                       </td>
-                      {pivot.acts.map((a) => {
-                        const v = Number((pivot.byDate[d] && pivot.byDate[d][a]) || 0);
-                        const displayVal = Number.isFinite(v) ? String(v) : '0';
-                        return (
-                          <td key={a}>
-                            <input
-                              className="tl_cell_input"
-                              data-activity={a}
-                              data-original={displayVal}
-                              type="text"
-                              defaultValue={displayVal}
-                              readOnly={!timelineEditing}
-                              onChange={() => setTableBump((b) => b + 1)}
-                            />
-                          </td>
-                        );
-                      })}
-                      <td>{rowTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                      {displayActs.map((a) => (
+                        <td key={a}>
+                          <input
+                            className="tl_cell_input"
+                            type="text"
+                            inputMode="decimal"
+                            value={row.cells[a] ?? ''}
+                            readOnly={!timelineEditing}
+                            onChange={(e) => setEditCell(rowIdx, a, e.target.value)}
+                          />
+                        </td>
+                      ))}
+                      <td className="holdings-tl__total">{fmtNum(rowTotal)}</td>
                     </tr>
                   );
                 })
@@ -395,114 +432,128 @@ export default function Holdings() {
         </div>
       </section>
 
-      <section className="card">
-        <h2 style={{ marginTop: 0 }}>Manual Ingest</h2>
+      <section className="card holdings-add" aria-labelledby="holdings-add-heading">
+        <h2 id="holdings-add-heading">{he.holdings.add}</h2>
         <div className="mode-row">
-          <button type="button" className="secondary" onClick={() => setManualMode('manual')}>
-            One Date + Activities
+          <button
+            type="button"
+            className={manualMode === 'manual' ? '' : 'secondary'}
+            onClick={() => setManualMode('manual')}
+          >
+            {he.holdings.manualMode}
           </button>
-          <button type="button" className="secondary" onClick={() => setManualMode('paste')}>
-            Paste Grid
+          <button
+            type="button"
+            className={manualMode === 'paste' ? '' : 'secondary'}
+            onClick={() => setManualMode('paste')}
+          >
+            {he.holdings.pasteMode}
           </button>
         </div>
 
-        <div className={`mode ${manualMode === 'manual' ? 'active' : ''}`}>
-          <div className="row">
-            <label className="col">
-              As of date <input type="date" value={mDate} onChange={(e) => setMDate(e.target.value)} />
-            </label>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => setActivityRows((r) => [...r, { activity: '', balance: '' }])}
-            >
-              Add activity row
-            </button>
-          </div>
-          {activityRows.map((row, i) => (
-            <div key={i} className="activity-row">
-              <input
-                type="text"
-                list="activities-dl"
-                placeholder="activity type"
-                value={row.activity}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setActivityRows((rows) => rows.map((x, j) => (j === i ? { ...x, activity: v } : x)));
-                }}
-              />
-              <input
-                type="text"
-                placeholder="balance ILS"
-                value={row.balance}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setActivityRows((rows) => rows.map((x, j) => (j === i ? { ...x, balance: v } : x)));
-                }}
-              />
+        {manualMode === 'manual' ? (
+          <div className="mode active">
+            <div className="holdings-toolbar">
+              <label className="holdings-field">
+                {he.holdings.asOf}
+                <input type="date" value={mDate} onChange={(e) => setMDate(e.target.value)} />
+              </label>
               <button
                 type="button"
                 className="secondary"
-                onClick={() => setActivityRows((rows) => rows.filter((_, j) => j !== i))}
+                onClick={() => setActivityRows((r) => [...r, { activity: '', balance: '' }])}
               >
-                Remove
+                {he.holdings.addActivity}
               </button>
             </div>
-          ))}
-          <datalist id="activities-dl">
-            {(meta?.activity_types || []).map((v) => (
-              <option key={v} value={v} />
+            {activityRows.map((row, i) => (
+              <div key={i} className="activity-row">
+                <input
+                  type="text"
+                  list="activities-dl"
+                  placeholder={he.holdings.activityPlaceholder}
+                  value={row.activity}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setActivityRows((rows) => rows.map((x, j) => (j === i ? { ...x, activity: v } : x)));
+                  }}
+                />
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder={he.holdings.balancePlaceholder}
+                  value={row.balance}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setActivityRows((rows) => rows.map((x, j) => (j === i ? { ...x, balance: v } : x)));
+                  }}
+                />
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setActivityRows((rows) => rows.filter((_, j) => j !== i))}
+                >
+                  {he.holdings.remove}
+                </button>
+              </div>
             ))}
-          </datalist>
-          <p style={{ marginTop: '0.75rem' }}>
-            <button type="button" onClick={() => void previewAndSaveRows(manualRowsPayload())}>
-              Preview + Save
-            </button>
-          </p>
-        </div>
-
-        <div className={`mode ${manualMode === 'paste' ? 'active' : ''}`}>
-          <p className="hint">Paste tab-separated grid: first column date, other columns activity types.</p>
-          <textarea
-            value={pasteText}
-            onChange={(e) => setPasteText(e.target.value)}
-            placeholder={'תאריך\tעובר ושב\tניירות ערך\n2026-05-01\t1200\t3300'}
-          />
-          <div className="row" style={{ marginTop: '0.5rem' }}>
-            <button
-              type="button"
-              className="secondary"
-              onClick={async () => {
-                const r = await fetchJson<{
-                  rows?: TimelineRow[];
-                  message?: string;
-                  invalid_cells?: unknown[];
-                }>('/api/holdings/parse-paste-grid', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ text: pasteText }),
-                });
-                const data = r.data || {};
-                setParsedPasteRows(data.rows || []);
-                setPasteParseHint(
-                  `${data.message || ''} Rows: ${(data.rows || []).length} Invalid cells: ${(data.invalid_cells || []).length}`,
-                );
-                setIngestStatus(JSON.stringify(data, null, 2));
-              }}
-            >
-              Parse
-            </button>
-            <button type="button" onClick={() => void previewAndSaveRows(parsedPasteRows)}>
-              Preview + Save
-            </button>
+            <datalist id="activities-dl">
+              {(meta?.activity_types || []).map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
+            <p className="holdings-add__actions">
+              <button type="button" onClick={() => void previewAndSaveRows(manualRowsPayload())}>
+                {he.holdings.previewSave}
+              </button>
+            </p>
           </div>
-          <div className="hint">{pasteParseHint}</div>
-        </div>
+        ) : (
+          <div className="mode active">
+            <p className="hint">{he.holdings.pasteHint}</p>
+            <textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder={'תאריך\tעובר ושב\tניירות ערך\n2026-05-01\t1200\t3300'}
+            />
+            <div className="holdings-toolbar holdings-add__actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={async () => {
+                  const r = await fetchJson<{
+                    rows?: TimelineRow[];
+                    message?: string;
+                    invalid_cells?: unknown[];
+                  }>('/api/holdings/parse-paste-grid', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: pasteText }),
+                  });
+                  const data = r.data || {};
+                  setParsedPasteRows(data.rows || []);
+                  setPasteParseHint(
+                    `${data.message || ''} Rows: ${(data.rows || []).length} Invalid cells: ${(data.invalid_cells || []).length}`,
+                  );
+                  setIngestStatus(JSON.stringify(data, null, 2));
+                }}
+              >
+                {he.holdings.parse}
+              </button>
+              <button type="button" onClick={() => void previewAndSaveRows(parsedPasteRows)}>
+                {he.holdings.previewSave}
+              </button>
+            </div>
+            {pasteParseHint ? <div className="hint">{pasteParseHint}</div> : null}
+          </div>
+        )}
 
-        <pre className="status" style={{ marginTop: '1rem' }}>
-          {ingestStatus}
-        </pre>
+        {ingestStatus ? (
+          <pre className="status" style={{ marginTop: '1rem' }}>
+            {ingestStatus}
+          </pre>
+        ) : null}
       </section>
-    </div>
+    </PageShell>
   );
 }

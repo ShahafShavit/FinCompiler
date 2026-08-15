@@ -59,14 +59,16 @@ export async function putJson<T = unknown>(
   });
 }
 
+const HE_IL = 'he-IL';
+
 export function formatMoney(v: number | null | undefined, suffix = '₪'): string {
   if (v == null || !Number.isFinite(v)) return '—';
   const abs = Math.abs(v);
   const sign = v < 0 ? '-' : '';
   if (abs >= 1000) {
-    return `${sign}${abs.toLocaleString(undefined, { maximumFractionDigits: 0 })}${suffix}`;
+    return `${sign}${abs.toLocaleString(HE_IL, { maximumFractionDigits: 0 })}${suffix}`;
   }
-  return `${sign}${abs.toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix}`;
+  return `${sign}${abs.toLocaleString(HE_IL, { maximumFractionDigits: 2 })}${suffix}`;
 }
 
 export function formatPct(v: number | null | undefined): string {
