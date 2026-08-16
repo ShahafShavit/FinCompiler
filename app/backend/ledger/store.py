@@ -1491,7 +1491,7 @@ def count_ledger_transaction_rows(db_path: str) -> int:
 
 
 def load_first_transaction_needing_manual_category(db_path: str) -> pd.Series | None:
-    """Next row for manual categorization (``ORDER BY תאריך, id``)."""
+    """Next row for manual categorization (oldest effective date first)."""
     migrate_ledger_db(db_path)
     conn = sqlite3.connect(db_path)
     try:
@@ -1500,7 +1500,7 @@ def load_first_transaction_needing_manual_category(db_path: str) -> pd.Series | 
         {base}
           AND "fingerprint" IS NOT NULL AND TRIM("fingerprint") != ''
           AND {_SQL_NEEDS_MANUAL_CATEGORY}
-        ORDER BY "תאריך", id
+        ORDER BY ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}), id
         LIMIT 1
         """
         df = pd.read_sql_query(q, conn)

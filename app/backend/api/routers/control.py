@@ -20,6 +20,7 @@ from api import (
     heatmap,
     integrity,
     jobs,
+    ledger_search,
     providers_config,
     sheets,
     transaction_drop_rules_config,
@@ -188,6 +189,28 @@ def register_routes(app: FastAPI) -> None:
             payload = {"ok": False, "exists": False, "mtime_ns": None, "error": "server_error"}
         return Response(
             content=json_bytes_strict(payload),
+            media_type="application/json; charset=utf-8",
+        )
+
+    @r.get("/api/ledger/search", include_in_schema=False)
+    async def ledger_search_api(request: Request) -> Response:
+        try:
+            code, payload = ledger_search.handle_search_request(str(request.url.query))
+        except Exception:  # noqa: BLE001
+            log.exception("GET /api/ledger/search failed")
+            code, payload = 500, {
+                "ok": False,
+                "error": "server_error",
+                "message": "ledger search failed (see server log)",
+                "total": 0,
+                "limit": 50,
+                "offset": 0,
+                "columns": [],
+                "rows": [],
+            }
+        return Response(
+            content=json_bytes_strict(payload),
+            status_code=code,
             media_type="application/json; charset=utf-8",
         )
 

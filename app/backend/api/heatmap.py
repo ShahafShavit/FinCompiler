@@ -754,11 +754,16 @@ def _sort_detail_frame(frame: pd.DataFrame, source_df: pd.DataFrame | None = Non
     elif "effective_tx_date" in frame.columns:
         eff = frame["effective_tx_date"]
     if eff is not None and bool(eff.notna().any()):
-        return (
-            frame.assign(__eff=eff)
-            .sort_values("__eff", ascending=False, na_position="last")
-            .drop(columns=["__eff"])
-        )
+        work = frame.assign(__eff=eff)
+        by = ["__eff"]
+        ascending = [False]
+        if "תאריך" in work.columns:
+            by.append("תאריך")
+            ascending.append(False)
+        if "id" in work.columns:
+            by.append("id")
+            ascending.append(False)
+        return work.sort_values(by, ascending=ascending, na_position="last").drop(columns=["__eff"])
     if "תאריך" in frame.columns:
         return frame.sort_values("תאריך", ascending=False)
     return frame
