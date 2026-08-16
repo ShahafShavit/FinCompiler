@@ -12,7 +12,11 @@ from datetime import datetime
 
 import config
 from selenium import webdriver, common
-from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    StaleElementReferenceException,
+    TimeoutException,
+)
 from selenium.webdriver import Keys, ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -269,16 +273,53 @@ def _wait_leumi_post_login(driver, timeout: float = 30.0) -> None:
         ) from e
 
 
+def _wait_ngx_spinner_gone(driver, *, timeout: float = 30.0) -> None:
+    """
+    Wait until Leumi/Angular ``ngx-spinner-overlay`` layers are gone or not displayed.
+
+    ``element_to_be_clickable`` can succeed while a spinner still intercepts the click.
+    """
+
+    def _gone(d) -> bool:
+        for el in d.find_elements(By.CSS_SELECTOR, "div.ngx-spinner-overlay"):
+            try:
+                if el.is_displayed():
+                    return False
+            except StaleElementReferenceException:
+                continue
+        return True
+
+    WebDriverWait(driver, timeout).until(_gone)
+
+
 def wait_click(driver, locator, timeout: float, description: str):
     """Wait until clickable, scroll into view, click; log and re-raise on timeout."""
     by, value = locator
     log.info("SELENIUM → %s", description)
     try:
-        el = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, value)))
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
-        el.click()
-        log.info("SELENIUM ok: %s", description)
-        return el
+        deadline = time.time() + timeout
+        last_intercept: ElementClickInterceptedException | None = None
+        while time.time() < deadline:
+            el = WebDriverWait(driver, max(1.0, deadline - time.time())).until(
+                EC.element_to_be_clickable((by, value))
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
+            try:
+                el.click()
+                log.info("SELENIUM ok: %s", description)
+                return el
+            except ElementClickInterceptedException as e:
+                last_intercept = e
+                # Loading overlays (ngx-spinner) often cover the button briefly after filter.
+                try:
+                    _wait_ngx_spinner_gone(driver, timeout=min(8.0, max(1.0, deadline - time.time())))
+                except TimeoutException:
+                    pass
+                time.sleep(0.25)
+        if last_intercept is not None:
+            log.error("SELENIUM CLICK INTERCEPTED: %s (%s=%r)", description, by, value)
+            raise last_intercept
+        raise TimeoutException(f"{description}: element not clickable within {timeout}s")
     except TimeoutException as e:
         log.error("SELENIUM TIMEOUT: %s (%s=%r)", description, by, value)
         raise TimeoutException(f"{description}: element not clickable within {timeout}s") from e
@@ -358,6 +399,27 @@ def _leumi_click_login_submit(driver, strategy: str) -> None:
     log.info("SELENIUM ok: Leumi — submit login (%s)", strategy)
 
 
+def timestamp_file_in_dir(directory: str, basename: str) -> str | None:
+    """
+    Rename ``basename`` in ``directory`` with a ``_DD-MM-YYYY`` suffix (before extension).
+
+    Prefer this over ``timestamp_latest_file_in_dir`` when ``verify_download`` already
+    returned the new file name.
+    """
+    if not basename:
+        return None
+    path = os.path.join(directory, basename)
+    if not os.path.isfile(path):
+        log.warning("timestamp_file_in_dir: missing %s", path)
+        return None
+    stem, ext = os.path.splitext(path)
+    current_time = datetime.now().strftime("%d-%m-%Y")
+    new_filename = f"{stem}_{current_time}{ext}"
+    os.rename(path, new_filename)
+    log.info("Renamed download to timestamped name: %s", new_filename)
+    return os.path.basename(new_filename)
+
+
 def timestamp_latest_file_in_dir(directory, file_extension=".xlsx"):
     """
     Renames the latest file in the specified directory with a timestamp.
@@ -366,19 +428,43 @@ def timestamp_latest_file_in_dir(directory, file_extension=".xlsx"):
     directory (str): The directory where the file is located.
     file_extension (str): The extension of the file to rename (default is .xlsx).
     """
-    # Short delay to ensure the file is completely written to disk
-    time.sleep(2)
-
-    # Find the latest file in the directory
     files = [f for f in os.listdir(directory) if f.endswith(file_extension)]
     if files:
         latest_file = max([os.path.join(directory, f) for f in files], key=os.path.getctime)
-        current_time = datetime.now().strftime('%d-%m-%Y')
-        new_filename = f"{os.path.splitext(latest_file)[0]}_{current_time}{os.path.splitext(latest_file)[1]}"
-        os.rename(latest_file, new_filename)
-        log.info("Renamed latest download to timestamped name: %s", new_filename)
-    else:
-        log.warning("timestamp_latest_file_in_dir: no %s files in %s", file_extension, directory)
+        return timestamp_file_in_dir(directory, os.path.basename(latest_file))
+    log.warning("timestamp_latest_file_in_dir: no %s files in %s", file_extension, directory)
+    return None
+
+
+def _focus_main_and_close_extras(driver) -> None:
+    """
+    Close every window except the first (e-banking shell) and focus it.
+
+    Required when chaining Bank.download kinds in one Chrome session — holdings and
+    credit leave export/SSO popups open that would break the next navigation.
+    """
+    try:
+        handles = list(driver.window_handles)
+    except Exception:
+        return
+    if not handles:
+        return
+    main = handles[0]
+    for h in handles[1:]:
+        try:
+            driver.switch_to.window(h)
+            driver.close()
+        except Exception:
+            pass
+    try:
+        driver.switch_to.window(main)
+    except Exception:
+        try:
+            remaining = driver.window_handles
+            if remaining:
+                driver.switch_to.window(remaining[0])
+        except Exception:
+            pass
 
 
 def load_driver():
@@ -386,6 +472,7 @@ def load_driver():
     os.makedirs(download_dir, exist_ok=True)
 
     chrome_options = webdriver.ChromeOptions()
+    chrome_options.page_load_strategy = "eager"
     chrome_options.add_experimental_option("prefs", {
         "download.default_directory": download_dir,
         "download.prompt_for_download": False,
@@ -394,7 +481,6 @@ def load_driver():
     })
 
     driver = webdriver.Chrome(options=chrome_options)
-    driver.maximize_window()
     log.debug("Chrome WebDriver ready")
     return driver
 
@@ -411,6 +497,12 @@ class Bank:
             self.close()
             raise
         log.info("Bank portal session: login flow completed")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
     def close(self) -> None:
         """Idempotent: quit Chrome and drop the session (safe after failed login or when done)."""
@@ -432,12 +524,10 @@ class Bank:
         optional_click(
             self.__driver,
             (By.CSS_SELECTOR, "button.app-close-cookies-btn"),
-            timeout=15,
+            timeout=3,
             description="Leumi login — cookie banner close",
         )
         flow_debug_pause(self.__driver, "Leumi login page loaded (after cookie dismiss attempt)")
-        _wait_leumi_login_page_ready(self.__driver, timeout=30.0)
-        time.sleep(1.5)
         max_attempts = 3
         submit_strategies = ("actions", "js_mouse", "native")
         for attempt in range(max_attempts):
@@ -448,10 +538,14 @@ class Bank:
             )
             _wait_leumi_login_page_ready(self.__driver, timeout=30.0)
             _leumi_fill_login_credentials(self.__driver, self.__username, self.__password)
-            time.sleep(0.35)
+            # Wait until submit is clickable instead of a fixed 10s first-submit sleep.
+            WebDriverWait(self.__driver, 15).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[@type='submit' and contains(@class, 'cursor-pointer')]")
+                )
+            )
             if attempt == 0:
-                log.info("SELENIUM: Leumi — initial settle wait before first submit (10s)")
-                time.sleep(10.0)
+                time.sleep(0.5)  # brief settle for Angular bind after fill
             _leumi_click_login_submit(
                 self.__driver,
                 submit_strategies[attempt % len(submit_strategies)],
@@ -489,6 +583,7 @@ class Bank:
         )
         if file.lower() == "holdings":
             log.info("Bank: holdings — open balances page")
+            _focus_main_and_close_extras(self.__driver)
             self.__driver.get("https://hb2.bankleumi.co.il/ebanking/Accounts/DisplayBalances.aspx#/")
             wait_click(self.__driver, (By.ID, "BTNEXCEL"), 10, "Leumi holdings — BTNEXCEL (open export popup)")
             WebDriverWait(self.__driver, 10).until(EC.number_of_windows_to_be(2))
@@ -502,10 +597,11 @@ class Bank:
                 log.error("Bank: holdings — verify_download failed")
                 raise FileNotFoundError("Failed to download holdings export.")
             log.info("Bank: holdings — saved as %r", new_name)
+            _focus_main_and_close_extras(self.__driver)
             return True
         elif file.lower() == "osh":
             log.info("Bank: osh — switch to main window and open account transactions")
-            self.__driver.switch_to.window(self.__driver.window_handles[0])
+            _focus_main_and_close_extras(self.__driver)
             self.__driver.get(
                 "https://hb2.bankleumi.co.il/ebanking/SO/SPA.aspx#/ts/BusinessAccountTrx?WidgetPar=1"
             )
@@ -528,19 +624,15 @@ class Bank:
 
             date_start_input.click()
             date_start_input.send_keys(Keys.CONTROL + "a")
-            time.sleep(0.5)
             date_start_input.send_keys(Keys.DELETE)
-            time.sleep(0.5)
             if from_date is None:
                 current_year = str(datetime.now().year)[-2:]
                 date_str = "01.01." + current_year
                 log.debug("Osh export: defaulting start date to %s", date_str)
             else:
                 date_str = from_date
-            time.sleep(0.5)
             date_start_input.send_keys(date_str)
             date_start_input.click()
-            time.sleep(0.5)
             if to_date is not None:
                 date_end_input = WebDriverWait(self.__driver, 10).until(
                     EC.element_to_be_clickable((By.XPATH, "//input[@placeholder='עד תאריך']"))
@@ -556,14 +648,17 @@ class Bank:
                 10,
                 "Leumi osh — apply filter",
             )
-            log.info("Bank: osh — waiting for transaction grid")
-            time.sleep(5)
+            log.info("Bank: osh — waiting for spinner + Excel export button")
+            _wait_ngx_spinner_gone(self.__driver, timeout=45.0)
+            WebDriverWait(self.__driver, 30).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[@title='יצוא לאקסל']"))
+            )
             baseline = set(os.listdir(download_dir))
             log.info("Bank: osh — baseline download dir (%s file(s)); starting Excel export", len(baseline))
             wait_click(
                 self.__driver,
                 (By.XPATH, "//button[@title='יצוא לאקסל']"),
-                10,
+                20,
                 "Leumi osh — export to Excel",
             )
             modal_dialog = WebDriverWait(self.__driver, 10).until(
@@ -585,9 +680,11 @@ class Bank:
                 log.error("Bank: osh — verify_download failed")
                 raise FileNotFoundError("Failed to download osh export.")
             log.info("Bank: osh — saved as %r", new_name)
+            _focus_main_and_close_extras(self.__driver)
             return True
         elif file.lower() == "credit":
             log.info("Bank: credit — Leumi cards world (Isracard/Max popups)")
+            _focus_main_and_close_extras(self.__driver)
             self.__driver.get("https://hb2.bankleumi.co.il/ebanking/SO/SPA.aspx#/ts/CardsWorld")
             WebDriverWait(self.__driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.swiper-wrapper"))
@@ -657,7 +754,7 @@ class Bank:
                 domain = urllib.parse.urlparse(current_url).netloc
                 log.info("Bank: credit — card %s popup domain=%s", index, domain)
                 if "isracard.co.il" in domain:
-                    for attempt in range(15):
+                    for attempt in range(3):
                         wait_click(
                             self.__driver,
                             (
@@ -684,26 +781,26 @@ class Bank:
                             "Isracard (Leumi) — Excel download",
                         )
                         ok_is, _ = verify_download(
-                            download_dir, poll_interval=1.5, timeout=90, baseline_names=bl
+                            download_dir, poll_interval=1.5, timeout=45, baseline_names=bl
                         )
                         if ok_is:
                             self.__driver.close()
                             self.__driver.switch_to.window(self.__driver.window_handles[0])
                             break
                         log.warning(
-                            "Bank: credit — Isracard download not ready (attempt %s/15)",
+                            "Bank: credit — Isracard download not ready (attempt %s/3)",
                             attempt + 1,
                         )
-                        time.sleep(2)
+                        time.sleep(1)
                     else:
-                        log.error("Bank: credit — Isracard popup: giving up after 15 attempts")
+                        log.error("Bank: credit — Isracard popup: giving up after 3 attempts")
                         self.__driver.close()
                         self.__driver.switch_to.window(self.__driver.window_handles[0])
                         raise FileNotFoundError(
                             "Isracard (Leumi popup): download did not complete after retries."
                         )
                 if "max.co.il" in domain:
-                    for attempt in range(15):
+                    for attempt in range(3):
                         months_hebrew = [
                             "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
                             "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",
@@ -748,39 +845,35 @@ class Bank:
                             "Max (Leumi) — Excel link",
                         )
                         ok_mx, _ = verify_download(
-                            download_dir, poll_interval=1.5, timeout=90, baseline_names=blm
+                            download_dir, poll_interval=1.5, timeout=45, baseline_names=blm
                         )
                         if ok_mx:
                             self.__driver.close()
                             self.__driver.switch_to.window(self.__driver.window_handles[0])
                             break
                         log.warning(
-                            "Bank: credit — Max download not ready (attempt %s/15)",
+                            "Bank: credit — Max download not ready (attempt %s/3)",
                             attempt + 1,
                         )
-                        time.sleep(2)
+                        time.sleep(1)
                     else:
-                        log.error("Bank: credit — Max popup: giving up after 15 attempts")
+                        log.error("Bank: credit — Max popup: giving up after 3 attempts")
                         self.__driver.close()
                         self.__driver.switch_to.window(self.__driver.window_handles[0])
                         raise FileNotFoundError(
                             "Max (Leumi popup): download did not complete after retries."
                         )
             log.info("Bank: credit — finished card iteration")
+            _focus_main_and_close_extras(self.__driver)
             return True
         elif file.lower() in ("trade_portfolio", "lti_portfolio"):
             log.info("Bank: LTI trade portfolio — open portfolio page")
-            try:
-                if len(self.__driver.window_handles) > 1:
-                    self.__driver.switch_to.window(self.__driver.window_handles[0])
-            except Exception:
-                pass
+            _focus_main_and_close_extras(self.__driver)
             self.__driver.get(LTI_TRADE_PORTFOLIO_URL)
-            time.sleep(1.5)
             optional_click(
                 self.__driver,
                 (By.CSS_SELECTOR, "button.app-close-cookies-btn"),
-                timeout=10,
+                timeout=3,
                 description="Leumi LTI portfolio — cookie banner close",
             )
             WebDriverWait(self.__driver, 45).until(
@@ -804,6 +897,7 @@ class Bank:
                 log.error("Bank: LTI trade portfolio — verify_download failed")
                 raise FileNotFoundError("Failed to download LTI trade portfolio export.")
             log.info("Bank: LTI trade portfolio — saved as %r", new_name)
+            _focus_main_and_close_extras(self.__driver)
             return True
         raise ValueError(
             f"Unknown Bank.download kind {file!r} (use holdings, osh, credit, or trade_portfolio)."
@@ -823,30 +917,54 @@ class IsracardCredit:
         self.__last6 = last6
         self.__password = password
         self.__driver = load_driver()
-        self.__driver = self.__login()
+        try:
+            self.__driver = self.__login()
+        except BaseException:
+            self.close()
+            raise
         log.info("Isracard portal session: login completed")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Idempotent: quit Chrome and drop the session."""
+        d = getattr(self, "_IsracardCredit__driver", None)
+        if d is None:
+            return
+        try:
+            log.debug("Isracard portal session: closing WebDriver")
+            d.quit()
+        except Exception:
+            pass
+        self.__driver = None
 
     def __login(self):
         log.debug("Isracard: opening login page")
         self.__driver.get('https://digital.isracard.co.il/personalarea/Login/')
-        time.sleep(2)
-
         flip_form = WebDriverWait(self.__driver, 10).until(
-            EC.presence_of_element_located((By.ID, "flip"))
+            EC.element_to_be_clickable((By.ID, "flip"))
         )
         flip_form.click()
-        time.sleep(1)
-        username = self.__driver.find_element(By.NAME, 'otpLoginId_ID')
-        last_digit = self.__driver.find_element(By.NAME, 'otpLoginLastDigits_ID')
-        password = self.__driver.find_element(By.NAME, 'otpLoginPwd')
+        username = WebDriverWait(self.__driver, 10).until(
+            EC.element_to_be_clickable((By.NAME, "otpLoginId_ID"))
+        )
+        last_digit = WebDriverWait(self.__driver, 10).until(
+            EC.element_to_be_clickable((By.NAME, "otpLoginLastDigits_ID"))
+        )
+        password = WebDriverWait(self.__driver, 10).until(
+            EC.element_to_be_clickable((By.NAME, "otpLoginPwd"))
+        )
         username.send_keys(self.__username)
-        time.sleep(1)
         last_digit.send_keys(self.__last6)
-        time.sleep(1)
         password.send_keys(self.__password)
-        time.sleep(1)
         submit_button = WebDriverWait(self.__driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//button[@type='submit' and @aria-label='כניסה לחשבון שלי']"))
+            EC.element_to_be_clickable(
+                (By.XPATH, "//button[@type='submit' and @aria-label='כניסה לחשבון שלי']")
+            )
         )
         submit_button.click()
 
@@ -882,7 +1000,6 @@ class IsracardCredit:
             EC.element_to_be_clickable(
                 (By.XPATH, "//button[contains(@ng-click, \"dc.callExport('Excel', selectedDate2)\")]"))
         )
-        time.sleep(3)
         baseline = set(os.listdir(download_dir))
         log.info("Isracard.download: baseline %s file(s); triggering Excel export", len(baseline))
         link.click()
@@ -901,8 +1018,10 @@ class IsracardCredit:
         return True
 
     def __del__(self):
-        log.debug("Isracard portal session: closing WebDriver")
-        self.__driver.quit()
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class MaxCredit:
@@ -911,8 +1030,30 @@ class MaxCredit:
         self.username = username
         self.password = password
         self.__driver = load_driver()
-        self.__driver = self.__login()
+        try:
+            self.__driver = self.__login()
+        except BaseException:
+            self.close()
+            raise
         log.info("Max portal session: login completed")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Idempotent: quit Chrome and drop the session."""
+        d = getattr(self, "_MaxCredit__driver", None)
+        if d is None:
+            return
+        try:
+            log.debug("Max portal session: closing WebDriver")
+            d.quit()
+        except Exception:
+            pass
+        self.__driver = None
 
     def __login(self):
         log.debug("Max: opening homepage")
@@ -922,35 +1063,26 @@ class MaxCredit:
                 (By.XPATH, "//a[contains(@class, 'go-to-personal-area') and contains(@class, 'log-in-status')]"))
         )
         link.click()
-        time.sleep(1)
-        # Wait for the modal dialog to appear
-        modal_dialog = WebDriverWait(self.__driver, 10).until(
+        WebDriverWait(self.__driver, 10).until(
             EC.visibility_of_element_located((By.CLASS_NAME, "modal-dialog"))
         )
-        time.sleep(1)
-        # Click the "כניסה עם סיסמה" tab
         password_tab = WebDriverWait(self.__driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//a[@id='login-password-link' and contains(@class, 'nav-link')]"))
+            EC.element_to_be_clickable(
+                (By.XPATH, "//a[@id='login-password-link' and contains(@class, 'nav-link')]")
+            )
         )
-        time.sleep(1)
         password_tab.click()
 
-        # Locate the username and password input fields
         username_input = WebDriverWait(self.__driver, 10).until(
-            EC.presence_of_element_located((By.ID, "user-name"))
+            EC.element_to_be_clickable((By.ID, "user-name"))
         )
-
         password_input = WebDriverWait(self.__driver, 10).until(
-            EC.presence_of_element_located((By.ID, "password"))
+            EC.element_to_be_clickable((By.ID, "password"))
         )
 
-        # Input the username and password
-        username_input.send_keys(self.username)  # Replace with your actual username
-        time.sleep(1)
-        password_input.send_keys(self.password)  # Replace with your actual password
-        time.sleep(1)
+        username_input.send_keys(self.username)
+        password_input.send_keys(self.password)
 
-        # Locate the submit button and click it
         submit_button = WebDriverWait(self.__driver, 25).until(
             EC.element_to_be_clickable((By.XPATH, "//span[text()='לכניסה לאזור האישי']/.."))
         )
@@ -965,12 +1097,13 @@ class MaxCredit:
     def download(self, card_digits=None):
         log.info("Max.download: starting card_digits=%r", card_digits)
         self.__driver.get("https://www.max.co.il/transaction-details/personal")
-        time.sleep(2)
         element = WebDriverWait(self.__driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'כל הכרטיסים')]"))
         )
         element.click()
-        time.sleep(1)
+        WebDriverWait(self.__driver, 10).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "card-item"))
+        )
         card_digits_list = []
         cards = self.__driver.find_elements(By.CLASS_NAME, 'card-item')
 
@@ -981,18 +1114,15 @@ class MaxCredit:
         log.debug("Max.download: discovered card last-four list=%s", card_digits_list)
         if not card_digits:
             for card in card_digits_list:
-                time.sleep(1)
                 element = WebDriverWait(self.__driver, 10).until(
                     EC.element_to_be_clickable(
                         (By.XPATH, f"//li[contains(text(), '{card}')]")
                     )
                 )
                 element.click()
-                time.sleep(1)
                 element = WebDriverWait(self.__driver, 10).until(
                     EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'ייצא לאקסל')]"))
                 )
-                time.sleep(2)
                 bl = set(os.listdir(download_dir))
                 log.info("Max.download: card=%r baseline %s file(s); export", card, len(bl))
                 element.click()
@@ -1005,11 +1135,11 @@ class MaxCredit:
                         card,
                         new_file,
                     )
+                    if new_file:
+                        timestamp_file_in_dir(download_dir, new_file)
                 else:
                     log.error("Max.download: verify failed for card=%r", card)
                     raise FileNotFoundError(f"Failed to download Max export for card {card!r}.")
-
-                timestamp_latest_file_in_dir(download_dir, ".xlsx")
 
                 element = WebDriverWait(self.__driver, 10).until(
                     EC.element_to_be_clickable((By.XPATH, f"//div[contains(text(), '{card}')]"))
@@ -1017,14 +1147,12 @@ class MaxCredit:
                 element.click()
         elif str(card_digits) in card_digits_list:
             card = str(card_digits)
-            time.sleep(1)
             element = WebDriverWait(self.__driver, 10).until(
                 EC.element_to_be_clickable(
                     (By.XPATH, f"//li[contains(text(), '{card}')]")
                 )
             )
             element.click()
-            time.sleep(1)
             element = WebDriverWait(self.__driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'ייצא לאקסל')]"))
             )
@@ -1036,19 +1164,20 @@ class MaxCredit:
             )
             if ok:
                 log.info("Max.download: single card=%r file=%r", card, new_file)
+                if new_file:
+                    timestamp_file_in_dir(download_dir, new_file)
             else:
                 log.error("Max.download: verify failed for card=%r", card)
                 raise FileNotFoundError(f"Failed to download Max export for card {card!r}.")
-
-            timestamp_latest_file_in_dir(download_dir, ".xlsx")
-            time.sleep(5)
         else:
             log.error("Max.download: card_digits %r not in %s", card_digits, card_digits_list)
             raise Exception(f"Card digits {card_digits} not found within list inside website")
 
     def __del__(self):
-        log.debug("Max portal session: closing WebDriver")
-        self.__driver.quit()
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 def _is_stable_file(path: str, settle_seconds: float = 0.35) -> bool:

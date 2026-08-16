@@ -154,9 +154,8 @@ Steps (each can be skipped with --no-*):
 
 TRANSACTIONS_EPILOG = """\
 notes:
-  - Bank credit + bank osh can run in one Leumi session (enable both flags).
-  - --fetch-trade-portfolio opens a separate Leumi session for the LTI portfolio Excel export
-    (use ``fetch-lti`` if you want download-only, no transactions pipeline).
+  - Bank credit, bank osh, and LTI share one Leumi session when enabled together
+    (``fetch-lti`` alone still opens its own browser).
   - --from-date / --to-date only affect --fetch-bank-osh (same strings as in the bank UI).
   - Row-drop rules for normalize live in ``data/private/transaction_drop_rules.json`` (Settings in the web app).
   - --categorize: after compile, run auto categorization; finish in the browser at /categorize/ (run ``python -m api.main``).
@@ -176,9 +175,9 @@ ALL_DESCRIPTION = """\
 Full portal downloads (unless --no-fetch), then one shared route, then BOTH pipelines.
 
 Order:
-  1. By default: download holdings, Max/Isracard exports, and Leumi credit + osh (one session
-     for the bank flags). Use --fetch-trade-portfolio for an extra Leumi session (LTI trade portfolio Excel).
-     Use --no-fetch to skip all browsers (same as placing files in data/input/ yourself).
+  1. By default: download Max/Isracard (separate Chromes), then one Leumi session for holdings +
+     credit + osh (and LTI if --fetch-trade-portfolio). Use --no-fetch to skip all browsers
+     (same as placing files in data/input/ yourself).
   2. route - split everything in data/input into holdings vs transactions inboxes.
   3. Full holdings pipeline (no second route).
   4. Full transactions pipeline (no second route).
@@ -344,7 +343,7 @@ def _build_parser() -> argparse.ArgumentParser:
     tg_fetch.add_argument(
         "--fetch-trade-portfolio",
         action="store_true",
-        help="Separate Leumi session: download LTI trade portfolio Excel export.",
+        help="Download LTI trade portfolio Excel (own session when used alone; shared with other Leumi kinds in ``all`` / combined fetches).",
     )
     tg_fetch.add_argument(
         "--from-date",
@@ -420,7 +419,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ag.add_argument(
         "--fetch-trade-portfolio",
         action="store_true",
-        help="Also download Leumi LTI trade portfolio Excel (extra Leumi browser session after holdings).",
+        help="Also download Leumi LTI trade portfolio Excel in the same Leumi session as holdings/credit/osh.",
     )
     ag2 = a.add_argument_group("after route + pipelines")
     ag2.add_argument(

@@ -78,17 +78,12 @@ def fetch_holdings(*, sink: Optional[Callable[[str], None]] = None) -> None:
         _notify("FETCH: bank credentials not configured — open Settings → Providers", sink)
         return
     BankCls = providers.bank_class(p.bank_provider)
-    b: fetch.Bank | None = None
-    try:
-        b = BankCls(p.bank_username, p.bank_password)
+    with BankCls(p.bank_username, p.bank_password) as b:
         b.download("holdings")
-    finally:
-        if b is not None:
-            b.close()
 
 
 def fetch_trade_portfolio(*, sink: Optional[Callable[[str], None]] = None) -> None:
-    """Leumi LTI trade portfolio Excel export (separate browser session)."""
+    """Leumi LTI trade portfolio Excel export (single-source wrapper; own browser session)."""
     _notify("FETCH: Leumi LTI trade portfolio (Excel)", sink)
     p = providers.get_resolved()
     if not p.investment_portfolio_enabled:
@@ -98,13 +93,8 @@ def fetch_trade_portfolio(*, sink: Optional[Callable[[str], None]] = None) -> No
         _notify("FETCH: bank credentials not configured — open Settings → Providers", sink)
         return
     BankCls = providers.bank_class(p.bank_provider)
-    b: fetch.Bank | None = None
-    try:
-        b = BankCls(p.bank_username, p.bank_password)
+    with BankCls(p.bank_username, p.bank_password) as b:
         b.download("trade_portfolio")
-    finally:
-        if b is not None:
-            b.close()
 
 
 def fetch_transactions_bank_credit_and_osh(
@@ -117,23 +107,73 @@ def fetch_transactions_bank_credit_and_osh(
 ) -> None:
     """Single Leumi session: optional credit card exports + optional osh (bank transactions)."""
     _notify("FETCH: bank session (credit / osh as requested)", sink)
+    _run_leumi_fetches(
+        holdings=False,
+        trade_portfolio=False,
+        bank_credit=credit,
+        bank_osh=bank_osh,
+        from_date=from_date,
+        to_date=to_date,
+        sink=sink,
+    )
+
+
+def _run_leumi_fetches(
+    *,
+    holdings: bool = False,
+    trade_portfolio: bool = False,
+    bank_credit: bool = False,
+    bank_osh: bool = False,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    sink: Optional[Callable[[str], None]] = None,
+) -> None:
+    """
+    One Chrome + one Leumi login for all requested bank kinds in this job.
+
+    Safe order: holdings → credit → osh → trade_portfolio (LTI last; leaves driver on /lti/).
+    """
+    if not (holdings or trade_portfolio or bank_credit or bank_osh):
+        return
     p = providers.get_resolved()
+    if trade_portfolio and not p.investment_portfolio_enabled:
+        _notify("FETCH: LTI trade portfolio skipped (disabled in providers.json)", sink)
+        trade_portfolio = False
+    if not (holdings or trade_portfolio or bank_credit or bank_osh):
+        return
     if not p.bank_username or not p.bank_password:
         _notify("FETCH: bank credentials not configured — open Settings → Providers", sink)
         return
+
+    kinds: list[str] = []
+    if holdings:
+        kinds.append("holdings")
+    if bank_credit:
+        kinds.append("credit")
+    if bank_osh:
+        kinds.append("osh")
+    if trade_portfolio:
+        kinds.append("trade_portfolio")
+
+    _notify(
+        f"FETCH: Leumi session — kinds={kinds!r} (one login)",
+        sink,
+    )
     BankCls = providers.bank_class(p.bank_provider)
-    downloader: fetch.Bank | None = None
-    try:
-        downloader = BankCls(p.bank_username, p.bank_password)
-        if credit:
-            _notify("FETCH: credit (via bank portal)", sink)
-            downloader.download("credit")
-        if bank_osh:
-            _notify("FETCH: bank account transactions (osh)", sink)
-            downloader.download("osh", from_date=from_date, to_date=to_date)
-    finally:
-        if downloader is not None:
-            downloader.close()
+    with BankCls(p.bank_username, p.bank_password) as b:
+        for kind in kinds:
+            if kind == "holdings":
+                _notify("FETCH: bank holdings export", sink)
+                b.download("holdings")
+            elif kind == "credit":
+                _notify("FETCH: credit (via bank portal)", sink)
+                b.download("credit")
+            elif kind == "osh":
+                _notify("FETCH: bank account transactions (osh)", sink)
+                b.download("osh", from_date=from_date, to_date=to_date)
+            elif kind == "trade_portfolio":
+                _notify("FETCH: Leumi LTI trade portfolio (Excel)", sink)
+                b.download("trade_portfolio")
 
 
 def run_portal_fetches(
@@ -150,23 +190,25 @@ def run_portal_fetches(
     """
     Run only the selected Selenium downloads into the shared inbox (``data/input/``).
 
-    Order matches ``run_pipeline.py all``: holdings, LTI trade portfolio (optional), Max/Isracard,
-    then one Leumi session for the requested credit/osh exports.
+    Max/Isracard use their own Chromes. All Leumi kinds (holdings, credit, osh, LTI)
+    share one browser session and one login when any of them are selected.
     """
-    if holdings:
-        fetch_holdings(sink=sink)
-    if trade_portfolio:
-        fetch_trade_portfolio(sink=sink)
+    # Direct credit portals first (separate sites), then one Leumi session for bank kinds.
     if max_isracard:
         fetch_transactions_max_isracard(sink=sink)
-    if bank_credit or bank_osh:
-        fetch_transactions_bank_credit_and_osh(
-            credit=bank_credit,
+    if holdings or trade_portfolio or bank_credit or bank_osh:
+        _run_leumi_fetches(
+            holdings=holdings,
+            trade_portfolio=trade_portfolio,
+            bank_credit=bank_credit,
             bank_osh=bank_osh,
             from_date=from_date,
             to_date=to_date,
             sink=sink,
         )
+
+
+_CREDIT_PORTAL_MAX_ATTEMPTS = 3
 
 
 def _fetch_one_credit_portal(
@@ -198,23 +240,31 @@ def _fetch_one_credit_portal(
 
     label = "Max credit cards" if card_id == "max" else "Isracard"
     _notify(f"FETCH: {label}", sink)
-    failed = True
-    importer = None
-    while failed:
+    last_err: BaseException | None = None
+    for attempt in range(1, _CREDIT_PORTAL_MAX_ATTEMPTS + 1):
+        importer = None
         try:
             if card_id == "isracard":
                 importer = cls(user, pw, last6)
             else:
                 importer = cls(user, pw)
-            try:
-                importer.download()
-                failed = False
-            except FileNotFoundError as e:
-                _notify(f"{label} retry: {e}", sink)
+            importer.download()
+            return
+        except FileNotFoundError as e:
+            last_err = e
+            _notify(f"{label} retry ({attempt}/{_CREDIT_PORTAL_MAX_ATTEMPTS}): {e}", sink)
         except Exception as e:
-            _notify(f"{label} error, retrying: {e}", sink)
-    if importer is not None:
-        del importer
+            last_err = e
+            _notify(f"{label} error ({attempt}/{_CREDIT_PORTAL_MAX_ATTEMPTS}): {e}", sink)
+        finally:
+            if importer is not None:
+                try:
+                    importer.close()
+                except Exception:
+                    pass
+    raise RuntimeError(
+        f"{label}: failed after {_CREDIT_PORTAL_MAX_ATTEMPTS} attempts"
+    ) from last_err
 
 
 def fetch_transactions_max_isracard(*, sink: Optional[Callable[[str], None]] = None) -> None:
@@ -311,13 +361,13 @@ def run_transactions_pipeline(
     sink: Optional[Callable[[str], None]] = None,
 ) -> None:
     ensure_pipeline_dirs()
-    if fetch_lti_portfolio:
-        fetch_trade_portfolio(sink=sink)
     if fetch_max_isracard:
         fetch_transactions_max_isracard(sink=sink)
-    if fetch_bank_credit or fetch_bank_osh:
-        fetch_transactions_bank_credit_and_osh(
-            credit=fetch_bank_credit,
+    if fetch_lti_portfolio or fetch_bank_credit or fetch_bank_osh:
+        _run_leumi_fetches(
+            holdings=False,
+            trade_portfolio=fetch_lti_portfolio,
+            bank_credit=fetch_bank_credit,
             bank_osh=fetch_bank_osh,
             from_date=from_date,
             to_date=to_date,
