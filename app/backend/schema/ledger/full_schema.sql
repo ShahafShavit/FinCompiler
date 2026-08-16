@@ -45,6 +45,8 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (15, 'add_trade_p
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (16, 'top_categories_navigation_layout');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (17, 'trade_portfolio_position_price_multiplier');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (18, 'portfolio_instrument_multiplier_no_snapshot');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (19, 'installment_plan_override');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (20, 'installment_plan_override_settled');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -242,6 +244,18 @@ CREATE TABLE IF NOT EXISTS top_categories (
     FOREIGN KEY (top_name) REFERENCES top_category_column(top_name) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_top_categories_sub ON top_categories (sub_category);
+
+-- -----------------------------------------------------------------------------
+-- Installment / recurring plan overrides (hide, merge, split)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS installment_plan_override (
+    plan_id     TEXT PRIMARY KEY,
+    hidden      INTEGER NOT NULL DEFAULT 0,
+    merged_into TEXT,
+    split_by    TEXT CHECK (split_by IS NULL OR split_by IN ('last4', 'amount')),
+    settled     INTEGER NOT NULL DEFAULT 0 CHECK (settled IN (0, 1)),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+) STRICT;
 
 -- =============================================================================
 -- Triggers: timestamps (evaluation Section 13.9)

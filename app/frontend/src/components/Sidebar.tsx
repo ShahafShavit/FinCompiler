@@ -45,6 +45,18 @@ function IconExplore() {
   );
 }
 
+function IconInstallments() {
+  return (
+    <svg className="sidebar__icon" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 5h16v3H4V5zm0 5.5h16v3H4v-3zM4 16h10v3H4v-3z"
+        fill="currentColor"
+        opacity="0.95"
+      />
+    </svg>
+  );
+}
+
 function IconCategorize() {
   return (
     <svg className="sidebar__icon" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -131,6 +143,7 @@ export default function Sidebar({ categorizeBadge }: { categorizeBadge?: number 
     { to: '/', label: he.nav.dashboard, end: true, icon: <IconDashboard /> },
     { to: '/heatmap', label: he.nav.heatmap, icon: <IconHeatmap /> },
     { to: '/explore', label: he.nav.explore, icon: <IconExplore /> },
+    { to: '/installments', label: he.nav.installments, icon: <IconInstallments /> },
     {
       to: '/categorize',
       label: he.nav.categorize,

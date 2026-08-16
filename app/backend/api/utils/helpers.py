@@ -181,6 +181,8 @@ SPA_ROUTES: frozenset[str] = frozenset(
         "/heatmap/detail/",
         "/explore",
         "/explore/",
+        "/installments",
+        "/installments/",
         "/integrity",
         "/integrity/",
         "/categorize",

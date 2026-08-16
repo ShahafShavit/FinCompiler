@@ -126,3 +126,35 @@
 .explore-row--excluded {
   opacity: 0.65;
 }
+
+.explore-edit-hint {
+  margin: 0 0 0.5rem;
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+}
+
+.explore-cell-input {
+  width: 100%;
+  min-width: 8rem;
+  max-width: 16rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--fg);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.explore-cell-notes {
+  min-height: 2.4rem;
+  max-width: 18rem;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+.explore-row-err {
+  color: var(--bad, #e07070);
+  font-size: var(--fs-caption);
+  padding: 0.25rem 0.55rem 0.55rem;
+}

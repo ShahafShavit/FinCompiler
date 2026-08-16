@@ -184,12 +184,18 @@ def _build_where(
     amount_max: float | None,
     direction: str,
     include_excluded: bool,
+    ids: list[int] | None = None,
 ) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
 
     if not include_excluded:
         clauses.append(LEDGER_SQL_TX_INCLUDED)
+
+    if ids:
+        placeholders = ",".join("?" for _ in ids)
+        clauses.append(f"id IN ({placeholders})")
+        params.extend(ids)
 
     if date_from:
         clauses.append(f"({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}) >= ?")
@@ -210,7 +216,8 @@ def _build_where(
     elif direction == "income":
         clauses.append('COALESCE("בזכות", 0) > 0')
 
-    if q:
+    # When ids are provided, skip free-text q — caller wants exactly those rows.
+    if q and not ids:
         for token in q.split():
             if not token:
                 continue
@@ -221,6 +228,26 @@ def _build_where(
     if not clauses:
         return "1=1", []
     return " AND ".join(clauses), params
+
+
+def _parse_ids(raw: str | None) -> list[int]:
+    if not raw or not raw.strip():
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for part in re.split(r"[,;\s]+", raw.strip()):
+        if not part:
+            continue
+        if not re.fullmatch(r"\d+", part):
+            continue
+        n = int(part)
+        if n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+        if len(out) >= 2000:
+            break
+    return out
 
 
 def search_ledger(qs: dict[str, list[str]] | None = None) -> tuple[int, dict[str, Any]]:
@@ -240,6 +267,7 @@ def search_ledger(qs: dict[str, list[str]] | None = None) -> tuple[int, dict[str
         }
 
     q = _first(qs, "q")
+    ids = _parse_ids(_first(qs, "ids"))
     date_from = _first(qs, "date_from")
     date_to = _first(qs, "date_to")
     amount_min = _parse_float(_first(qs, "amount_min"))
@@ -247,7 +275,12 @@ def search_ledger(qs: dict[str, list[str]] | None = None) -> tuple[int, dict[str
     direction_raw = (_first(qs, "direction") or "all").lower()
     direction = direction_raw if direction_raw in {"all", "expense", "income"} else "all"
     include_excluded = _parse_bool(_first(qs, "include_excluded"), False)
-    limit = _parse_int(_first(qs, "limit"), _DEFAULT_LIMIT, lo=1, hi=_MAX_LIMIT)
+    # Allow a larger page when fetching an explicit id set (merged plans, etc.)
+    max_limit = 2000 if ids else _MAX_LIMIT
+    default_limit = min(len(ids), max_limit) if ids else _DEFAULT_LIMIT
+    if ids and default_limit < 1:
+        default_limit = _DEFAULT_LIMIT
+    limit = _parse_int(_first(qs, "limit"), default_limit if ids else _DEFAULT_LIMIT, lo=1, hi=max_limit)
     offset = _parse_int(_first(qs, "offset"), 0, lo=0, hi=10_000_000)
 
     if date_from and not _ISO_DATE_RE.match(date_from):
@@ -263,6 +296,7 @@ def search_ledger(qs: dict[str, list[str]] | None = None) -> tuple[int, dict[str
         amount_max=amount_max,
         direction=direction,
         include_excluded=include_excluded,
+        ids=ids or None,
     )
 
     col_list = ", ".join(

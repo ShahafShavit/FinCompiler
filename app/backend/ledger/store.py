@@ -28,6 +28,10 @@ heatmap, dashboard aggregates, categorize queue, and integrity anomaly checks.
 ``AFTER INSERT`` on ``trade_portfolio_position`` ensures parent + multiplier rows; chart/API joins on
 account + security number only (no snapshot date).
 
+**v19** — ``installment_plan_override``: hide / merge / split corrections for the installments UI.
+
+**v20** — ``installment_plan_override.settled``: mark remaining installments as paid off manually.
+
 Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile upsert implements MIG-E2.
 """
 from __future__ import annotations
@@ -891,6 +895,22 @@ CREATE TABLE IF NOT EXISTS trade_portfolio_position_multiplier (
                 _migrate_v18_portfolio_multiplier(conn)
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (18, 'portfolio_instrument_multiplier_no_snapshot')"
+            )
+            ver = _current_schema_version(conn)
+            if ver < 19:
+                from ledger.installment_logic import INSTALLMENT_PLAN_OVERRIDE_V19_DDL
+
+                conn.executescript(INSTALLMENT_PLAN_OVERRIDE_V19_DDL)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (19, 'installment_plan_override')"
+            )
+            ver = _current_schema_version(conn)
+            if ver < 20:
+                from ledger.installment_logic import ensure_installment_plan_override_settled_column
+
+                ensure_installment_plan_override_settled_column(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (20, 'installment_plan_override_settled')"
             )
             conn.commit()
         finally:
@@ -2206,7 +2226,14 @@ def upsert_compiled_dataframe_to_ledger(
 
 # --- Installment statement_month backfill (ex-installment_statement_months) ---
 
-_INSTALLMENT_RE = re.compile(r"תשלום\s*(\d+)\s*מתוך\s*(\d+)")
+from ledger.installment_logic import (
+    InstallmentRow as _InstallmentRow,
+    add_months_ym as _add_months_ym,
+    cluster_by_amount as _cluster_installment_by_amount,
+    exclude_parion_installment as _exclude_parion_installment,
+    month_after_taarich_installment as _month_after_taarich_installment,
+    parse_installment_detail as _parse_installment_detail,
+)
 
 _INSTALLMENT_PREVIEW_KEYS = [
     "id",
@@ -2229,67 +2256,9 @@ _INSTALLMENT_PREVIEW_KEYS = [
 ]
 
 
-@dataclass(frozen=True)
-class _InstallmentRow:
-    id: int
-    taarich: str
-    bh: float
-    source: str | None
-    detail: str
-    x: int
-    y: int
-
-
 def default_installment_preview_json_path() -> str:
     """``data/export/installment_statement_month_preview.json``."""
     return os.path.normpath(os.path.join(config.export_dir.rstrip(os.sep), "installment_statement_month_preview.json"))
-
-
-def _parse_installment_detail(detail: str) -> tuple[int, int] | None:
-    if not detail or not detail.strip():
-        return None
-    m = _INSTALLMENT_RE.search(detail)
-    if not m:
-        return None
-    return int(m.group(1)), int(m.group(2))
-
-
-def _exclude_parion_installment(detail: str) -> bool:
-    return "פרעון תשלום" in detail
-
-
-def _month_after_taarich_installment(taarich: str) -> str | None:
-    try:
-        d = date.fromisoformat(taarich.strip()[:10])
-    except ValueError:
-        return None
-    y, m = d.year, d.month
-    if m == 12:
-        return f"{y + 1}-01"
-    return f"{y:04d}-{m + 1:02d}"
-
-
-def _add_months_ym(ym: str, n: int) -> str:
-    y, mo = map(int, ym.split("-"))
-    idx = y * 12 + (mo - 1) + n
-    y2, r = divmod(idx, 12)
-    return f"{y2:04d}-{r + 1:02d}"
-
-
-def _cluster_installment_by_amount(rows: list[_InstallmentRow], max_span: float) -> list[list[_InstallmentRow]]:
-    if not rows:
-        return []
-    s = sorted(rows, key=lambda r: r.bh)
-    out: list[list[_InstallmentRow]] = []
-    i = 0
-    n = len(s)
-    while i < n:
-        j = i
-        while j + 1 < n and s[j + 1].bh - s[i].bh <= max_span:
-            j += 1
-        out.append(s[i : j + 1])
-        i = j + 1
-    return out
 
 
 def _installment_load_candidates(conn: sqlite3.Connection) -> list[dict[str, Any]]:

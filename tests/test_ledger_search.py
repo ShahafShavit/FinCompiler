@@ -170,6 +170,20 @@ class LedgerSearchTests(unittest.TestCase):
         self.assertEqual(payload3["total"], 1)
         self.assertEqual(payload3["rows"][0]["fingerprint"], "fp_day")
 
+    def test_ids_filter_returns_all_requested(self) -> None:
+        from api import ledger_search
+
+        db = self._fresh_db()
+        a = self._insert(db, date="2024-01-01", debit=10, source="A", fingerprint="fp_a")
+        b = self._insert(db, date="2024-02-01", debit=20, source="B", fingerprint="fp_b")
+        self._insert(db, date="2024-03-01", debit=30, source="C", fingerprint="fp_c")
+
+        code, payload = ledger_search.search_ledger({"ids": [f"{a},{b}"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual(len(payload["rows"]), 2)
+        self.assertEqual({r["fingerprint"] for r in payload["rows"]}, {"fp_a", "fp_b"})
+
     def test_filters_combine_with_and(self) -> None:
         from api import ledger_search
 

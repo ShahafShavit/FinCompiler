@@ -18,6 +18,7 @@ from api import (
     categorize_queue,
     dashboard,
     heatmap,
+    installment_plans,
     integrity,
     jobs,
     ledger_search,
@@ -207,6 +208,45 @@ def register_routes(app: FastAPI) -> None:
                 "offset": 0,
                 "columns": [],
                 "rows": [],
+            }
+        return Response(
+            content=json_bytes_strict(payload),
+            status_code=code,
+            media_type="application/json; charset=utf-8",
+        )
+
+    @r.get("/api/installment-plans", include_in_schema=False)
+    async def installment_plans_list(request: Request) -> Response:
+        try:
+            code, payload = installment_plans.handle_list_request(str(request.url.query))
+        except Exception:  # noqa: BLE001
+            log.exception("GET /api/installment-plans failed")
+            code, payload = 500, {
+                "ok": False,
+                "error": "server_error",
+                "message": "installment plans failed (see server log)",
+                "installments": {"summary": {}, "plans": []},
+                "recurring": {"summary": {}, "fees": []},
+            }
+        return Response(
+            content=json_bytes_strict(payload),
+            status_code=code,
+            media_type="application/json; charset=utf-8",
+        )
+
+    @r.patch("/api/installment-plans/{plan_id:path}", include_in_schema=False)
+    async def installment_plans_patch(plan_id: str, request: Request) -> Response:
+        raw = await request.body()
+        try:
+            from urllib.parse import unquote
+
+            code, payload = installment_plans.patch_installment_plan(unquote(plan_id), raw)
+        except Exception:  # noqa: BLE001
+            log.exception("PATCH /api/installment-plans failed")
+            code, payload = 500, {
+                "ok": False,
+                "error": "server_error",
+                "message": "installment plan patch failed (see server log)",
             }
         return Response(
             content=json_bytes_strict(payload),
