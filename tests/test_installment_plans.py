@@ -37,6 +37,7 @@ class InstallmentPlansTests(unittest.TestCase):
         credit: float = 0,
         source: str = "",
         detail: str = "",
+        extended: str = "",
         category: str = "",
         fingerprint: str,
         statement_month: str | None = None,
@@ -51,7 +52,7 @@ class InstallmentPlansTests(unittest.TestCase):
                   "תאריך", "בחובה", "בזכות", "מקור עסקה", "פירוט נוסף", "תאור מורחב",
                   "4 ספרות", "fingerprint", "קטגוריה", notes, statement_month,
                   ingested_at, excluded_from_calculations
-                ) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, '', ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
                 """,
                 (
                     date,
@@ -59,6 +60,7 @@ class InstallmentPlansTests(unittest.TestCase):
                     credit,
                     source,
                     detail,
+                    extended,
                     card,
                     fingerprint,
                     category,
@@ -200,6 +202,7 @@ class InstallmentPlansTests(unittest.TestCase):
         self.assertNotIn("total_count", f)
         self.assertAlmostEqual(f["monthly_amount"], 29.9)
         self.assertAlmostEqual(f["lifetime_paid"], 29.9 * 6)
+        self.assertEqual(f.get("amount_mode"), "fixed")
 
     def test_tagged_excluded_from_recurring(self) -> None:
         from api import installment_plans
@@ -342,6 +345,20 @@ class InstallmentPlansTests(unittest.TestCase):
         ids = {p["plan_id"] for p in listed["installments"]["plans"]}
         self.assertIn(b, ids)
         self.assertNotIn(a, ids)
+        target = next(p for p in listed["installments"]["plans"] if p["plan_id"] == b)
+        sources = target.get("merged_sources") or []
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["plan_id"], a)
+
+        code, _ = installment_plans.patch_installment_plan(
+            a, b'{"merged_into": null}'
+        )
+        self.assertEqual(code, 200)
+        listed2 = installment_plans.list_installment_plans({"as_of": ["2024-10"]})[1]
+        ids2 = {p["plan_id"] for p in listed2["installments"]["plans"]}
+        self.assertEqual(ids2, {a, b})
+        target2 = next(p for p in listed2["installments"]["plans"] if p["plan_id"] == b)
+        self.assertFalse(target2.get("merged_sources"))
 
     def test_split_by_last4(self) -> None:
         from api import installment_plans
@@ -544,11 +561,139 @@ class InstallmentPlansTests(unittest.TestCase):
         self.assertEqual(f["plan_id"], small)
         self.assertEqual(f["months_seen"], 8)
         self.assertEqual(f["lifetime_paid"], 100.0 * 4 + 500.0 * 4)
-        # Median of monthly totals [100,100,100,100,500,500,500,500] = 300
-        self.assertEqual(f["monthly_amount"], 300.0)
+        # Latest month (2024-08) total is 500
+        self.assertEqual(f["monthly_amount"], 500.0)
+        self.assertEqual(f["last_month_amount"], 500.0)
+        self.assertEqual(f["typical_monthly_amount"], 300.0)
         self.assertEqual(f["first_seen"], "2024-01")
         self.assertEqual(f["last_seen"], "2024-08")
         self.assertNotIn("_rows", f)
+        sources = f.get("merged_sources") or []
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["plan_id"], big)
+
+        code, _ = installment_plans.patch_installment_plan(
+            big, b'{"merged_into": null}'
+        )
+        self.assertEqual(code, 200)
+        fees3 = installment_plans.list_installment_plans({"as_of": ["2024-08"]})[1][
+            "recurring"
+        ]["fees"]
+        self.assertEqual(len(fees3), 2)
+
+    def test_variable_amount_monthly_recurring(self) -> None:
+        """Bank-transfer style: same merchant, monthly cadence, amounts vary >±10."""
+        from api import installment_plans
+
+        db = self._fresh_db()
+        amounts = [350.0, 420.0, 280.0, 900.0, 510.0, 475.0]
+        for i, (ym, amt) in enumerate(
+            zip(
+                [
+                    "2024-01-05",
+                    "2024-02-05",
+                    "2024-03-05",
+                    "2024-04-05",
+                    "2024-05-05",
+                    "2024-06-05",
+                ],
+                amounts,
+            )
+        ):
+            self._insert(
+                db,
+                date=ym,
+                debit=amt,
+                source="ד. אביטן",
+                detail="העברה",
+                category="משק בית",
+                fingerprint=f"fp-var-{i}",
+            )
+        code, payload = installment_plans.list_installment_plans(
+            {"as_of": ["2024-06"]}
+        )
+        self.assertEqual(code, 200)
+        fees = payload["recurring"]["fees"]
+        self.assertEqual(len(fees), 1)
+        f = fees[0]
+        self.assertEqual(f["amount_mode"], "variable")
+        self.assertIn("|var", f["plan_id"])
+        self.assertEqual(f["merchant"], "ד. אביטן")
+        self.assertEqual(f["category"], "משק בית")
+        self.assertEqual(f["months_seen"], 6)
+        self.assertEqual(f["status"], "active")
+        self.assertAlmostEqual(f["lifetime_paid"], sum(amounts))
+        # Latest month (2024-06) = 475
+        self.assertEqual(f["monthly_amount"], 475.0)
+        self.assertEqual(f["last_month_amount"], 475.0)
+        self.assertEqual(f["typical_monthly_amount"], 447.5)
+        self.assertEqual(payload["recurring"]["summary"]["variable_active"], 1)
+        self.assertGreaterEqual(len(payload["recurring"]["summary"]["top_active"]), 1)
+
+    def test_variable_split_by_category(self) -> None:
+        from api import installment_plans
+
+        db = self._fresh_db()
+        for i, ym in enumerate(["2024-01-05", "2024-02-05", "2024-03-05", "2024-04-05"]):
+            self._insert(
+                db,
+                date=ym,
+                debit=100.0 + i * 20,
+                source="העברה דיגיטל",
+                extended="העברה אל: יובל ממן 18-001-217614968 בין חשבונותיי",
+                category="משק בית",
+                fingerprint=f"fp-cat-a-{i}",
+            )
+        for i, ym in enumerate(["2024-01-10", "2024-02-10", "2024-03-10", "2024-04-10"]):
+            self._insert(
+                db,
+                date=ym,
+                debit=500.0 + i * 50,
+                source="העברה דיגיטל",
+                extended="העברה אל: יובל ממן 18-001-217614968 חופשה",
+                category="חופשה תאילנד",
+                fingerprint=f"fp-cat-b-{i}",
+            )
+        fees = installment_plans.list_installment_plans({"as_of": ["2024-04"]})[1][
+            "recurring"
+        ]["fees"]
+        self.assertEqual(len(fees), 2)
+        cats = {f["category"] for f in fees}
+        self.assertEqual(cats, {"משק בית", "חופשה תאילנד"})
+        self.assertTrue(all(f["amount_mode"] == "variable" for f in fees))
+
+    def test_variable_split_by_transfer_recipient(self) -> None:
+        from api import installment_plans
+
+        db = self._fresh_db()
+        for i, ym in enumerate(["2024-01-05", "2024-02-05", "2024-03-05", "2024-04-05"]):
+            self._insert(
+                db,
+                date=ym,
+                debit=200.0 + i * 10,
+                source="הע. אינטרנט",
+                extended="העברה אל: יובל ממן ושחף שב 18-001-217614968 בין חשבונותיי",
+                category="משק בית",
+                fingerprint=f"fp-rec-a-{i}",
+            )
+        for i, ym in enumerate(["2024-01-08", "2024-02-08", "2024-03-08", "2024-04-08"]):
+            self._insert(
+                db,
+                date=ym,
+                debit=300.0 + i * 15,
+                source="הע. אינטרנט",
+                extended="העברה אל: סיגל ואילן ש 10-954-002994196 שכר לימוד",
+                category="משק בית",
+                fingerprint=f"fp-rec-b-{i}",
+            )
+        fees = installment_plans.list_installment_plans({"as_of": ["2024-04"]})[1][
+            "recurring"
+        ]["fees"]
+        self.assertEqual(len(fees), 2)
+        labels = {f.get("extra_label") or "" for f in fees}
+        self.assertEqual(len(labels), 2)
+        self.assertTrue(any("217614968" in lb for lb in labels))
+        self.assertTrue(any("002994196" in lb for lb in labels))
 
 
 if __name__ == "__main__":

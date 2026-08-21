@@ -221,6 +221,17 @@
   margin-top: 0.15rem;
 }
 
+.inst-extra {
+  display: block;
+  font-size: var(--fs-caption);
+  color: var(--fg-subtle);
+  margin-top: 0.1rem;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .inst-explore {
   display: inline-block;
   margin-top: 0.25rem;
@@ -242,6 +253,13 @@
   border-color: var(--accent-glow);
 }
 
+.inst-badge--variable {
+  margin-inline-start: 0.35rem;
+  background: color-mix(in srgb, var(--warn, #e8a838) 18%, transparent);
+  border-color: var(--warn, #e8a838);
+  color: var(--warn, #c98a20);
+}
+
 .inst-badge--gapped,
 .inst-badge--lapsed {
   color: var(--bad, #e07070);
@@ -250,6 +268,73 @@
 .inst-badge--completed,
 .inst-badge--paid_off {
   opacity: 0.85;
+}
+
+.inst-kpi--selected {
+  border-color: var(--accent-glow, var(--accent));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.inst-rec-chart {
+  margin: 0.85rem 0 1rem;
+  padding: 0.65rem 0.85rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  max-width: 36rem;
+}
+
+.inst-rec-chart__body {
+  width: 100%;
+  min-height: 220px;
+}
+
+.inst-rec-chart__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.35rem;
+}
+
+.inst-rec-chart__head h3 {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.inst-rec-chart__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.inst-rec-chart__actions button {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.inst-rec-chart__hint {
+  margin: 0.35rem 0 0;
+  font-size: var(--fs-caption);
+  color: var(--fg-subtle);
+}
+
+.inst-col-check {
+  width: 2.5rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.inst-row--selected td {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.inst-amt-hint {
+  margin-inline-start: 0.2rem;
+  color: var(--fg-muted);
+  font-size: var(--fs-caption);
 }
 
 .inst-actions {
@@ -262,6 +347,71 @@
 .inst-actions button {
   font-size: 0.75rem;
   padding: 0.2rem 0.45rem;
+}
+
+.inst-undo-btn {
+  align-self: flex-end;
+  margin-bottom: 0.1rem;
+  white-space: nowrap;
+}
+
+.inst-merged {
+  width: 100%;
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--border);
+}
+
+.inst-merged__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.15rem 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+  text-align: start;
+}
+
+.inst-merged__toggle:hover {
+  color: var(--fg);
+}
+
+.inst-merged__chevron {
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+
+.inst-merged__list {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.inst-merged__list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.inst-merged__name {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inst-merge-pick {

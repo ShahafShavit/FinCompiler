@@ -5,6 +5,7 @@ Used by ``ledger.store`` (statement_month fill) and ``api.installment_plans``.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 import statistics
@@ -148,6 +149,67 @@ def recurring_plan_id(merchant: str | None, median_amount: float, *, card: str |
     if card is not None:
         pid += f"|card:{card or ''}"
     return pid
+
+
+
+# Bank transfer extended text: keep recipient + account, drop free-form memo after.
+_BANK_XFER_PREFIX_RE = re.compile(
+    r"^(העברה אל:\s*.+?\s+\d{1,3}-\d{1,3}-\d+)",
+    re.UNICODE,
+)
+
+
+def _normalize_extra_info(extended: str | None, detail: str | None) -> str:
+    """Stable key from תאור מורחב / פירוט נוסף (memo after account number ignored)."""
+    ext = (extended or "").strip()
+    det = (detail or "").strip()
+    raw = ext or det
+    if not raw:
+        return ""
+    m = _BANK_XFER_PREFIX_RE.match(raw)
+    if m:
+        return re.sub(r"\s+", " ", m.group(1)).strip()
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+def _row_category(r: dict[str, Any]) -> str:
+    cat = r.get("קטגוריה")
+    if isinstance(cat, str):
+        return cat.strip()
+    return str(cat or "").strip()
+
+
+def recurring_variable_plan_id(
+    merchant: str | None,
+    *,
+    category: str = "",
+    extra: str = "",
+    card: str | None = None,
+) -> str:
+    """Variable-amount monthly: merchant + category + extra-info fingerprint."""
+    dig = hashlib.sha1(f"{category}\0{extra}".encode("utf-8")).hexdigest()[:12]
+    pid = f"rec:{merchant or ''}|var|{dig}"
+    if card is not None:
+        pid += f"|card:{card or ''}"
+    return pid
+
+
+def _passes_monthly_cadence(months: list[str]) -> bool:
+    if len(months) < RECURRING_MIN_OCCURRENCES:
+        return False
+    gaps = [months_between_ym(months[i], months[i + 1]) for i in range(len(months) - 1)]
+    if not gaps:
+        return False
+    med_gap = statistics.median(gaps)
+    if 0.5 <= med_gap <= 1.5:
+        return True
+    ones = sum(1 for g in gaps if g == 1)
+    twos = sum(1 for g in gaps if g == 2)
+    if ones >= len(gaps) - 1:
+        return True
+    if ones + twos == len(gaps) and twos <= 1 and med_gap <= 2.0:
+        return True
+    return False
 
 
 def plan_section(plan_id: str) -> Literal["installment", "recurring"] | None:
@@ -472,6 +534,9 @@ class _RecurringCluster:
     rows: list[dict[str, Any]]
     median_amount: float
     plan_id: str
+    amount_mode: str = "fixed"  # fixed | variable
+    category: str = ""
+    extra_label: str = ""
 
 
 def _ym_from_row(r: dict[str, Any]) -> str | None:
@@ -493,7 +558,6 @@ def _build_raw_recurring(
     overrides: dict[str, dict[str, Any]] | None = None,
 ) -> list[_RecurringCluster]:
     overrides = overrides or {}
-    # Exclude installment-tagged and parion
     candidates: list[dict[str, Any]] = []
     for r in expense_rows:
         detail = str(r.get("פירוט נוסף") or "")
@@ -515,78 +579,142 @@ def _build_raw_recurring(
         ym = _ym_from_row(r)
         if not ym:
             continue
-        candidates.append({**r, "_bh": bh, "_src": src, "_ym": ym})
+        cat = _row_category(r)
+        extra = _normalize_extra_info(
+            str(r.get("תאור מורחב") or "") or None,
+            detail or None,
+        )
+        candidates.append(
+            {**r, "_bh": bh, "_src": src, "_ym": ym, "_cat": cat, "_extra": extra}
+        )
 
     by_merchant: dict[str, list[dict[str, Any]]] = {}
     for r in candidates:
         by_merchant.setdefault(r["_src"], []).append(r)
 
     out: list[_RecurringCluster] = []
+    covered_row_ids: set[int] = set()
+
+    def _append_fixed(
+        cluster_rows: list[dict[str, Any]],
+        plan_id: str,
+        merchant: str,
+        *,
+        category: str,
+    ) -> None:
+        med = _median_amount([r["_bh"] for r in cluster_rows])
+        out.append(
+            _RecurringCluster(
+                merchant=merchant,
+                rows=cluster_rows,
+                median_amount=med,
+                plan_id=plan_id,
+                amount_mode="fixed",
+                category=category,
+                extra_label="",
+            )
+        )
+        for r in cluster_rows:
+            if r.get("id") is not None:
+                covered_row_ids.add(int(r["id"]))
+
     for merchant, mrows in by_merchant.items():
-        for amt_cluster in _cluster_dicts_by_amount(mrows, amount_tol):
-            # Require monthly cadence: ≥3 distinct months, median gap ~1
-            months = sorted({r["_ym"] for r in amt_cluster})
-            if len(months) < RECURRING_MIN_OCCURRENCES:
-                continue
-            gaps = [months_between_ym(months[i], months[i + 1]) for i in range(len(months) - 1)]
-            if not gaps:
-                continue
-            med_gap = statistics.median(gaps)
-            if med_gap < 0.5 or med_gap > 1.5:
-                # Allow one skip overall: if most gaps are 1
-                ones = sum(1 for g in gaps if g == 1)
-                twos = sum(1 for g in gaps if g == 2)
-                if ones < len(gaps) - 1 and not (ones + twos == len(gaps) and twos <= 1):
-                    continue
-                if med_gap > 2.0:
+        by_cat: dict[str, list[dict[str, Any]]] = {}
+        for r in mrows:
+            by_cat.setdefault(str(r.get("_cat") or ""), []).append(r)
+
+        for cat, cat_rows in by_cat.items():
+            for amt_cluster in _cluster_dicts_by_amount(cat_rows, amount_tol):
+                months = sorted({r["_ym"] for r in amt_cluster})
+                if not _passes_monthly_cadence(months):
                     continue
 
-            med = _median_amount([r["_bh"] for r in amt_cluster])
-            base_id = recurring_plan_id(merchant, med)
-            split_by = (overrides.get(base_id) or {}).get("split_by")
+                med = _median_amount([r["_bh"] for r in amt_cluster])
+                base_id = recurring_plan_id(merchant, med)
+                split_by = (overrides.get(base_id) or {}).get("split_by")
 
-            if split_by == "last4":
-                by_card: dict[str, list[dict[str, Any]]] = {}
-                for r in amt_cluster:
-                    card = str(r.get("4 ספרות") or "").strip()
-                    by_card.setdefault(card, []).append(r)
-                for card, croes in by_card.items():
-                    if len({r["_ym"] for r in croes}) < RECURRING_MIN_OCCURRENCES:
-                        continue
-                    cmed = _median_amount([r["_bh"] for r in croes])
-                    out.append(
-                        _RecurringCluster(
-                            merchant=merchant,
-                            rows=croes,
-                            median_amount=cmed,
-                            plan_id=recurring_plan_id(merchant, cmed, card=card),
+                if split_by == "last4":
+                    by_card: dict[str, list[dict[str, Any]]] = {}
+                    for r in amt_cluster:
+                        card = str(r.get("4 ספרות") or "").strip()
+                        by_card.setdefault(card, []).append(r)
+                    for card, croes in by_card.items():
+                        if not _passes_monthly_cadence(sorted({r["_ym"] for r in croes})):
+                            continue
+                        cmed = _median_amount([r["_bh"] for r in croes])
+                        _append_fixed(
+                            croes,
+                            recurring_plan_id(merchant, cmed, card=card),
+                            merchant,
+                            category=cat,
                         )
-                    )
-            elif split_by == "amount":
-                by_amt: dict[str, list[dict[str, Any]]] = {}
-                for r in amt_cluster:
-                    by_amt.setdefault(_fmt_amt(r["_bh"]), []).append(r)
-                for amt_key, arows in by_amt.items():
-                    if len({r["_ym"] for r in arows}) < RECURRING_MIN_OCCURRENCES:
-                        continue
-                    av = float(amt_key)
-                    out.append(
-                        _RecurringCluster(
-                            merchant=merchant,
-                            rows=arows,
-                            median_amount=av,
-                            plan_id=recurring_plan_id(merchant, av),
+                elif split_by == "amount":
+                    by_amt: dict[str, list[dict[str, Any]]] = {}
+                    for r in amt_cluster:
+                        by_amt.setdefault(_fmt_amt(r["_bh"]), []).append(r)
+                    for amt_key, arows in by_amt.items():
+                        if not _passes_monthly_cadence(sorted({r["_ym"] for r in arows})):
+                            continue
+                        av = float(amt_key)
+                        _append_fixed(
+                            arows,
+                            recurring_plan_id(merchant, av),
+                            merchant,
+                            category=cat,
                         )
-                    )
-            else:
+                else:
+                    _append_fixed(amt_cluster, base_id, merchant, category=cat)
+
+    # Variable-amount monthly: merchant + category + extra info (not merchant alone).
+    by_var_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for r in candidates:
+        if r.get("id") is not None and int(r["id"]) in covered_row_ids:
+            continue
+        key = (str(r["_src"]), str(r.get("_cat") or ""), str(r.get("_extra") or ""))
+        by_var_key.setdefault(key, []).append(r)
+
+    for (merchant, cat, extra), rows_for_var in by_var_key.items():
+        months = sorted({r["_ym"] for r in rows_for_var})
+        if not _passes_monthly_cadence(months):
+            continue
+        base_id = recurring_variable_plan_id(merchant, category=cat, extra=extra)
+        split_by = (overrides.get(base_id) or {}).get("split_by")
+        med = _median_amount([r["_bh"] for r in rows_for_var])
+
+        if split_by == "last4":
+            by_card: dict[str, list[dict[str, Any]]] = {}
+            for r in rows_for_var:
+                card = str(r.get("4 ספרות") or "").strip()
+                by_card.setdefault(card, []).append(r)
+            for card, croes in by_card.items():
+                if not _passes_monthly_cadence(sorted({r["_ym"] for r in croes})):
+                    continue
+                cmed = _median_amount([r["_bh"] for r in croes])
                 out.append(
                     _RecurringCluster(
                         merchant=merchant,
-                        rows=amt_cluster,
-                        median_amount=med,
-                        plan_id=base_id,
+                        rows=croes,
+                        median_amount=cmed,
+                        plan_id=recurring_variable_plan_id(
+                            merchant, category=cat, extra=extra, card=card
+                        ),
+                        amount_mode="variable",
+                        category=cat,
+                        extra_label=extra,
                     )
                 )
+        else:
+            out.append(
+                _RecurringCluster(
+                    merchant=merchant,
+                    rows=rows_for_var,
+                    median_amount=med,
+                    plan_id=base_id,
+                    amount_mode="variable",
+                    category=cat,
+                    extra_label=extra,
+                )
+            )
     return out
 
 
@@ -612,8 +740,6 @@ def project_recurring_fee(
     as_of: str,
     hidden: bool = False,
 ) -> dict[str, Any]:
-    # Per-month totals (sum charges in the same calendar month), then take median —
-    # correct after merges that join different nominal amounts.
     by_month: dict[str, float] = {}
     for r in cluster.rows:
         ym = r.get("_ym") or _ym_from_row(r)
@@ -633,9 +759,22 @@ def project_recurring_fee(
     next_expected = add_months_ym(last_seen, 1) if last_seen else None
     lag = months_between_ym(last_seen, as_of) if last_seen else RECURRING_LAPSED_MONTHS + 1
     status = "lapsed" if lag > RECURRING_LAPSED_MONTHS else "active"
-    lifetime = round(sum(by_month.values()) if by_month else sum(float(r.get("_bh") or 0) for r in cluster.rows), 2)
+    lifetime = round(
+        sum(by_month.values()) if by_month else sum(float(r.get("_bh") or 0) for r in cluster.rows),
+        2,
+    )
     month_totals = list(by_month.values())
-    monthly = _median_amount(month_totals) if month_totals else cluster.median_amount
+    # Present-looking figure: total charged in the latest seen month (not historical median).
+    if last_seen and last_seen in by_month:
+        monthly = float(by_month[last_seen])
+    elif month_totals:
+        monthly = float(month_totals[-1])
+    else:
+        monthly = float(cluster.median_amount)
+    last_month_total = round(monthly, 2)
+    typical_monthly = (
+        round(_median_amount(month_totals), 2) if month_totals else round(monthly, 2)
+    )
     cats = sorted(
         {
             str(r.get("קטגוריה") or "").strip()
@@ -650,12 +789,32 @@ def project_recurring_fee(
             if str(r.get("4 ספרות") or "").strip()
         }
     )
+    amount_mode = cluster.amount_mode
+    if "|var|" in cluster.plan_id or cluster.plan_id.endswith("|var"):
+        amount_mode = "variable"
+    category = cluster.category or (cats[0] if cats else "")
+    extra_label = cluster.extra_label
+    if not extra_label and amount_mode == "variable":
+        extras = {
+            _normalize_extra_info(
+                str(r.get("תאור מורחב") or "") or None,
+                str(r.get("פירוט נוסף") or "") or None,
+            )
+            for r in cluster.rows
+        }
+        extras.discard("")
+        if len(extras) == 1:
+            extra_label = next(iter(extras))
     return {
         "plan_id": cluster.plan_id,
         "merchant": cluster.merchant or "",
-        "category": cats[0] if cats else "",
+        "category": category,
         "categories": cats,
+        "extra_label": extra_label,
+        "amount_mode": amount_mode,
         "monthly_amount": round(monthly, 2),
+        "last_month_amount": last_month_total,
+        "typical_monthly_amount": typical_monthly,
         "months_seen": len(months),
         "first_seen": first_seen,
         "last_seen": last_seen,
@@ -665,9 +824,9 @@ def project_recurring_fee(
         "status": status,
         "hidden": hidden,
         "tx_ids": [int(r["id"]) for r in cluster.rows if r.get("id") is not None],
-        # Internal: used to re-project after merge; stripped before JSON response.
         "_rows": cluster.rows,
     }
+
 
 
 def _canonical_merge_target(
@@ -691,6 +850,35 @@ def _canonical_merge_target(
         if plan_section(nxt) != section:
             return cur
         cur = nxt
+
+
+def _merged_source_summaries(
+    members: list[dict[str, Any]],
+    root: str,
+    overrides: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Plans absorbed into ``root`` (for UI unmerge)."""
+    sources: list[dict[str, Any]] = []
+    for m in members:
+        pid = m.get("plan_id")
+        if not pid or pid == root:
+            continue
+        direct = (overrides.get(str(pid)) or {}).get("merged_into")
+        entry: dict[str, Any] = {
+            "plan_id": pid,
+            "merchant": m.get("merchant") or "",
+            "category": m.get("category") or "",
+            "merged_into": direct if isinstance(direct, str) and direct.strip() else root,
+        }
+        if "monthly_amount" in m:
+            entry["monthly_amount"] = m.get("monthly_amount")
+            entry["amount_mode"] = m.get("amount_mode") or "fixed"
+        if "amount" in m:
+            entry["amount"] = m.get("amount")
+        if "status" in m:
+            entry["status"] = m.get("status")
+        sources.append(entry)
+    return sources
 
 
 def _resolve_merges(
@@ -729,6 +917,8 @@ def _resolve_merges(
             emitted.add(root)
             continue
 
+        sources = _merged_source_summaries(members, root, overrides)
+
         if section == "recurring":
             rows: list[dict[str, Any]] = []
             seen_ids: set[int] = set()
@@ -742,17 +932,26 @@ def _resolve_merges(
                         seen_ids.add(ir)
                     rows.append(r)
             root_plan = by_id[root]
+            modes = {str(m.get("amount_mode") or "fixed") for m in members}
+            amount_mode = "variable" if "variable" in modes or "|var" in root else "fixed"
+            extras = {str(m.get("extra_label") or "") for m in members}
+            extras.discard("")
             cluster = _RecurringCluster(
                 merchant=root_plan.get("merchant") or None,
                 rows=rows,
                 median_amount=float(root_plan.get("monthly_amount") or 0),
                 plan_id=root,
+                amount_mode=amount_mode,
+                category=str(root_plan.get("category") or ""),
+                extra_label=(next(iter(extras)) if len(extras) == 1 else ""),
             )
             merged = project_recurring_fee(
                 cluster,
                 as_of=as_of,
                 hidden=bool((overrides.get(root) or {}).get("hidden")),
             )
+            if sources:
+                merged["merged_sources"] = sources
             out.append(merged)
             emitted.add(root)
             continue
@@ -775,6 +974,8 @@ def _resolve_merges(
             )
             dst["paid_count"] = int(dst.get("paid_count") or 0) + int(src.get("paid_count") or 0)
             dst["last4s"] = sorted(set(dst.get("last4s") or []) | set(src.get("last4s") or []))
+        if sources:
+            dst["merged_sources"] = sources
         out.append(dst)
         emitted.add(root)
 
@@ -814,7 +1015,7 @@ def build_plans_payload(
     cur = conn.execute(
         f"""
         SELECT id, "תאריך", "בחובה", "בזכות", "מקור עסקה", "פירוט נוסף",
-               "קטגוריה", "4 ספרות", statement_month
+               "תאור מורחב", "קטגוריה", "4 ספרות", statement_month
         FROM ledger_transaction
         WHERE {included}
           AND "תאריך" IS NOT NULL
@@ -980,6 +1181,21 @@ def build_plans_payload(
     active_rec = [p for p in rec_fees if p.get("status") == "active"]
     lapsed_rec = [p for p in rec_fees if p.get("status") == "lapsed"]
     monthly_burn = round(sum(float(p.get("monthly_amount") or 0) for p in active_rec), 2)
+    variable_active = sum(1 for p in active_rec if p.get("amount_mode") == "variable")
+    top_active = sorted(
+        [
+            {
+                "plan_id": p["plan_id"],
+                "merchant": p.get("merchant") or "",
+                "monthly_amount": float(p.get("monthly_amount") or 0),
+                "amount_mode": p.get("amount_mode") or "fixed",
+                "category": p.get("category") or "",
+            }
+            for p in active_rec
+        ],
+        key=lambda x: x["monthly_amount"],
+        reverse=True,
+    )[:12]
 
     return {
         "ok": True,
@@ -999,6 +1215,8 @@ def build_plans_payload(
                 "active": len(active_rec),
                 "monthly_burn": monthly_burn,
                 "lapsed": len(lapsed_rec),
+                "variable_active": variable_active,
+                "top_active": top_active,
             },
             "fees": rec_fees,
         },

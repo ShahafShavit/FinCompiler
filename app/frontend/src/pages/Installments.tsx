@@ -1,17 +1,52 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
 import PageShell from '../components/PageShell';
 import { fetchJson, formatMoney, patchJson } from '../lib/api';
+import { hashColor } from '../lib/chartColors';
 import { he } from '../lib/he';
 
 import './Installments.css';
+
+const REC_SELECT_KEY = 'fincompiler.installments.recSelected';
+
+function loadRecSelection(): Set<string> {
+  try {
+    const raw = localStorage.getItem(REC_SELECT_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is string => typeof x === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveRecSelection(ids: Set<string>) {
+  try {
+    localStorage.setItem(REC_SELECT_KEY, JSON.stringify([...ids]));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
 
 type TimelineEntry = {
   month: string;
   x: number;
   amount: number | null;
   state: 'observed' | 'expected' | 'missing' | 'before_cutoff' | string;
+};
+
+type MergedSource = {
+  plan_id: string;
+  merchant: string;
+  category?: string;
+  merged_into?: string;
+  monthly_amount?: number;
+  amount?: number;
+  amount_mode?: string;
+  status?: string;
 };
 
 type InstallmentPlan = {
@@ -32,13 +67,17 @@ type InstallmentPlan = {
   due_this_month?: number;
   timeline?: TimelineEntry[];
   tx_ids?: number[];
+  merged_sources?: MergedSource[];
 };
 
 type RecurringFee = {
   plan_id: string;
   merchant: string;
   category?: string;
+  extra_label?: string;
+  amount_mode?: 'fixed' | 'variable' | string;
   monthly_amount: number;
+  last_month_amount?: number;
   months_seen: number;
   first_seen?: string;
   last_seen?: string;
@@ -48,6 +87,13 @@ type RecurringFee = {
   status: string;
   hidden?: boolean;
   tx_ids?: number[];
+  merged_sources?: MergedSource[];
+};
+
+type UndoEntry = {
+  planId: string;
+  body: Record<string, unknown>;
+  label: string;
 };
 
 type PlansResponse = {
@@ -70,6 +116,14 @@ type PlansResponse = {
       active?: number;
       monthly_burn?: number;
       lapsed?: number;
+      variable_active?: number;
+      top_active?: {
+        plan_id: string;
+        merchant: string;
+        monthly_amount: number;
+        amount_mode?: string;
+        category?: string;
+      }[];
     };
     fees?: RecurringFee[];
   };
@@ -142,6 +196,9 @@ export default function Installments() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [mergeFor, setMergeFor] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [selectedRec, setSelectedRec] = useState<Set<string>>(loadRecSelection);
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
+  const [mergedOpen, setMergedOpen] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     setQDraft(q);
@@ -187,7 +244,37 @@ export default function Installments() {
     void load();
   }, [load]);
 
-  const patchPlan = async (planId: string, body: Record<string, unknown>) => {
+  const undoLabelFor = (body: Record<string, unknown>): string | null => {
+    if ('merged_into' in body) {
+      if (body.merged_into == null || body.merged_into === '') {
+        return he.installments.undoMerge; // will re-apply merge on undo of unmerge — label is fine as "ביטול מיזוג" inverse
+      }
+      return he.installments.undoMerge;
+    }
+    if ('hidden' in body) {
+      return body.hidden ? he.installments.undoHide : he.installments.undoUnhide;
+    }
+    if ('settled' in body) {
+      return body.settled ? he.installments.undoSettle : he.installments.undoUnsettle;
+    }
+    if ('split_by' in body) {
+      return body.split_by == null || body.split_by === ''
+        ? he.installments.undoClearSplit
+        : he.installments.undoSplit;
+    }
+    return null;
+  };
+
+  const patchPlan = async (
+    planId: string,
+    body: Record<string, unknown>,
+    opts?: {
+      skipUndo?: boolean;
+      priorSplitBy?: string | null;
+      /** When clearing a merge, restore target on undo. */
+      priorMergedInto?: string | null;
+    },
+  ) => {
     setBusyId(planId);
     try {
       const enc = encodeURIComponent(planId);
@@ -195,7 +282,35 @@ export default function Installments() {
       if (!r.ok || r.data.ok === false) {
         setErr(r.data.message || r.data.error || he.installments.error);
       } else {
-        // Reload with current filters (patch returns include_hidden=true always)
+        if (!opts?.skipUndo) {
+          let undoBody: Record<string, unknown> | null = null;
+          let label: string | null = null;
+          if ('merged_into' in body) {
+            if (body.merged_into != null && body.merged_into !== '') {
+              undoBody = { merged_into: null };
+              label = he.installments.undoMerge;
+            } else if (opts?.priorMergedInto) {
+              undoBody = { merged_into: opts.priorMergedInto };
+              label = he.installments.redoMerge;
+            }
+          } else if ('hidden' in body) {
+            undoBody = { hidden: !body.hidden };
+            label = undoLabelFor(body);
+          } else if ('settled' in body) {
+            undoBody = { settled: !body.settled };
+            label = undoLabelFor(body);
+          } else if ('split_by' in body) {
+            if (body.split_by == null || body.split_by === '') {
+              if (opts?.priorSplitBy) undoBody = { split_by: opts.priorSplitBy };
+            } else {
+              undoBody = { split_by: null };
+            }
+            label = undoBody ? undoLabelFor(body) : null;
+          }
+          if (undoBody && label) {
+            setUndoStack((prev) => [...prev, { planId, body: undoBody, label }].slice(-20));
+          }
+        }
         await load();
         setMergeFor(null);
       }
@@ -206,10 +321,36 @@ export default function Installments() {
     }
   };
 
+  const undoLast = async () => {
+    const last = undoStack[undoStack.length - 1];
+    if (!last || busyId) return;
+    setUndoStack((prev) => prev.slice(0, -1));
+    await patchPlan(last.planId, last.body, { skipUndo: true });
+  };
+
+  useEffect(() => {
+    saveRecSelection(selectedRec);
+  }, [selectedRec]);
+
   const plans = data?.installments?.plans || [];
   const fees = data?.recurring?.fees || [];
   const instSummary = data?.installments?.summary;
   const recSummary = data?.recurring?.summary;
+
+  useEffect(() => {
+    if (fees.length === 0) return;
+    const known = new Set(fees.map((f) => f.plan_id));
+    setSelectedRec((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (known.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [fees]);
 
   const filteredPlans = useMemo(() => {
     return plans.filter((p) => {
@@ -229,6 +370,59 @@ export default function Installments() {
       return true;
     });
   }, [fees, recFilter]);
+
+  const activeFees = useMemo(
+    () => fees.filter((f) => f.status === 'active' && !f.hidden),
+    [fees],
+  );
+
+  const selectedSum = useMemo(() => {
+    if (selectedRec.size === 0) return null;
+    let sum = 0;
+    for (const f of fees) {
+      if (selectedRec.has(f.plan_id)) sum += f.monthly_amount || 0;
+    }
+    return Math.round(sum * 100) / 100;
+  }, [fees, selectedRec]);
+
+  const chartRows = useMemo(() => {
+    const pool =
+      selectedRec.size > 0
+        ? fees.filter((f) => selectedRec.has(f.plan_id))
+        : activeFees;
+    const sorted = [...pool].sort(
+      (a, b) => (b.monthly_amount || 0) - (a.monthly_amount || 0),
+    );
+    const topN = 8;
+    const top = sorted.slice(0, topN);
+    const rest = sorted.slice(topN);
+    const rows = top.map((f) => ({
+      name: f.merchant || f.plan_id,
+      amount: f.monthly_amount || 0,
+      plan_id: f.plan_id,
+    }));
+    if (rest.length > 0) {
+      rows.push({
+        name: he.installments.recChartOther,
+        amount: Math.round(rest.reduce((s, f) => s + (f.monthly_amount || 0), 0) * 100) / 100,
+        plan_id: '__other__',
+      });
+    }
+    return rows.filter((r) => r.amount > 0);
+  }, [activeFees, fees, selectedRec]);
+
+  const toggleRecSelect = (planId: string) => {
+    setSelectedRec((prev) => {
+      const next = new Set(prev);
+      if (next.has(planId)) next.delete(planId);
+      else next.add(planId);
+      return next;
+    });
+  };
+
+  const selectAllActive = () => {
+    setSelectedRec(new Set(activeFees.map((f) => f.plan_id)));
+  };
 
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(sp);
@@ -259,14 +453,81 @@ export default function Installments() {
         />
         <span>{he.installments.showHidden}</span>
       </label>
+      {undoStack.length > 0 ? (
+        <button
+          type="button"
+          className="secondary inst-undo-btn"
+          disabled={Boolean(busyId)}
+          onClick={() => void undoLast()}
+          title={undoStack[undoStack.length - 1]?.label}
+        >
+          {he.installments.undoLast}
+          {undoStack.length > 1 ? ` (${undoStack.length})` : ''}
+        </button>
+      ) : null}
     </div>
   );
+
+  const renderMergedSources = (planId: string, sources: MergedSource[] | undefined) => {
+    if (!sources || sources.length === 0) return null;
+    const open = mergedOpen.has(planId);
+    return (
+      <div className="inst-merged">
+        <button
+          type="button"
+          className="inst-merged__toggle"
+          aria-expanded={open}
+          onClick={() =>
+            setMergedOpen((prev) => {
+              const next = new Set(prev);
+              if (next.has(planId)) next.delete(planId);
+              else next.add(planId);
+              return next;
+            })
+          }
+        >
+          <span>
+            {he.installments.mergedSources} ({sources.length})
+          </span>
+          <span className="inst-merged__chevron" aria-hidden>
+            {open ? '▾' : '▸'}
+          </span>
+        </button>
+        {open ? (
+          <ul className="inst-merged__list">
+            {sources.map((s) => (
+              <li key={s.plan_id}>
+                <span className="inst-merged__name">
+                  {s.merchant || s.plan_id}
+                  {s.category ? ` · ${s.category}` : ''}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busyId === s.plan_id}
+                  onClick={() =>
+                    void patchPlan(
+                      s.plan_id,
+                      { merged_into: null },
+                      { priorMergedInto: s.merged_into || undefined },
+                    )
+                  }
+                >
+                  {he.installments.unmerge}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    );
+  };
 
   const renderActions = (
     planId: string,
     hidden: boolean | undefined,
     peers: { plan_id: string; merchant: string }[],
-    opts?: { settled?: boolean; showSettle?: boolean },
+    opts?: { settled?: boolean; showSettle?: boolean; mergedSources?: MergedSource[] },
   ) => {
     const busy = busyId === planId;
     const settled = Boolean(opts?.settled);
@@ -344,6 +605,7 @@ export default function Installments() {
             </select>
           </label>
         ) : null}
+        {renderMergedSources(planId, opts?.mergedSources)}
       </div>
     );
   };
@@ -489,7 +751,11 @@ export default function Installments() {
                                   plan_id: x.plan_id,
                                   merchant: x.merchant,
                                 })),
-                                { settled: p.settled, showSettle: true },
+                                {
+                                  settled: p.settled,
+                                  showSettle: true,
+                                  mergedSources: p.merged_sources,
+                                },
                               )}
                             </td>
                           </tr>
@@ -568,12 +834,84 @@ export default function Installments() {
                 </div>
               </div>
               <div className="inst-kpi">
+                <div className="inst-kpi__label">{he.installments.recKpiVariable}</div>
+                <div className="inst-kpi__value" dir="ltr">
+                  {recSummary?.variable_active ?? 0}
+                </div>
+              </div>
+              <div className="inst-kpi">
                 <div className="inst-kpi__label">{he.installments.recKpiLapsed}</div>
                 <div className="inst-kpi__value" dir="ltr">
                   {recSummary?.lapsed ?? 0}
                 </div>
               </div>
+              {selectedSum != null ? (
+                <div className="inst-kpi inst-kpi--selected">
+                  <div className="inst-kpi__label">
+                    {he.installments.recKpiSelected} ({selectedRec.size})
+                  </div>
+                  <div className="inst-kpi__value" dir="ltr">
+                    {formatMoney(selectedSum)}
+                  </div>
+                </div>
+              ) : null}
             </div>
+
+            {chartRows.length > 0 ? (
+              <div className="inst-rec-chart">
+                <div className="inst-rec-chart__head">
+                  <h3>{he.installments.recChartTitle}</h3>
+                  <div className="inst-rec-chart__actions">
+                    <button type="button" className="secondary" onClick={selectAllActive}>
+                      {he.installments.recSelectAll}
+                    </button>
+                    {selectedRec.size > 0 ? (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => setSelectedRec(new Set())}
+                      >
+                        {he.installments.recClearSelect}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="inst-rec-chart__body" dir="ltr">
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie
+                        data={chartRows}
+                        dataKey="amount"
+                        nameKey="name"
+                        cx="42%"
+                        cy="50%"
+                        innerRadius={48}
+                        outerRadius={78}
+                        paddingAngle={1}
+                      >
+                        {chartRows.map((row) => (
+                          <Cell key={row.plan_id} fill={hashColor(row.name)} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value) => formatMoney(Number(value) || 0)}
+                        labelFormatter={(label) => String(label)}
+                      />
+                      <Legend
+                        layout="vertical"
+                        align="right"
+                        verticalAlign="middle"
+                        wrapperStyle={{ fontSize: '0.72rem', maxWidth: '46%' }}
+                        formatter={(value) =>
+                          String(value).length > 22 ? `${String(value).slice(0, 20)}…` : String(value)
+                        }
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="inst-rec-chart__hint">{he.installments.recChartHint}</p>
+              </div>
+            ) : null}
 
             {filteredFees.length === 0 ? (
               <p className="inst-msg">{he.installments.empty}</p>
@@ -582,6 +920,7 @@ export default function Installments() {
                 <table className="inst-table">
                   <thead>
                     <tr>
+                      <th className="inst-col-check">{he.installments.recSelect}</th>
                       <th>{he.installments.recColMerchant}</th>
                       <th dir="ltr">{he.installments.recColAmount}</th>
                       <th dir="ltr">{he.installments.recColMonths}</th>
@@ -600,12 +939,29 @@ export default function Installments() {
                             ? 'inst-row--hidden'
                             : f.status === 'lapsed'
                               ? 'inst-row--lapsed'
-                              : undefined
+                              : selectedRec.has(f.plan_id)
+                                ? 'inst-row--selected'
+                                : undefined
                         }
                       >
+                        <td className="inst-col-check">
+                          <input
+                            type="checkbox"
+                            checked={selectedRec.has(f.plan_id)}
+                            onChange={() => toggleRecSelect(f.plan_id)}
+                            aria-label={he.installments.recSelect}
+                          />
+                        </td>
                         <td>
                           <span className="inst-merchant">{f.merchant || '—'}</span>
                           {f.category ? <span className="inst-cat">{f.category}</span> : null}
+                          {f.extra_label ? (
+                            <span className="inst-extra" title={f.extra_label}>
+                              {f.extra_label.length > 42
+                                ? `${f.extra_label.slice(0, 40)}…`
+                                : f.extra_label}
+                            </span>
+                          ) : null}
                           <Link
                             className="inst-explore"
                             to={exploreHref(f.merchant, f.tx_ids)}
@@ -613,7 +969,12 @@ export default function Installments() {
                             {he.installments.explore}
                           </Link>
                         </td>
-                        <td dir="ltr">{formatMoney(f.monthly_amount)}</td>
+                        <td dir="ltr">
+                          {formatMoney(f.monthly_amount)}
+                          {f.amount_mode === 'variable' ? (
+                            <span className="inst-amt-hint">~</span>
+                          ) : null}
+                        </td>
                         <td dir="ltr">{f.months_seen}</td>
                         <td dir="ltr">{f.next_expected || '—'}</td>
                         <td dir="ltr">{formatMoney(f.lifetime_paid)}</td>
@@ -630,6 +991,7 @@ export default function Installments() {
                               plan_id: x.plan_id,
                               merchant: x.merchant,
                             })),
+                            { mergedSources: f.merged_sources },
                           )}
                         </td>
                       </tr>
