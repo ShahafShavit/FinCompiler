@@ -47,6 +47,8 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (17, 'trade_portf
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (18, 'portfolio_instrument_multiplier_no_snapshot');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (19, 'installment_plan_override');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (20, 'installment_plan_override_settled');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (21, 'cash_event_wallet');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (22, 'cash_event_category');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -256,6 +258,24 @@ CREATE TABLE IF NOT EXISTS installment_plan_override (
     settled     INTEGER NOT NULL DEFAULT 0 CHECK (settled IN (0, 1)),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 ) STRICT;
+
+-- -----------------------------------------------------------------------------
+-- Physical cash wallet (isolated from ledger_transaction)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cash_event (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    event_date      TEXT NOT NULL CHECK (date(event_date) = event_date),
+    kind            TEXT NOT NULL CHECK (kind IN ('spend', 'receive', 'count')),
+    delta_agorot    INTEGER NOT NULL,
+    counted_agorot  INTEGER,
+    expected_agorot INTEGER,
+    denominations   TEXT,
+    note            TEXT,
+    category        TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        CHECK (datetime(created_at) IS NOT NULL)
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_cash_event_date ON cash_event (event_date, id);
 
 -- =============================================================================
 -- Triggers: timestamps (evaluation Section 13.9)

@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar';
 import { he } from './lib/he';
 import { openCountFromSummary, useCategorizeSummary } from './lib/useCategorizeSummary';
 import Categorize from './pages/Categorize';
+import Cash from './pages/Cash';
 import Dashboard from './pages/Dashboard';
 import DataIntegrity from './pages/DataIntegrity';
 import Explore from './pages/Explore';
@@ -73,6 +74,7 @@ export default function App() {
             <Route path="/installments" element={<Installments />} />
             <Route path="/integrity" element={<DataIntegrity />} />
             <Route path="/categorize" element={<Categorize />} />
+            <Route path="/cash" element={<Cash />} />
             <Route path="/holdings" element={<Holdings />} />
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/heatmap/index.html" element={<Navigate to="/heatmap" replace />} />

@@ -208,6 +208,9 @@ SPA_ROUTES: frozenset[str] = frozenset(
         "/portfolio",
         "/portfolio/",
         "/portfolio/index.html",
+        "/cash",
+        "/cash/",
+        "/cash/index.html",
     }
 )
 

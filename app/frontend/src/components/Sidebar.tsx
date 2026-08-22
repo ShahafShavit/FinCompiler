@@ -68,6 +68,16 @@ function IconCategorize() {
   );
 }
 
+function IconCash() {
+  return (
+    <svg className="sidebar__icon" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="2" y="6" width="20" height="12" rx="2" stroke="currentColor" strokeWidth="2" />
+      <circle cx="12" cy="12" r="2.5" stroke="currentColor" strokeWidth="2" />
+      <path d="M6 12h0.01M18 12h0.01" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function IconHoldings() {
   return (
     <svg className="sidebar__icon" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -150,6 +160,7 @@ export default function Sidebar({ categorizeBadge }: { categorizeBadge?: number 
       icon: <IconCategorize />,
       badge: categorizeBadge && categorizeBadge > 0 ? categorizeBadge : null,
     },
+    { to: '/cash', label: he.nav.cash, icon: <IconCash /> },
     { to: '/holdings', label: he.nav.holdings, icon: <IconHoldings /> },
     { to: '/portfolio', label: he.nav.portfolio, icon: <IconPortfolio /> },
   ];

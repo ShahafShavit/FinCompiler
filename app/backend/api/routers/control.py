@@ -9,6 +9,7 @@ import config
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
 
+from api.routers.cash import register_cash_routes
 from api.routers.categorize import register_categorize_routes
 from api.routers.dashboard import register_dashboard_routes
 from api.routers.heatmap import register_heatmap_routes
@@ -51,6 +52,7 @@ def register_routes(app: FastAPI) -> None:
     register_dashboard_routes(app)
     register_settings_routes(app)
     register_pipeline_routes(app)
+    register_cash_routes(app)
 
     r = APIRouter()
 

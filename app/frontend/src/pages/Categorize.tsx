@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import PageShell from '../components/PageShell';
+import CashRegister from '../components/CashRegister';
 import { fetchJson, postJson } from '../lib/api';
 import { he } from '../lib/he';
 import { useInvalidateCategorizeSummary } from '../lib/useCategorizeSummary';
 
 import './Categorize.css';
+import './Cash.css';
 
 const CAT = '/categorize';
 
@@ -997,7 +999,9 @@ export default function Categorize() {
         {!p || p.kind === 'idle' ? (
           <>
             <p>{he.categorize.queueClear}</p>
-            <p className="hint">When a new row appears, it will show here after you save or refresh.</p>
+            <p className="hint">{he.categorize.cashAfterQueueHint}</p>
+            <h2 className="categorize-cash-heading">{he.categorize.cashAfterQueue}</h2>
+            <CashRegister compact />
           </>
         ) : p.kind === 'fluid' ? (
           <>

@@ -59,6 +59,10 @@ export async function putJson<T = unknown>(
   });
 }
 
+export async function deleteJson<T = unknown>(url: string): Promise<ApiResult<T>> {
+  return fetchJson<T>(url, { method: 'DELETE' });
+}
+
 const HE_IL = 'he-IL';
 
 export function formatMoney(v: number | null | undefined, suffix = '₪'): string {

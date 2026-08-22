@@ -32,6 +32,10 @@ account + security number only (no snapshot date).
 
 **v20** — ``installment_plan_override.settled``: mark remaining installments as paid off manually.
 
+**v21** — ``cash_event``: isolated physical-cash wallet (spend / receive / count) in agorot.
+
+**v22** — ``cash_event.category``: optional category label per cash event.
+
 Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile upsert implements MIG-E2.
 """
 from __future__ import annotations
@@ -911,6 +915,22 @@ CREATE TABLE IF NOT EXISTS trade_portfolio_position_multiplier (
                 ensure_installment_plan_override_settled_column(conn)
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (20, 'installment_plan_override_settled')"
+            )
+            ver = _current_schema_version(conn)
+            if ver < 21:
+                from ledger.cash import CASH_EVENT_V21_DDL
+
+                conn.executescript(CASH_EVENT_V21_DDL)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (21, 'cash_event_wallet')"
+            )
+            ver = _current_schema_version(conn)
+            if ver < 22:
+                from ledger.cash import ensure_cash_event_category_column
+
+                ensure_cash_event_category_column(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (22, 'cash_event_category')"
             )
             conn.commit()
         finally:

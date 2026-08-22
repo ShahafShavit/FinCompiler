@@ -75,6 +75,14 @@
   box-shadow: 0 0 12px rgba(232, 184, 77, 0.5);
 }
 
+.categorize-cash-heading {
+  margin: 1.25rem 0 0.35rem;
+  font-size: var(--fs-title);
+  font-family: var(--font-display);
+  font-weight: 500;
+  color: var(--fg);
+}
+
 .categorize-card {
   background: var(--bg-card);
   background-image: var(--cat-surface-elevated);
