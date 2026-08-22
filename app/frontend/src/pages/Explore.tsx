@@ -2,12 +2,41 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import PageShell from '../components/PageShell';
-import { fetchJson, formatMoney, patchJson } from '../lib/api';
+import { fetchJson, formatMoney, patchJson, postJson } from '../lib/api';
 import { he } from '../lib/he';
 
 import './Explore.css';
 
 const PAGE_SIZE = 50;
+const PRESETS_KEY = 'fincompiler.explore.presets';
+
+type SavedPreset = { name: string; query: string };
+
+function loadPresets(): SavedPreset[] {
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p): p is SavedPreset =>
+        Boolean(p) &&
+        typeof p === 'object' &&
+        typeof (p as SavedPreset).name === 'string' &&
+        typeof (p as SavedPreset).query === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function savePresets(list: SavedPreset[]) {
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(list));
+  } catch {
+    /* ignore */
+  }
+}
 
 const LTR_COLUMNS = new Set([
   'id',
@@ -110,6 +139,14 @@ function rowId(row: Record<string, unknown>): number | null {
   return null;
 }
 
+function isExcluded(row: Record<string, unknown>): boolean {
+  return (
+    row.excluded_from_calculations === 1 ||
+    row.excluded_from_calculations === true ||
+    row.excluded_from_calculations === '1'
+  );
+}
+
 function normalizeEditPayload(column: string, raw: string): unknown {
   const t = raw.trim();
   if (column === 'notes') return t === '' ? null : raw;
@@ -160,6 +197,12 @@ export default function Explore() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [rowErr, setRowErr] = useState<Record<number, string>>({});
+  const [selected, setSelected] = useState<Set<number>>(() => new Set());
+  const [bulkCategory, setBulkCategory] = useState('');
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [presets, setPresets] = useState<SavedPreset[]>(() => loadPresets());
+  const [presetName, setPresetName] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -185,6 +228,11 @@ export default function Explore() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    setSelected(new Set());
+    setBulkMsg(null);
+  }, [apiQuery]);
 
   const saveCell = async (row: Record<string, unknown>, column: string, raw: string) => {
     const id = rowId(row);
@@ -228,6 +276,59 @@ export default function Explore() {
     });
   };
 
+  const toggleExclude = async (row: Record<string, unknown>) => {
+    const id = rowId(row);
+    if (id == null) return;
+    const next: 0 | 1 = isExcluded(row) ? 0 : 1;
+    const r = await patchJson<{ ok?: boolean; error?: string; message?: string }>(
+      '/heatmap/api/transaction',
+      { id, patch: { excluded_from_calculations: next } },
+    );
+    if (!r.ok || r.data.ok === false) {
+      setRowErr((m) => ({
+        ...m,
+        [id]: r.data.message || r.data.error || he.explore.saveFailed,
+      }));
+      return;
+    }
+    setData((prevData) => {
+      if (!prevData?.rows) return prevData;
+      return {
+        ...prevData,
+        rows: prevData.rows.map((rw) =>
+          rowId(rw) === id ? { ...rw, excluded_from_calculations: next } : rw,
+        ),
+      };
+    });
+  };
+
+  const runBulkPatch = async (patch: Record<string, unknown>) => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    setBulkMsg(null);
+    try {
+      const r = await postJson<{
+        ok?: boolean;
+        updated?: number;
+        errors?: unknown[];
+        message?: string;
+        error?: string;
+      }>('/api/ledger/bulk-patch', { ids, patch });
+      if (!r.ok && !(r.status === 207 && (r.data.updated ?? 0) > 0)) {
+        setBulkMsg(r.data.message || r.data.error || he.explore.bulkFailed);
+        return;
+      }
+      setBulkMsg(`${he.explore.bulkOk}: ${r.data.updated ?? 0}`);
+      setSelected(new Set());
+      await load();
+    } catch {
+      setBulkMsg(he.explore.bulkFailed);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   const rows = data?.rows || [];
   const total = data?.total ?? 0;
   const offset = filters.offset;
@@ -236,6 +337,37 @@ export default function Explore() {
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const canPrev = offset > 0;
   const canNext = offset + PAGE_SIZE < total;
+
+  const pageIds = useMemo(() => {
+    const out: number[] = [];
+    for (const row of rows) {
+      const id = rowId(row);
+      if (id != null) out.push(id);
+    }
+    return out;
+  }, [rows]);
+
+  const allPageSelected =
+    pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectPage = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of pageIds) next.add(id);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Set());
 
   const filterBar = (
     <div className="explore-toolbar">
@@ -332,6 +464,65 @@ export default function Explore() {
       {filters.ids.trim() ? (
         <p className="explore-edit-hint">{he.explore.idsMode}</p>
       ) : null}
+
+      <div className="explore-presets">
+        <input
+          type="text"
+          className="explore-preset-name"
+          dir="auto"
+          placeholder={he.explore.presetName}
+          value={presetName}
+          onChange={(e) => setPresetName(e.target.value)}
+        />
+        <button
+          type="button"
+          className="secondary"
+          disabled={!presetName.trim()}
+          onClick={() => {
+            const name = presetName.trim();
+            const query = filtersToSearchParams(filters).toString();
+            const next = [...presets.filter((p) => p.name !== name), { name, query }];
+            setPresets(next);
+            savePresets(next);
+            setPresetName('');
+          }}
+        >
+          {he.explore.savePreset}
+        </button>
+        <select
+          value=""
+          onChange={(e) => {
+            const name = e.target.value;
+            if (!name) return;
+            const hit = presets.find((p) => p.name === name);
+            if (!hit) return;
+            setSearchParams(new URLSearchParams(hit.query), { replace: true });
+          }}
+          aria-label={he.explore.loadPreset}
+        >
+          <option value="">{presets.length ? he.explore.loadPreset : he.explore.noPresets}</option>
+          {presets.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="secondary"
+          disabled={!presets.length || !presetName.trim()}
+          onClick={() => {
+            const name = presetName.trim();
+            const next = presets.filter((p) => p.name !== name);
+            setPresets(next);
+            savePresets(next);
+            setPresetName('');
+          }}
+        >
+          {he.explore.deletePreset}
+        </button>
+      </div>
+
       {err ? <p className="explore-msg explore-msg--err">{err}</p> : null}
 
       {loading && !data ? (
@@ -365,15 +556,72 @@ export default function Explore() {
             </div>
           </div>
 
+          <div className="explore-bulk-bar">
+            <button
+              type="button"
+              className="secondary"
+              disabled={pageIds.length === 0 || allPageSelected}
+              onClick={selectPage}
+            >
+              {he.explore.selectPage}
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={selected.size === 0}
+              onClick={clearSelection}
+            >
+              {he.explore.clearSelection}
+            </button>
+            <span className="explore-count" dir="ltr">
+              {he.explore.selectedCount}: {selected.size}
+            </span>
+            <input
+              type="text"
+              className="explore-bulk-cat"
+              dir="auto"
+              placeholder={he.explore.bulkCategoryPlaceholder}
+              value={bulkCategory}
+              onChange={(e) => setBulkCategory(e.target.value)}
+              disabled={selected.size === 0 || bulkBusy}
+            />
+            <button
+              type="button"
+              disabled={selected.size === 0 || !bulkCategory.trim() || bulkBusy}
+              onClick={() => void runBulkPatch({ קטגוריה: bulkCategory.trim() })}
+            >
+              {he.explore.applyCategory}
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={selected.size === 0 || bulkBusy}
+              onClick={() => void runBulkPatch({ excluded_from_calculations: 1 })}
+            >
+              {he.explore.applyExclude}
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={selected.size === 0 || bulkBusy}
+              onClick={() => void runBulkPatch({ excluded_from_calculations: 0 })}
+            >
+              {he.explore.applyInclude}
+            </button>
+            {bulkMsg ? <span className="explore-bulk-msg">{bulkMsg}</span> : null}
+          </div>
+
           <div className="explore-table-wrap">
             <table className="explore-table">
               <thead>
                 <tr>
+                  <th className="explore-col-check" aria-label="select" />
                   {cols.map((c) => (
                     <th key={c} dir={columnDir(c)}>
                       {c}
                     </th>
                   ))}
+                  <th>{he.explore.excludeToggle}</th>
                 </tr>
               </thead>
               <tbody>
@@ -383,14 +631,21 @@ export default function Explore() {
                     rid != null
                       ? String(rid)
                       : `r-${offset + ri}`;
-                  const excluded =
-                    row.excluded_from_calculations === 1 ||
-                    row.excluded_from_calculations === true ||
-                    row.excluded_from_calculations === '1';
+                  const excluded = isExcluded(row);
                   const re = rid != null ? rowErr[rid] : undefined;
                   return (
                     <Fragment key={key}>
                       <tr className={excluded ? 'explore-row--excluded' : undefined}>
+                        <td className="explore-col-check">
+                          {rid != null ? (
+                            <input
+                              type="checkbox"
+                              checked={selected.has(rid)}
+                              onChange={() => toggleSelect(rid)}
+                              aria-label={`select ${rid}`}
+                            />
+                          ) : null}
+                        </td>
                         {cols.map((c) => (
                           <td key={c} dir={columnDir(c)}>
                             {rid != null && EDITABLE_COLUMNS.has(c) ? (
@@ -429,10 +684,23 @@ export default function Explore() {
                             )}
                           </td>
                         ))}
+                        <td>
+                          {rid != null ? (
+                            <button
+                              type="button"
+                              className="secondary explore-exclude-btn"
+                              onClick={() => void toggleExclude(row)}
+                            >
+                              {excluded ? he.explore.excludeOn : he.explore.excludeOff}
+                            </button>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
                       </tr>
                       {re ? (
                         <tr className="explore-row-err-tr">
-                          <td className="explore-row-err" colSpan={cols.length}>
+                          <td className="explore-row-err" colSpan={cols.length + 2}>
                             {re}
                           </td>
                         </tr>

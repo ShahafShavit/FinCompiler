@@ -158,3 +158,55 @@
   font-size: var(--fs-caption);
   padding: 0.25rem 0.55rem 0.55rem;
 }
+
+.explore-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.65rem;
+  align-items: center;
+  margin: 0.35rem 0 0.65rem;
+}
+
+.explore-bulk-cat {
+  min-width: 10rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+}
+
+.explore-bulk-msg {
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+}
+
+.explore-col-check {
+  width: 2.2rem;
+  text-align: center !important;
+}
+
+.explore-exclude-btn {
+  font-size: 0.8rem;
+  padding: 0.2rem 0.45rem;
+  white-space: nowrap;
+}
+
+.explore-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.65rem;
+  align-items: center;
+  margin: 0.35rem 0 0.65rem;
+}
+
+.explore-preset-name {
+  min-width: 8rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+}

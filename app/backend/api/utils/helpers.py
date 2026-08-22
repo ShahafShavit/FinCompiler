@@ -49,6 +49,9 @@ class EventHub:
                 self._subs.remove(sub)
 
 
+_CATEGORIZE_HISTORY_MAX = 30
+
+
 class ControlState:
     def __init__(self) -> None:
         self.hub = EventHub()
@@ -57,6 +60,8 @@ class ControlState:
         self._current_job: str = ""
         self._error: str = ""
         self._job_seq = 0
+        self._categorize_history: list[dict[str, Any]] = []
+        self._categorize_history_lock = threading.Lock()
 
     def try_start_job(self, name: str) -> tuple[bool, str]:
         if not self._job_lock.acquire(blocking=False):
@@ -96,6 +101,15 @@ class ControlState:
     @property
     def last_error(self) -> str:
         return self._error
+
+    def categorize_history_snapshot(self) -> list[dict[str, Any]]:
+        with self._categorize_history_lock:
+            return list(self._categorize_history)
+
+    def append_categorize_history(self, item: dict[str, Any]) -> None:
+        with self._categorize_history_lock:
+            self._categorize_history.insert(0, item)
+            del self._categorize_history[_CATEGORIZE_HISTORY_MAX:]
 
 
 def get_control_state(request: Request) -> ControlState:

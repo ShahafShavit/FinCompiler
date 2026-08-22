@@ -13,6 +13,9 @@ when ``is_static = 1``.
 
 ``/api/discard`` — exclude the current row from calculations and append a workbook drop rule
 for ``מקור עסקה`` when present.
+
+Session history for the History UI lives on :class:`api.utils.helpers.ControlState`
+(process lifetime).
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ def _session_categories(cf: CategorizeFile) -> list[str]:
 def _attach_category_columns(base: dict[str, Any]) -> dict[str, Any]:
     """Add ``category_columns`` from ledger (QoL grouping; optional for UI)."""
     path = config.ledger_db_file
-    if not os.path.isfile(path):
+    if not path or not os.path.isfile(path):
         base["category_columns"] = {"columns": [], "unassigned": []}
         return base
     from ledger import ledger_connect_readonly
@@ -80,8 +83,54 @@ def _ledger_queue_categorize_file() -> CategorizeFile:
     )
 
 
-def next_payload() -> dict[str, Any]:
+def _history_from_state(control_state: Any) -> list[dict[str, Any]]:
+    if control_state is None:
+        return []
+    snap = getattr(control_state, "categorize_history_snapshot", None)
+    if callable(snap):
+        return snap()
+    return []
+
+
+def _append_history(control_state: Any, item: dict[str, Any]) -> None:
+    if control_state is None:
+        return
+    append = getattr(control_state, "append_categorize_history", None)
+    if callable(append):
+        append(item)
+
+
+def _history_item_from_respond(row: Any, kind: str, data: dict[str, Any]) -> dict[str, Any]:
+    tid = str(data.get("prompt_id") or data.get("transaction_id") or "")
+    store = ""
+    if hasattr(row, "get"):
+        store = str(row.get("מקור עסקה") or "").strip()
+    cat = str(data.get("category") or "").strip()
+    if not cat and kind == "resolve_static" and hasattr(row, "get"):
+        cat = str(row.get("קטגוריה") or "").strip()
+    resp: dict[str, Any] = {}
+    if cat:
+        resp["category"] = cat
+    if "is_static" in data and data["is_static"] is not None:
+        try:
+            resp["is_static"] = int(data["is_static"])
+        except (TypeError, ValueError):
+            pass
+    item: dict[str, Any] = {
+        "prompt_id": tid,
+        "kind": kind,
+        "store_name": store,
+    }
+    if cat:
+        item["category"] = cat
+    if resp:
+        item["response"] = resp
+    return item
+
+
+def next_payload(*, control_state: Any = None) -> dict[str, Any]:
     cats: list[str] = []
+    hist = _history_from_state(control_state)
     with _lock:
         from ledger import count_transactions_needing_manual_category
         from ledger import forward_fill_uncategorized_for_static_stores_sql
@@ -94,7 +143,7 @@ def next_payload() -> dict[str, Any]:
                 {
                     "pending": {"kind": "idle"},
                     "open_count": 0,
-                    "history": [],
+                    "history": hist,
                     "session_categories": [],
                 }
             )
@@ -111,7 +160,7 @@ def next_payload() -> dict[str, Any]:
                     {
                         "pending": {"kind": "idle"},
                         "open_count": 0,
-                        "history": [],
+                        "history": hist,
                         "session_categories": cats,
                     }
                 )
@@ -121,7 +170,7 @@ def next_payload() -> dict[str, Any]:
                     {
                         "pending": {"kind": "idle"},
                         "open_count": 0,
-                        "history": [],
+                        "history": hist,
                         "session_categories": cats,
                     }
                 )
@@ -139,7 +188,7 @@ def next_payload() -> dict[str, Any]:
                     {
                         "pending": {"kind": "idle"},
                         "open_count": open_n,
-                        "history": [],
+                        "history": hist,
                         "session_categories": cats,
                         "error": str(e),
                     }
@@ -148,7 +197,7 @@ def next_payload() -> dict[str, Any]:
                 {
                     "pending": p.to_display_dict(),
                     "open_count": open_n,
-                    "history": [],
+                    "history": hist,
                     "session_categories": _session_categories(cf),
                 }
             )
@@ -156,14 +205,14 @@ def next_payload() -> dict[str, Any]:
             {
                 "pending": {"kind": "idle"},
                 "open_count": 0,
-                "history": [],
+                "history": hist,
                 "session_categories": cats,
                 "error": "queue repair failed after retry",
             }
         )
 
 
-def respond(data: dict[str, Any]) -> Optional[str]:
+def respond(data: dict[str, Any], *, control_state: Any = None) -> Optional[str]:
     tid = str(data.get("prompt_id") or data.get("transaction_id") or "")
     kind = data.get("kind")
     if not tid or not kind:
@@ -190,6 +239,7 @@ def respond(data: dict[str, Any]) -> Optional[str]:
             cf.apply_manual_http_response(row0, str(kind), data)
         except ValueError as e:
             return str(e)
+        _append_history(control_state, _history_item_from_respond(row0, str(kind), data))
     return None
 
 
@@ -264,18 +314,18 @@ def discard(data: dict[str, Any]) -> Optional[str]:
     return None
 
 
-def handle_get(path: str) -> tuple[int, bytes, str]:
+def handle_get(path: str, *, control_state: Any = None) -> tuple[int, bytes, str]:
     path = path.rstrip("/") or "/"
     if path == "/api/summary":
         body = json_bytes_strict(summary())
         return (200, body, "application/json; charset=utf-8")
     if path == "/api/next":
-        body = json_bytes_strict(next_payload())
+        body = json_bytes_strict(next_payload(control_state=control_state))
         return (200, body, "application/json; charset=utf-8")
     return (404, b"Not Found", "text/plain")
 
 
-def handle_post(path: str, raw: bytes) -> tuple[int, bytes, str]:
+def handle_post(path: str, raw: bytes, *, control_state: Any = None) -> tuple[int, bytes, str]:
     path = path.rstrip("/") or "/"
     try:
         data = json.loads(raw.decode("utf-8")) if raw else {}
@@ -286,7 +336,7 @@ def handle_post(path: str, raw: bytes) -> tuple[int, bytes, str]:
             "application/json; charset=utf-8",
         )
     if path == "/api/respond":
-        err = respond(data)
+        err = respond(data, control_state=control_state)
         if err:
             return (
                 400,

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import PageShell from '../components/PageShell';
 import { fetchJson, postJson } from '../lib/api';
 import { he } from '../lib/he';
+import { useInvalidateCategorizeSummary } from '../lib/useCategorizeSummary';
 
 import './Categorize.css';
 
@@ -745,6 +746,8 @@ function HistoryResolveStaticItem({
 }
 
 export default function Categorize() {
+  const invalidateSummary = useInvalidateCategorizeSummary();
+  const historySectionRef = useRef<HTMLElement | null>(null);
   const [payload, setPayload] = useState<CatApi>({
     pending: { kind: 'idle' },
     history: [],
@@ -764,10 +767,11 @@ export default function Categorize() {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       const data = await r.json();
       setPayload(normalizeApi(data));
+      invalidateSummary();
     } catch (e) {
       setStatus(String(e));
     }
-  }, []);
+  }, [invalidateSummary]);
 
   useEffect(() => {
     void fetchNext();
@@ -783,38 +787,46 @@ export default function Categorize() {
       });
       if (!r.ok) throw new Error((r.data as { error?: string })?.error || r.status.toString());
       setStatus('Updated.');
+      invalidateSummary();
       await fetchNext();
     } catch (e) {
       setStatus(`Error: ${e}`);
     }
   };
 
-  const submit = async (body: Record<string, unknown>) => {
-    setStatus('Saving…');
-    scrollCategorizePageToTop();
-    try {
-      const r = await fetchJson(`${CAT}/api/respond`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) throw new Error((r.data as { error?: string })?.error || r.status.toString());
-      setHoveredCategory(null);
-      setPayload((prev) => ({ ...prev, pending: { kind: 'idle' } }));
-      setStatus('Saved.');
-      await fetchNext();
-    } catch (e) {
-      setStatus(`Error: ${e}`);
-    }
-  };
+  const submit = useCallback(
+    async (body: Record<string, unknown>) => {
+      setStatus('Saving…');
+      scrollCategorizePageToTop();
+      try {
+        const r = await fetchJson(`${CAT}/api/respond`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error((r.data as { error?: string })?.error || r.status.toString());
+        setHoveredCategory(null);
+        setPayload((prev) => ({ ...prev, pending: { kind: 'idle' } }));
+        setStatus('Saved.');
+        invalidateSummary();
+        await fetchNext();
+      } catch (e) {
+        setStatus(`Error: ${e}`);
+      }
+    },
+    [fetchNext, invalidateSummary],
+  );
 
   const postDiscard = async (promptId: string) => {
     if (!window.confirm(he.categorize.discardConfirm)) return;
     setStatus('Discarding…');
     try {
-      const r = await postJson<{ ok?: boolean; error?: string }>(`${CAT}/api/discard`, { prompt_id: promptId });
+      const r = await postJson<{ ok?: boolean; error?: string }>(`${CAT}/api/discard`, {
+        prompt_id: promptId,
+      });
       if (!r.ok) throw new Error((r.data as { error?: string })?.error || r.status.toString());
       setStatus('Discarded.');
+      invalidateSummary();
       await fetchNext();
     } catch (e) {
       setStatus(`Error: ${e}`);
@@ -843,15 +855,113 @@ export default function Categorize() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset on prompt id
   }, [pendingPromptId]);
 
-  const pickMain = (category: string) => {
+  const pickMain = useCallback((category: string) => {
     setMainCategory(category);
     setMainCustom('');
-  };
+  }, []);
 
   const onMainCustomChange = (value: string) => {
     setMainCustom(value);
     if (value.trim()) setMainCategory(null);
   };
+
+  const trySaveMain = useCallback(() => {
+    if (!p || p.kind === 'idle') return;
+    if (p.kind === 'fluid') {
+      const cat = resolveCategory(mainCategory, mainCustom);
+      if (!cat) {
+        setStatus(he.categorize.pickCategory);
+        return;
+      }
+      void submit({
+        kind: 'fluid',
+        prompt_id: p.prompt_id,
+        category: cat,
+        notes: clipNotes(mainNotes),
+      });
+      return;
+    }
+    if (p.kind === 'new_store') {
+      const cat = resolveCategory(mainCategory, mainCustom);
+      if (!cat) {
+        setStatus(he.categorize.pickCategory);
+        return;
+      }
+      if (mainIsStatic === null) {
+        setStatus(`${he.categorize.staticMapping} / ${he.categorize.dynamicMapping}`);
+        return;
+      }
+      void submit({
+        kind: 'new_store',
+        prompt_id: p.prompt_id,
+        category: cat,
+        is_static: mainIsStatic,
+        notes: clipNotes(mainNotes),
+      });
+      return;
+    }
+    if (p.kind === 'resolve_static') {
+      // Require an explicit static/dynamic click; Enter alone is ambiguous.
+      setStatus(`${he.categorize.staticMapping} / ${he.categorize.dynamicMapping}`);
+    }
+  }, [p, mainCategory, mainCustom, mainNotes, mainIsStatic, submit]);
+
+  const suggestions = Array.isArray(p.category_suggestions) ? p.category_suggestions : [];
+  const selectedForSuggestions = mainCustom.trim() ? null : mainCategory;
+
+  useEffect(() => {
+    const isTypingTarget = (el: EventTarget | null): boolean => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      return el.isContentEditable;
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isTypingTarget(e.target)) {
+          (e.target as HTMLElement).blur();
+          e.preventDefault();
+        }
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+        if (isTypingTarget(e.target)) return;
+        if (history.length === 0) return;
+        e.preventDefault();
+        historySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setStatus(he.categorize.session);
+        return;
+      }
+
+      const ctrlEnter = (e.ctrlKey || e.metaKey) && e.key === 'Enter';
+      if (ctrlEnter) {
+        e.preventDefault();
+        trySaveMain();
+        return;
+      }
+
+      if (isTypingTarget(e.target)) return;
+
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        trySaveMain();
+        return;
+      }
+
+      if (e.key >= '1' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const idx = Number(e.key) - 1;
+        if (idx < suggestions.length) {
+          e.preventDefault();
+          pickMain(suggestions[idx].category);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [trySaveMain, suggestions, pickMain, history.length]);
 
   const queueMeta =
     typeof payload.open_count === 'number' ? (
@@ -873,12 +983,10 @@ export default function Categorize() {
     onStatus: setStatus,
   };
 
-  const suggestions = Array.isArray(p.category_suggestions) ? p.category_suggestions : [];
-  const selectedForSuggestions = mainCustom.trim() ? null : mainCategory;
-
   return (
     <PageShell title={he.categorize.title} sub={he.categorize.sub} width="narrow" className="categorize-page">
       {queueMeta}
+      <p className="hint categorize-shortcuts-hint">{he.categorize.shortcutsHint}</p>
 
       <section className="categorize-card categorize-card--hero">
         {payload.error && p.kind === 'idle' && (
@@ -922,19 +1030,7 @@ export default function Categorize() {
                 <button
                   type="button"
                   className="categorize-btn-save"
-                  onClick={() => {
-                    const cat = resolveCategory(mainCategory, mainCustom);
-                    if (!cat) {
-                      setStatus(he.categorize.pickCategory);
-                      return;
-                    }
-                    void submit({
-                      kind: 'fluid',
-                      prompt_id: p.prompt_id,
-                      category: cat,
-                      notes: clipNotes(mainNotes),
-                    });
-                  }}
+                  onClick={() => trySaveMain()}
                 >
                   {he.categorize.save}
                 </button>
@@ -1032,24 +1128,7 @@ export default function Categorize() {
                 <button
                   type="button"
                   className="categorize-btn-save"
-                  onClick={() => {
-                    const cat = resolveCategory(mainCategory, mainCustom);
-                    if (!cat) {
-                      setStatus(he.categorize.pickCategory);
-                      return;
-                    }
-                    if (mainIsStatic === null) {
-                      setStatus(`${he.categorize.staticMapping} / ${he.categorize.dynamicMapping}`);
-                      return;
-                    }
-                    void submit({
-                      kind: 'new_store',
-                      prompt_id: p.prompt_id,
-                      category: cat,
-                      is_static: mainIsStatic,
-                      notes: clipNotes(mainNotes),
-                    });
-                  }}
+                  onClick={() => trySaveMain()}
                 >
                   {he.categorize.save}
                 </button>
@@ -1067,7 +1146,10 @@ export default function Categorize() {
       </section>
 
       {history.length > 0 && (
-        <section className="categorize-card categorize-card--history">
+        <section
+          className="categorize-card categorize-card--history"
+          ref={historySectionRef}
+        >
           <h2>{he.categorize.session}</h2>
           {history.map((item) => {
             if (item.kind === 'fluid') {

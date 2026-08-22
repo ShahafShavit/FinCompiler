@@ -198,12 +198,88 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             conn = sqlite3.connect(cfg.ledger_db_file)
             try:
                 cat = conn.execute(
-                    'SELECT "קטגוריה" FROM ledger_transaction WHERE TRIM("fingerprint") = ?',
-                    (str(fp).strip(),),
+                    'SELECT "קטגוריה" FROM ledger_transaction WHERE fingerprint = ?',
+                    (fp,),
                 ).fetchone()[0]
             finally:
                 conn.close()
             self.assertEqual(cat, "Rent")
+
+    def test_f3_upsert_preserves_user_category_and_timestamps(self) -> None:
+        """MIG-F3: pipeline upsert must not wipe category or invent user-edit times."""
+        from ledger import patch_ledger_transaction_by_id, upsert_compiled_dataframe_to_ledger
+
+        base = {
+            "תאריך": "2025-04-01",
+            "בחובה": 40.0,
+            "בזכות": 0.0,
+            "מקור עסקה": "Cafe",
+            "פירוט נוסף": None,
+            "תאור מורחב": None,
+            "4 ספרות": None,
+            "קטגוריה": "",
+        }
+        fp = generate_transaction_fingerprint(pd.Series(base))
+        self.assertIsNotNone(fp)
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                cfg = _reload_config()
+            upsert_compiled_dataframe_to_ledger(
+                pd.DataFrame([{**base, "notes": None}]), cfg.ledger_db_file
+            )
+            conn = sqlite3.connect(cfg.ledger_db_file)
+            try:
+                rid, ing0, cat_at0 = conn.execute(
+                    "SELECT id, ingested_at, category_updated_at FROM ledger_transaction WHERE fingerprint = ?",
+                    (fp,),
+                ).fetchone()
+            finally:
+                conn.close()
+
+            patch_ledger_transaction_by_id(
+                cfg.ledger_db_file, int(rid), {"קטגוריה": "Dining"}
+            )
+            conn = sqlite3.connect(cfg.ledger_db_file)
+            try:
+                cat1, cat_at1, ing1 = conn.execute(
+                    'SELECT "קטגוריה", category_updated_at, ingested_at '
+                    "FROM ledger_transaction WHERE id = ?",
+                    (rid,),
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertEqual(cat1, "Dining")
+            self.assertIsNotNone(cat_at1)
+            self.assertEqual(ing1, ing0)
+
+            # Re-upsert with same fingerprint inputs but updated last4 + conflicting category
+            again = {
+                **base,
+                "4 ספרות": "1234",
+                "קטגוריה": "SHOULD_NOT_WIN",
+                "notes": None,
+            }
+            upsert_compiled_dataframe_to_ledger(pd.DataFrame([again]), cfg.ledger_db_file)
+            conn = sqlite3.connect(cfg.ledger_db_file)
+            try:
+                cat2, digits, cat_at2, ing2, n = conn.execute(
+                    'SELECT "קטגוריה", "4 ספרות", category_updated_at, ingested_at, COUNT(*) '
+                    "FROM ledger_transaction"
+                ).fetchone()
+                row2 = conn.execute(
+                    'SELECT "קטגוריה", "4 ספרות", category_updated_at, ingested_at '
+                    "FROM ledger_transaction WHERE id = ?",
+                    (rid,),
+                ).fetchone()
+            finally:
+                conn.close()
+            cat2, digits, cat_at2, ing2 = row2
+            self.assertEqual(cat2, "Dining")
+            self.assertEqual(str(digits), "1234")
+            self.assertEqual(ing2, ing0)
+            # category_updated_at must not jump solely because bank fields changed
+            self.assertEqual(cat_at2, cat_at1)
 
 
 if __name__ == "__main__":

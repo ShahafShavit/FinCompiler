@@ -1,4 +1,4 @@
-# Ledger merge ownership (MIG-E1)
+# Ledger merge ownership (MIG-E1 / MIG-F3)
 
 Concise rules for **`ledger_transaction` upserts** keyed by **`fingerprint`**, aligned with `docs/data-storage-and-pipeline-evaluation.md` Section 13.1 and Section 13.9.
 
@@ -9,7 +9,7 @@ Some exports still include Hebrew columns that **do not exist** on `ledger_trans
 | Name | Role |
 |------|------|
 | **מזהה עסקה** | Legacy bank / Sheets column (row hash). **Not** stored in SQLite; **stripped** on workbook normalize. **Never** use it as `fingerprint` or as a merge key into the ledger. |
-| **תאריך עדכון** | Optional **source** field for **computing** `ingested_at` on **first insert** only (`pipeline/ingested_at_rules.py`). It is **not** a column on the ledger; only **`ingested_at`** is stored. |
+| **תאריך עדכון** | Not a ledger column. First-insert `ingested_at` is set by `ledger.store.ingested_at_for_new_ledger_row()` (local calendar date). |
 
 Canonical reference: `schema/ledger/README.md` and comments in `schema/ledger/full_schema.sql`.
 
@@ -34,9 +34,9 @@ These come from bank exports / compile merge and may change when the institution
 
 | Column | Rule |
 |--------|------|
-| `ingested_at` | Set on **first insert** from `pipeline.ingested_at_rules.compute_ingested_at_iso`. On **update**, **never** change an existing `ingested_at` (first appearance in the ledger stays fixed). |
-| `statement_month` | Prefer **existing** when present; otherwise set from incoming (compile may leave NULL until a later step). |
-| `category_updated_at`, `data_updated_at` | Maintained by DDL triggers in `schema/ledger/full_schema.sql` when relevant columns change — pipeline code must not assign fake “user edit” times. |
+| `ingested_at` | Set on **first insert** via `ledger.store.ingested_at_for_new_ledger_row`. On **update**, **never** change an existing `ingested_at`. |
+| `statement_month` | Prefer **existing** when present; otherwise set from incoming. |
+| `category_updated_at`, `data_updated_at` | Maintained by DDL triggers — pipeline upserts must **not** assign fake user-edit times. Updating only bank fields must **not** bump `category_updated_at`. |
 
 ## Rows without `fingerprint`
 
@@ -44,5 +44,6 @@ Compile rows with missing or empty fingerprint are **not** upserted (v8 allows N
 
 ## Implementation
 
-- `pipeline/ledger.py` (`upsert_compiled_dataframe_to_ledger`) — implements the merge rules above for compile output.
-- `pipeline.compile_transactions_main` always constructs `Compiler(..., ledger_db=config.ledger_db_file)`; `Compiler.save_main` calls `upsert_compiled_dataframe_to_ledger` (there is **no** `upsert_ledger` flag on `compile_transactions_main`). `pipeline/compiler.py` `update_fingerprint_db` does not run when `ledger_db` is set — category truth is on `ledger_transaction`.
+- `ledger.store.upsert_compiled_dataframe_to_ledger` — merge rules above.
+- Transactions compile: `pipeline.compile_transactions` → upsert into `config.ledger_db_file`.
+- Covered by `tests/test_ledger_compile_upsert.py` (`test_f3_upsert_preserves_user_category_and_timestamps`).

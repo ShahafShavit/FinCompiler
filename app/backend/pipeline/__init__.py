@@ -294,6 +294,7 @@ def run_auto_categorize_with_web_remainder(
     _notify("CATEGORIZE: running auto pass (remaining questions → web app)", sink)
     cf = CategorizeFile(
         ledger_db_path=config.ledger_db_file,
+        materialize_transactions=False,
     )
     cf.auto_categorize()
     n = cf.count_rows_needing_category()

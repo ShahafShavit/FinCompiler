@@ -674,3 +674,9 @@ def patch_ledger_transaction(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     if isinstance(payload, dict) and payload.get("ok"):
         payload = {**payload, "id": resolved_id}
     return status, payload
+
+def divergence_status() -> dict[str, Any]:
+    """MIG-E4: live ledger vs latest local backup fingerprint."""
+    from pipeline.backup import divergence_report
+
+    return divergence_report()

@@ -314,7 +314,7 @@ def _stats_df_to_tabular(stats_df: pd.DataFrame, index_label: str) -> dict[str, 
 
 @dataclass
 class HeatmapBundle:
-    df: pd.DataFrame
+    df: pd.DataFrame | None
     expenses_pivot: pd.DataFrame
     income_pivot: pd.DataFrame
     net_pivot: pd.DataFrame
@@ -327,7 +327,102 @@ class HeatmapBundle:
     source_path: str
 
 
+def _build_bundle_from_month_sums(
+    rows: list[dict[str, Any]], source_label: str
+) -> HeatmapBundle | None:
+    """Build pivots from SQL month×category sums (no full ledger DataFrame)."""
+    if not rows:
+        return None
+
+    exp_records: list[dict[str, Any]] = []
+    inc_records: list[dict[str, Any]] = []
+    for r in rows:
+        ym = r.get("effective_ym")
+        if ym is None or str(ym).strip() == "":
+            continue
+        ym_s = str(ym).strip()
+        cat = r.get("category")
+        cat_s = (
+            "(uncategorized)"
+            if cat is None or str(cat).strip() == ""
+            else str(cat).strip()
+        )
+        exp = float(r.get("expense_sum") or 0)
+        inc = float(r.get("income_sum") or 0)
+        if exp > 0:
+            exp_records.append({"YearMonth": ym_s, "קטגוריה": cat_s, "בחובה": exp})
+        if inc > 0:
+            inc_records.append({"YearMonth": ym_s, "קטגוריה": cat_s, "בזכות": inc})
+
+    if not exp_records and not inc_records:
+        return None
+
+    expenses_pivot = pd.DataFrame(columns=pd.Index([], name="קטגוריה"))
+    income_pivot = pd.DataFrame(columns=pd.Index([], name="קטגוריה"))
+    if exp_records:
+        edf = pd.DataFrame(exp_records)
+        expenses_pivot = (
+            pd.pivot_table(
+                edf,
+                values="בחובה",
+                index="YearMonth",
+                columns="קטגוריה",
+                aggfunc="sum",
+            )
+            .fillna(0)
+            .sort_index(ascending=False)
+        )
+    if inc_records:
+        idf = pd.DataFrame(inc_records)
+        income_pivot = (
+            pd.pivot_table(
+                idf,
+                values="בזכות",
+                index="YearMonth",
+                columns="קטגוריה",
+                aggfunc="sum",
+            )
+            .fillna(0)
+            .sort_index(ascending=False)
+        )
+
+    all_cols = expenses_pivot.columns.union(income_pivot.columns)
+    all_idx = expenses_pivot.index.union(income_pivot.index)
+    income_aligned = income_pivot.reindex(index=all_idx, columns=all_cols).fillna(0)
+    expenses_aligned = expenses_pivot.reindex(index=all_idx, columns=all_cols).fillna(0)
+    net_pivot = (income_aligned - expenses_aligned).sort_index(ascending=False)
+
+    expenses_pivot = _reorder_pivot_columns_recency_weighted(expenses_pivot)
+    income_pivot = _reorder_pivot_columns_recency_weighted(income_pivot)
+    net_pivot = _reorder_pivot_columns_recency_weighted(net_pivot)
+
+    expenses_pivot_log = np.log1p(expenses_pivot)
+    income_pivot_log = np.log1p(income_pivot)
+    net_symlog = np.sign(net_pivot) * np.log1p(np.abs(net_pivot))
+
+    def normalize_col(col: pd.Series) -> pd.Series:
+        max_abs = col.abs().max()
+        return col / max_abs if max_abs != 0 else col
+
+    net_pivot_normalized = net_symlog.apply(normalize_col).fillna(0)
+
+    return HeatmapBundle(
+        df=None,
+        expenses_pivot=expenses_pivot,
+        income_pivot=income_pivot,
+        net_pivot=net_pivot,
+        expenses_pivot_log=expenses_pivot_log,
+        income_pivot_log=income_pivot_log,
+        net_pivot_normalized=net_pivot_normalized,
+        expense_summary=_calculate_stats(expenses_pivot, "expense", DESIRED_STATS),
+        income_summary=_calculate_stats(income_pivot, "income", DESIRED_STATS),
+        net_summary=_calculate_stats(net_pivot, "net", DESIRED_STATS),
+        source_path=source_label,
+    )
+
+
 def _build_bundle_from_dataframe(df: pd.DataFrame, source_label: str) -> HeatmapBundle:
+    """Legacy pandas path — kept for parity tests only."""
     df = df.copy()
     df["תאריך"] = _heatmap_parse_dates(df["תאריך"])
     df["effective_tx_date"] = _heatmap_effective_tx_date(df)
@@ -424,12 +519,10 @@ def _ledger_heatmap_status() -> dict[str, Any]:
 
 
 def get_bundle() -> HeatmapBundle | None:
-    """Load pivot data from the SQLite ledger (canonical).
+    """Load pivot data from the SQLite ledger via SQL month×category aggregates.
 
-    Phase: pandas pivots and normalization only — no SQL-side matrix yet. Uses
-    :func:`load_transactions_dataframe_from_ledger` (migrate + full read). Control server
-    startup also runs :func:`ledger.migrate_ledger_db` so DDL stays off hot paths
-    where possible. A later phase could swap to SQL/materialized slices and ``read_*`` only.
+    Paint / column order / stats stay in Python on the compact pivots — no full-ledger
+    DataFrame on the snapshot path. Detail drills query SQL separately.
     """
     db = config.ledger_db_file
     if not os.path.isfile(db):
@@ -442,26 +535,20 @@ def get_bundle() -> HeatmapBundle | None:
     c = _bundle_cache
     if c["path"] == db and c["mtime"] == st.st_mtime and c["bundle"] is not None:
         return c["bundle"]
-    from ledger import load_transactions_dataframe_from_ledger
+    from ledger.heatmap_sql import fetch_month_category_sums
 
     try:
-        df = load_transactions_dataframe_from_ledger(db)
+        rows = fetch_month_category_sums(db)
     except Exception:  # noqa: BLE001
-        log.exception("heatmap: failed to load ledger %s", db)
+        log.exception("heatmap: failed to load month×category sums from %s", db)
         return None
-    if df.empty:
-        log.warning("heatmap: ledger empty")
-        return None
-    for col in ("תאריך", "בחובה", "בזכות", "קטגוריה"):
-        if col not in df.columns:
-            log.warning("heatmap: ledger missing column %r", col)
-            return None
-    df["בחובה"] = pd.to_numeric(df["בחובה"], errors="coerce").fillna(0.0)
-    df["בזכות"] = pd.to_numeric(df["בזכות"], errors="coerce").fillna(0.0)
     try:
-        bundle = _build_bundle_from_dataframe(df, db)
+        bundle = _build_bundle_from_month_sums(rows, db)
     except Exception:  # noqa: BLE001
-        log.exception("heatmap: failed to build bundle from ledger")
+        log.exception("heatmap: failed to build bundle from SQL sums")
+        return None
+    if bundle is None:
+        log.warning("heatmap: ledger empty or no amounts")
         return None
     c["path"] = db
     c["mtime"] = st.st_mtime
@@ -769,20 +856,33 @@ def _sort_detail_frame(frame: pd.DataFrame, source_df: pd.DataFrame | None = Non
     return frame
 
 
+def _detail_rows_to_frame(rows: list[dict[str, Any]], visible: list[str]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame(columns=["id"] + visible)
+    df = pd.DataFrame(rows)
+    cols = _detail_column_order(df, visible)
+    return df.loc[:, [c for c in cols if c in df.columns]]
+
+
 def _detail_frames_cell(
     bundle: HeatmapBundle, report_type: ReportType, year_month: str, category: str
 ) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
-    df = bundle.df
-    cols_show_exp = _detail_column_order(df, _COLS_EXP)
-    cols_show_in = _detail_column_order(df, _COLS_IN)
+    from ledger.heatmap_sql import fetch_detail_rows
+
+    db = bundle.source_path
+    cat_key = category
+    # Pivot may use NaN for empty category; SQL uses (uncategorized) for empty in detail filters
+    # when category was empty in the cell drill the SPA sends the display label.
     if report_type == "expense":
         pivot = bundle.expenses_pivot
         if year_month not in pivot.index or category not in pivot.columns:
             return None
         if float(pivot.loc[year_month, category]) <= 0:
             return None
-        mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בחובה"] > 0)
-        details = _sort_detail_frame(df.loc[mask, cols_show_exp], df)
+        rows = fetch_detail_rows(
+            db, report_type="expense", year_month=year_month, category=cat_key, period="all"
+        )
+        details = _detail_rows_to_frame(rows, _COLS_EXP)
         title = f"פירוט הוצאות עבור {category} ב-{year_month}"
         return (title, [(None, details)])
     if report_type == "income":
@@ -791,8 +891,10 @@ def _detail_frames_cell(
             return None
         if float(pivot.loc[year_month, category]) <= 0:
             return None
-        mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בזכות"] > 0)
-        details = _sort_detail_frame(df.loc[mask, cols_show_in], df)
+        rows = fetch_detail_rows(
+            db, report_type="income", year_month=year_month, category=cat_key, period="all"
+        )
+        details = _detail_rows_to_frame(rows, _COLS_IN)
         title = f"פירוט הכנסות עבור {category} ב-{year_month}"
         return (title, [(None, details)])
     pivot = bundle.net_pivot
@@ -800,10 +902,14 @@ def _detail_frames_cell(
         return None
     if float(pivot.loc[year_month, category]) == 0:
         return None
-    income_mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בזכות"] > 0)
-    expense_mask = (df["YearMonth"] == year_month) & (df["קטגוריה"] == category) & (df["בחובה"] > 0)
-    income_df = _sort_detail_frame(df.loc[income_mask, cols_show_in], df)
-    expense_df = _sort_detail_frame(df.loc[expense_mask, cols_show_exp], df)
+    income_rows = fetch_detail_rows(
+        db, report_type="income", year_month=year_month, category=cat_key, period="all"
+    )
+    expense_rows = fetch_detail_rows(
+        db, report_type="expense", year_month=year_month, category=cat_key, period="all"
+    )
+    income_df = _detail_rows_to_frame(income_rows, _COLS_IN)
+    expense_df = _detail_rows_to_frame(expense_rows, _COLS_EXP)
     title = f"פירוט תנועות עבור {category} ב-{year_month}"
     return (title, [("הכנסות", income_df), ("הוצאות", expense_df)])
 
@@ -811,27 +917,25 @@ def _detail_frames_cell(
 def _detail_frames_month(
     bundle: HeatmapBundle, report_type: ReportType, year_month: str
 ) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
-    df = bundle.df
-    if not (df["YearMonth"] == year_month).any():
-        return None
-    cols_show_exp = _detail_column_order(df, _COLS_EXP)
-    cols_show_in = _detail_column_order(df, _COLS_IN)
+    from ledger.heatmap_sql import fetch_detail_rows
+
+    db = bundle.source_path
     if report_type == "expense":
-        mask = (df["YearMonth"] == year_month) & (df["בחובה"] > 0)
-        details = _sort_detail_frame(df.loc[mask, cols_show_exp], df)
+        rows = fetch_detail_rows(db, report_type="expense", year_month=year_month, period="all")
+        details = _detail_rows_to_frame(rows, _COLS_EXP)
         if details.empty:
             return None
         return (f"כל ההוצאות ב-{year_month}", [(None, details)])
     if report_type == "income":
-        mask = (df["YearMonth"] == year_month) & (df["בזכות"] > 0)
-        details = _sort_detail_frame(df.loc[mask, cols_show_in], df)
+        rows = fetch_detail_rows(db, report_type="income", year_month=year_month, period="all")
+        details = _detail_rows_to_frame(rows, _COLS_IN)
         if details.empty:
             return None
         return (f"כל ההכנסות ב-{year_month}", [(None, details)])
-    income_mask = (df["YearMonth"] == year_month) & (df["בזכות"] > 0)
-    expense_mask = (df["YearMonth"] == year_month) & (df["בחובה"] > 0)
-    income_df = _sort_detail_frame(df.loc[income_mask, cols_show_in], df)
-    expense_df = _sort_detail_frame(df.loc[expense_mask, cols_show_exp], df)
+    income_rows = fetch_detail_rows(db, report_type="income", year_month=year_month, period="all")
+    expense_rows = fetch_detail_rows(db, report_type="expense", year_month=year_month, period="all")
+    income_df = _detail_rows_to_frame(income_rows, _COLS_IN)
+    expense_df = _detail_rows_to_frame(expense_rows, _COLS_EXP)
     if income_df.empty and expense_df.empty:
         return None
     return (f"כל התנועות ב-{year_month}", [("הכנסות", income_df), ("הוצאות", expense_df)])
@@ -846,18 +950,10 @@ def _detail_frames_category(
     start_ym: str | None = None,
     end_ym: str | None = None,
 ) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
-    df = bundle.df
-    sub = _period_filter_transactions(df, period, start_ym=start_ym, end_ym=end_ym)
-    if sub.empty:
-        return None
-    work = sub.copy()
-    work["__cat__"] = work["קטגוריה"].fillna("").astype(str).str.strip()
-    work.loc[work["__cat__"] == "", "__cat__"] = "(uncategorized)"
-    cols_show_exp = _detail_column_order(work, _COLS_EXP)
-    cols_show_in = _detail_column_order(work, _COLS_IN)
-
     from ledger import dashboard_sql as dashboard_tx_sql
+    from ledger.heatmap_sql import fetch_detail_rows
 
+    db = bundle.source_path
     bounds_lbl = dashboard_tx_sql.normalize_ym_range(start_ym, end_ym)
     if bounds_lbl is not None:
         lo, hi = bounds_lbl
@@ -868,21 +964,49 @@ def _detail_frames_category(
         win_lbl = period
 
     if report_type == "expense":
-        mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
-        details = _sort_detail_frame(work.loc[mask, cols_show_exp], work)
+        rows = fetch_detail_rows(
+            db,
+            report_type="expense",
+            category=category,
+            period=period,
+            start_ym=start_ym,
+            end_ym=end_ym,
+        )
+        details = _detail_rows_to_frame(rows, _COLS_EXP)
         if details.empty:
             return None
         return (f"הוצאות — {category} ({win_lbl})", [(None, details)])
     if report_type == "income":
-        mask = (work["__cat__"] == category) & (work["בזכות"] > 0)
-        details = _sort_detail_frame(work.loc[mask, cols_show_in], work)
+        rows = fetch_detail_rows(
+            db,
+            report_type="income",
+            category=category,
+            period=period,
+            start_ym=start_ym,
+            end_ym=end_ym,
+        )
+        details = _detail_rows_to_frame(rows, _COLS_IN)
         if details.empty:
             return None
         return (f"הכנסות — {category} ({win_lbl})", [(None, details)])
-    income_mask = (work["__cat__"] == category) & (work["בזכות"] > 0)
-    expense_mask = (work["__cat__"] == category) & (work["בחובה"] > 0)
-    income_df = _sort_detail_frame(work.loc[income_mask, cols_show_in], work)
-    expense_df = _sort_detail_frame(work.loc[expense_mask, cols_show_exp], work)
+    income_rows = fetch_detail_rows(
+        db,
+        report_type="income",
+        category=category,
+        period=period,
+        start_ym=start_ym,
+        end_ym=end_ym,
+    )
+    expense_rows = fetch_detail_rows(
+        db,
+        report_type="expense",
+        category=category,
+        period=period,
+        start_ym=start_ym,
+        end_ym=end_ym,
+    )
+    income_df = _detail_rows_to_frame(income_rows, _COLS_IN)
+    expense_df = _detail_rows_to_frame(expense_rows, _COLS_EXP)
     if income_df.empty and expense_df.empty:
         return None
     return (f"נטו — {category} ({win_lbl})", [("הכנסות", income_df), ("הוצאות", expense_df)])
@@ -891,21 +1015,16 @@ def _detail_frames_category(
 def _detail_frames_source(
     bundle: HeatmapBundle, source_key: str, months: int
 ) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
-    df = bundle.df
-    if "מקור עסקה" not in df.columns:
-        return None
-    sub = _filter_recent_months_heatmap(df, months)
-    if sub.empty:
-        return None
-    work = sub.copy()
-    work["__src__"] = work["מקור עסקה"].fillna("").astype(str).str.strip()
-    work.loc[work["__src__"] == "", "__src__"] = "(unknown)"
+    from ledger.heatmap_sql import fetch_detail_rows
+
+    db = bundle.source_path
     sk = source_key.strip()
-    mask = work["__src__"] == sk
-    if not mask.any():
+    rows = fetch_detail_rows(
+        db, report_type="net", source=sk, recent_months=months, period="all"
+    )
+    if not rows:
         return None
-    cols = _detail_column_order(work, _DETAIL_SOURCE_VISIBLE)
-    details = _sort_detail_frame(work.loc[mask, cols], work)
+    details = _detail_rows_to_frame(rows, _DETAIL_SOURCE_VISIBLE)
     title = f"תנועות — מקור «{sk}» ({months} חודשים)"
     return (title, [(None, details)])
 
@@ -917,37 +1036,45 @@ def _detail_frames_source_category(
     category: str,
     months: int,
 ) -> tuple[str, list[tuple[str | None, pd.DataFrame]]] | None:
-    df = bundle.df
-    if "מקור עסקה" not in df.columns:
-        return None
-    sub = _filter_recent_months_heatmap(df, months)
-    if sub.empty:
-        return None
-    work = sub.copy()
-    work["__src__"] = work["מקור עסקה"].fillna("").astype(str).str.strip()
-    work.loc[work["__src__"] == "", "__src__"] = "(unknown)"
-    work["__cat__"] = work["קטגוריה"].fillna("").astype(str).str.strip()
-    work.loc[work["__cat__"] == "", "__cat__"] = "(uncategorized)"
+    from ledger.heatmap_sql import fetch_detail_rows
+
+    db = bundle.source_path
     sk = source_key.strip()
     cat = category.strip()
-    cols_show_exp = _detail_column_order(work, _COLS_EXP)
-    cols_show_in = _detail_column_order(work, _COLS_IN)
     if report_type == "expense":
-        mask = (work["__src__"] == sk) & (work["__cat__"] == cat) & (work["בחובה"] > 0)
-        details = _sort_detail_frame(work.loc[mask, cols_show_exp], work)
+        rows = fetch_detail_rows(
+            db,
+            report_type="expense",
+            source=sk,
+            category=cat,
+            recent_months=months,
+            period="all",
+        )
+        details = _detail_rows_to_frame(rows, _COLS_EXP)
         if details.empty:
             return None
         return (f"הוצאות — מקור «{sk}» · {cat}", [(None, details)])
     if report_type == "income":
-        mask = (work["__src__"] == sk) & (work["__cat__"] == cat) & (work["בזכות"] > 0)
-        details = _sort_detail_frame(work.loc[mask, cols_show_in], work)
+        rows = fetch_detail_rows(
+            db,
+            report_type="income",
+            source=sk,
+            category=cat,
+            recent_months=months,
+            period="all",
+        )
+        details = _detail_rows_to_frame(rows, _COLS_IN)
         if details.empty:
             return None
         return (f"הכנסות — מקור «{sk}» · {cat}", [(None, details)])
-    income_mask = (work["__src__"] == sk) & (work["__cat__"] == cat) & (work["בזכות"] > 0)
-    expense_mask = (work["__src__"] == sk) & (work["__cat__"] == cat) & (work["בחובה"] > 0)
-    income_df = _sort_detail_frame(work.loc[income_mask, cols_show_in], work)
-    expense_df = _sort_detail_frame(work.loc[expense_mask, cols_show_exp], work)
+    income_rows = fetch_detail_rows(
+        db, report_type="income", source=sk, category=cat, recent_months=months, period="all"
+    )
+    expense_rows = fetch_detail_rows(
+        db, report_type="expense", source=sk, category=cat, recent_months=months, period="all"
+    )
+    income_df = _detail_rows_to_frame(income_rows, _COLS_IN)
+    expense_df = _detail_rows_to_frame(expense_rows, _COLS_EXP)
     if income_df.empty and expense_df.empty:
         return None
     return (f"נטו — מקור «{sk}» · {cat}", [("הכנסות", income_df), ("הוצאות", expense_df)])

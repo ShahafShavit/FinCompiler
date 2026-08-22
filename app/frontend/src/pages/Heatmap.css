@@ -215,16 +215,18 @@
   gap: 0.4rem;
 }
 
-/* Density / zoom */
+/* Density / zoom — one border system only (no gap+inset stacking). */
 .heatmap-page table.hm-grid {
-  border-collapse: separate;
-  border-spacing: 1px;
+  border-collapse: collapse;
+  border-spacing: 0;
+  background: transparent;
   margin: 0;
   table-layout: auto;
   width: max-content;
   --hm-month-col-w: 7.5rem;
   --hm-metric-col-w: 4.8rem;
   --hm-thead2-top: 2.6rem;
+  --hm-grid-line: color-mix(in srgb, var(--fg-muted) 42%, transparent);
   font-size: 0.8125rem;
 }
 
@@ -262,6 +264,7 @@
   text-align: center;
   vertical-align: middle;
   white-space: nowrap;
+  border: 1px solid var(--hm-grid-line);
 }
 
 .heatmap-page.density-comfortable table.hm-grid th,
@@ -301,7 +304,6 @@
   color: var(--fg-subtle);
   font-size: var(--fs-caption);
   font-weight: 600;
-  border-bottom: 1px solid var(--border);
 }
 
 .heatmap-page table.hm-grid thead th.hm-colsum .colsum-wrap {
@@ -396,7 +398,6 @@
   color: var(--fg-subtle);
   font-weight: 600;
   font-size: var(--fs-caption);
-  border: 1px solid var(--border);
   direction: ltr;
   unicode-bidi: isolate;
 }

@@ -5,12 +5,16 @@ import { useQueryClient } from '@tanstack/react-query';
 import PageShell from '../components/PageShell';
 import { fetchJson, getJson, postJson } from '../lib/api';
 import { he } from '../lib/he';
+import {
+  CATEGORIZE_SUMMARY_KEY,
+  openCountFromSummary,
+  useCategorizeSummary,
+} from '../lib/useCategorizeSummary';
 import { useEventStream } from '../lib/useEventStream';
 
 import './Pipeline.css';
 
 type StatusResp = { running?: boolean; current_job?: string; error?: string | null };
-type QueueResp = { compiled_exists?: boolean; open_count?: number };
 type SheetsStatus = {
   configured?: boolean;
   pairs?: Array<{ sheet: string; local_source?: string }>;
@@ -62,14 +66,26 @@ export default function Pipeline() {
   const [running, setRunning] = useState(false);
   const [currentJob, setCurrentJob] = useState('');
   const [busyError, setBusyError] = useState<string | null>(null);
-  const [queueHint, setQueueHint] = useState<{ text: string; ok: boolean | null }>({
-    text: '',
-    ok: null,
-  });
   const [catUrl, setCatUrl] = useState('');
   const logRef = useRef<HTMLDivElement | null>(null);
   const runningRef = useRef(false);
   const queryClient = useQueryClient();
+  const summaryQ = useCategorizeSummary();
+  const openCount = openCountFromSummary(summaryQ.data);
+
+  const queueHint = useMemo(() => {
+    if (summaryQ.isError) return { text: '', ok: null as boolean | null };
+    if (summaryQ.data && summaryQ.data.compiled_exists === false) {
+      return { text: he.pipeline.noLedger, ok: null as boolean | null };
+    }
+    if (openCount != null && openCount > 0) {
+      return { text: `${openCount} ${he.pipeline.queueNeed}`, ok: false as boolean | null };
+    }
+    if (openCount === 0) {
+      return { text: he.pipeline.queueEmpty, ok: true as boolean | null };
+    }
+    return { text: '', ok: null as boolean | null };
+  }, [summaryQ.data, summaryQ.isError, openCount]);
 
   const dlChildrenDisabled = !dl;
   const backupDisabled = !(procT || procH || ingestTp);
@@ -113,6 +129,7 @@ export default function Pipeline() {
       else setBusyError(null);
       if (wasRunning && !isRunning && !err) {
         void queryClient.invalidateQueries({ queryKey: ['ledger-meta'] });
+        void queryClient.invalidateQueries({ queryKey: CATEGORIZE_SUMMARY_KEY });
       }
     },
   });
@@ -137,33 +154,6 @@ export default function Pipeline() {
     }
     void pollStatus();
     const id = setInterval(pollStatus, 2000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function pollQueue() {
-      try {
-        const j = await getJson<QueueResp>('/categorize/api/summary');
-        if (cancelled) return;
-        if (!j.compiled_exists) {
-          setQueueHint({ text: he.pipeline.noLedger, ok: null });
-          return;
-        }
-        if (j.open_count) {
-          setQueueHint({ text: `${j.open_count} ${he.pipeline.queueNeed}`, ok: false });
-        } else {
-          setQueueHint({ text: he.pipeline.queueEmpty, ok: true });
-        }
-      } catch {
-        // ignore
-      }
-    }
-    void pollQueue();
-    const id = setInterval(pollQueue, 4000);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -316,12 +306,34 @@ export default function Pipeline() {
     void postJob('categorize', {});
   }
 
+  function applyMonthlyClosePreset() {
+    dlPrimedRef.current = true;
+    setDl(true);
+    setDlH(true);
+    setDlM(true);
+    setDlBc(true);
+    setDlOsh(true);
+    setDlTp(false);
+    setRoute(true);
+    setProcH(true);
+    setProcT(true);
+    setIngestTp(false);
+    setBackup(true);
+    setAuto(true);
+    setStatusText(he.pipeline.monthlyCloseHint);
+  }
+
   const headerActions = (
     <div className="pipe-status-row">
       <Link to="/categorize" className="pipe-cat-link">
         {he.pipeline.openCategorize}
       </Link>
       <span className={queuePill}>{queueHint.text}</span>
+      {openCount != null && openCount > 0 ? (
+        <Link to="/categorize" className="pipe-cat-link pipe-cat-link--need">
+          {he.pipeline.goCategorize}
+        </Link>
+      ) : null}
       <span className={ssePill.cls}>{ssePill.text}</span>
       <span className={busyPill.cls}>{busyPill.text}</span>
     </div>
@@ -339,7 +351,17 @@ export default function Pipeline() {
         <button type="button" className="pipe-run-btn" disabled={running} onClick={() => void runPipeline()}>
           {running ? he.pipeline.busy : he.pipeline.run}
         </button>
+        <button
+          type="button"
+          className="secondary pipe-preset-btn"
+          disabled={running}
+          onClick={applyMonthlyClosePreset}
+          title={he.pipeline.monthlyCloseHint}
+        >
+          {he.pipeline.monthlyClose}
+        </button>
       </div>
+      <p className="hint pipe-preset-hint">{he.pipeline.monthlyCloseHint}</p>
 
       <section className="card">
         <h2>{he.pipeline.pipeline}</h2>

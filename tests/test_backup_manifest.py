@@ -61,6 +61,58 @@ class BackupManifestTests(unittest.TestCase):
                 os.environ.pop("FINANCE_WORKSPACE_ROOT", None)
                 importlib.reload(config_mod)
 
+    def test_divergence_match_then_mismatch_after_edit(self) -> None:
+        from ledger import migrate_ledger_db
+        from pipeline.backup import (
+            create_critical_paths_backup,
+            divergence_report,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            import config as config_mod
+
+            importlib.reload(config_mod)
+            try:
+                migrate_ledger_db()
+                import sqlite3
+
+                conn = sqlite3.connect(config_mod.ledger_db_file)
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO ledger_transaction (
+                          "תאריך", "בחובה", "בזכות", "מקור עסקה",
+                          "fingerprint", ingested_at
+                        ) VALUES ('2024-01-01', 1, 0, 'A', 'fp_div', '2024-01-01')
+                        """
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+
+                create_critical_paths_backup()
+                before = divergence_report()
+                self.assertTrue(before.get("ok"))
+                self.assertTrue(before.get("match"), before)
+
+                conn = sqlite3.connect(config_mod.ledger_db_file)
+                try:
+                    conn.execute(
+                        'UPDATE ledger_transaction SET "בחובה" = 99 WHERE fingerprint = ?',
+                        ("fp_div",),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+
+                after = divergence_report()
+                self.assertTrue(after.get("ok"))
+                self.assertFalse(after.get("match"), after)
+            finally:
+                os.environ.pop("FINANCE_WORKSPACE_ROOT", None)
+                importlib.reload(config_mod)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -344,6 +344,62 @@ class LedgerSearchTests(unittest.TestCase):
         self.assertEqual(code, 503)
         self.assertFalse(payload["ok"])
 
+    def test_bulk_patch_category_and_rejects_fingerprint_fields(self) -> None:
+        import json
+
+        from api import ledger_search
+
+        db = self._fresh_db()
+        id_a = self._insert(
+            db,
+            date="2024-01-01",
+            debit=10,
+            source="A",
+            fingerprint="fp_a",
+            category="Old",
+        )
+        id_b = self._insert(
+            db,
+            date="2024-01-02",
+            debit=20,
+            source="B",
+            fingerprint="fp_b",
+            category="Old",
+        )
+
+        bad_code, bad = ledger_search.handle_bulk_patch(
+            json.dumps(
+                {"ids": [id_a], "patch": {"תאריך": "2024-02-01"}}
+            ).encode("utf-8")
+        )
+        self.assertEqual(bad_code, 400)
+        self.assertFalse(bad["ok"])
+
+        code, payload = ledger_search.handle_bulk_patch(
+            json.dumps(
+                {
+                    "ids": [id_a, id_b],
+                    "patch": {"קטגוריה": "Food", "excluded_from_calculations": 1},
+                }
+            ).encode("utf-8")
+        )
+        # excluded + category together — only one key allowed? Plan says patch can have
+        # category OR exclude. Our API allows both safe keys in one patch.
+        self.assertIn(code, (200, 207))
+        self.assertEqual(payload["updated"], 2)
+
+        conn = sqlite3.connect(db)
+        try:
+            rows = conn.execute(
+                'SELECT id, "קטגוריה", excluded_from_calculations FROM ledger_transaction ORDER BY id'
+            ).fetchall()
+        finally:
+            conn.close()
+        self.assertEqual(rows[0][1], "Food")
+        self.assertEqual(rows[0][2], 1)
+        self.assertEqual(rows[1][1], "Food")
+        self.assertEqual(rows[1][2], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -64,10 +64,10 @@ Incremental development on branches before that window does not require this dow
 | MIG-E2 | E | Compiler integration → SQLite | Done | Superseded by **MIG-E5** for production: transactions no longer use `Compiler` + full-ledger merge; see E5. Legacy `Compiler` remains for CSV-only tests (`ledger_db=None`). |
 | MIG-E3 | E | Stop writing fingerprint_db.csv (redundant) | Done | When `data/ledger.sqlite` (or `config.ledger_db_file`) **exists**: `Compiler.update_fingerprint_db` and `CategorizeFile.auto_categorize` do **not** read/write `fingerprint_db.csv`. Legacy **CSV-only** workflow (no ledger file on disk) may still use the sidecar until dropped in a later cleanup. |
 | MIG-E5 | E | Deprecate pipeline CSV staging; direct upsert | Done | **2026-04-11:** `ingest_transactions_to_ledger` / `compile_holdings_main` read raw `*.xls*` only; `data/pipeline/*/clean/*.csv` and `compiled.csv` / `holdings.csv` are **not** written in normal runs. Batch dedupe: `dedupe_import_batch_by_fingerprint` before `executemany`. Debug mirror: `PIPELINE_DEBUG_DUMP=1`. |
-| MIG-E4 | E | Divergence detection stub | Not started | |
-| MIG-F1 | F | Migration for timestamps | Done | `ingested_at` / timestamp columns in `schema/ledger/full_schema.sql`; `pipeline/ingested_at_rules.py` (`ingested_at_for_new_ledger_row`); covered by `tests/test_ingested_at_rules.py` |
+| MIG-E4 | E | Divergence detection stub | Done | Local ledger sha256/size/row_count on backup manifest; `GET /api/integrity/divergence` + `pipeline.backup.divergence_report` |
+| MIG-F1 | F | Migration for timestamps | Done | `ingested_at` / timestamp columns in `schema/ledger/full_schema.sql`; `ledger.store.ingested_at_for_new_ledger_row`; covered by `tests/test_ingested_at_rules.py` |
 | MIG-F2 | F | Align code with schema triggers / timestamp rules | Done | `full_schema.sql` triggers on `ledger_transaction`; `update_category_by_fingerprint` documents trigger behavior for category updates |
-| MIG-F3 | F | Pipeline rules for timestamps | Not started | Formal doc + tests that pipeline never fabricates user edit times on user-owned fields (evaluation Section 13.9) beyond what triggers already enforce |
+| MIG-F3 | F | Pipeline rules for timestamps | Done | `docs/ledger-merge-ownership.md` + `test_f3_upsert_preserves_user_category_and_timestamps` |
 | MIG-G1 | G | Deprecate ledger pull from Sheets | Done | Pull **removed**: no ``update_local``, ``pull_desktop_sync_from_cloud``, ``pull_sheet_readonly_to_csv``, web ``/api/sheets/pull``; PyQt pull control hidden |
 | MIG-G2 | G | Push from DB + confirm | Done | Web ``api_push`` / ``api_preview`` use temp SQLite export for Totals when ``ledger.sqlite`` exists; PyQt push actions use ``QMessageBox`` + ``update_cloud(..., confirm=False)`` |
 | MIG-G3 | G | Single tab configuration | Done | ``desktop_totals_sheet_name()`` defaults to ``totals_sheet_name`` (``FINANCE_TOTALS_SHEET_NAME``); PyQt uses ``config.desktop_*_sheet_name()`` |
@@ -76,11 +76,11 @@ Incremental development on branches before that window does not require this dow
 | MIG-H2 | H | Upload flow | Not started | Deferred: after local system stable |
 | MIG-H3 | H | Download / restore + divergence | Not started | Deferred: after local system stable |
 | MIG-H4 | H | AWS auth documentation | Not started | Deferred: after local system stable |
-| MIG-I1 | I | Ledger API from DB (web_control) | Done | **Categorize** + **heatmap**: SQLite via `pipeline.ledger` (`load_transactions_dataframe_from_ledger`, categorize jobs). **Reports** = separate **MIG-I3** (not started). |
-| MIG-I2 | I | Categorization UX → DB | Done | `CategorizeFile(ledger_db_path=...)` in PyQt, `web_control/jobs.py`, categorize queue, and pipeline auto-categorize; legacy `file_path` CSV mode remains for no-ledger scenarios. |
-| MIG-I3 | I | Reports | Not started | |
-| MIG-J1 | J | Remove authoritative static CSV edits | Not started | |
-| MIG-J2 | J | Developer documentation | Not started | |
+| MIG-I1 | I | Ledger API from DB (web_control) | Done | **Categorize** + **heatmap**: SQLite via `ledger` package. **Reports** = MIG-I3. |
+| MIG-I2 | I | Categorization UX → DB | Done | Web queue + pipeline auto-categorize against ledger DB. |
+| MIG-I3 | I | Reports | Done | `reports/uncategorized.sql` + Explore saved filter presets |
+| MIG-J1 | J | Remove authoritative static CSV edits | Done | No writes to `fingerprint_db.csv` / `stores_to_categories.csv` in `app/backend` (grep 2026-08) |
+| MIG-J2 | J | Developer documentation | Done | `docs/backend-imports.md`, merge ownership, schema README aligned to `ledger.store` / FastAPI |
 
 **Phase rollup (optional):** set to `Done` when all tasks in that phase are `Done` or `N/A`: A ☑ B ☑ C ☑ D ☑ E ☐ (blocked on **MIG-E4**) F ☐ (blocked on **MIG-F3**) G ☑ H ☐ I ☐ (blocked on **MIG-I3**) J ☐
 
@@ -108,23 +108,23 @@ Move the finance project toward the **target architecture** in the evaluation do
 - Client-side encryption of backups beyond noting **SSE-S3** as a later toggle (evaluation Section 12.2, 13.8).
 - Unsupervised pipeline notifications (evaluation Section 13.7) — track as a follow-up.
 
-### 1.4 Current repository assessment (2026-04-11)
+### 1.4 Current repository assessment (2026-08)
 
-**Configuration (`config.py`).** Runtime paths are centralized: `data/export/compiled/compiled.csv` is a **legacy filename** (not written by the default pipeline after **MIG-E5**); `data/static/` holds `stores_to_categories.csv` and (legacy, **CSV-only** when no ledger file) **`fingerprint_db.csv`** — redundant vs **`ledger_transaction.קטגוריה`** when the ledger exists (**MIG-E3**). **`web/data/`** may hold generated HTML/assets; **heatmap reads `ledger.sqlite`**. `FINANCE_WORKSPACE_ROOT` isolates data for tests or experiments. **Holdings** desktop tab uses a calendar-year suffix by default; **Totals** push uses **`FINANCE_TOTALS_SHEET_NAME`** / `desktop_totals_sheet_name()` (single all-time tab).
+**Configuration (`config.py`).** Runtime paths are centralized under `FINANCE_WORKSPACE_ROOT` / `data/`. **Canonical ledger:** `config.ledger_db_file` → `data/ledger.sqlite`. Legacy `compiled.csv` / `fingerprint_db.csv` / editable `stores_to_categories.csv` are **not** authoritative (store mappings live in SQLite `store` / `store_category`). Heatmap and dashboard read the ledger via SQL (`ledger/heatmap_sql.py`, `ledger/dashboard_sql.py`).
 
-**Ledger module (`pipeline/ledger.py`).** All SQLite ledger operations live in **one** module. It includes: **`migrate_ledger_db`** (hand-rolled steps + baseline `schema/ledger/full_schema.sql`); **constraint audit** (`audit_ledger_constraints`, `format_report`); **dataframe I/O** (`load_transactions_dataframe_from_ledger`, `export_transactions_dataframe_to_csv`, store/backup loaders); **category update** (`update_category_by_fingerprint`); **fingerprint NULL backfill** (`backfill_null_fingerprints`, etc.); shared row helpers `_normalize_date_text` / `_float_col` / `_text_or_none`; **static store** (`import_stores_to_ledger`, `sync_stores_to_ledger_from_dataframe`, CSV loaders); **compile upsert** (`upsert_compiled_dataframe_to_ledger`, **`dedupe_import_batch_by_fingerprint`**). Call sites import from **`pipeline.ledger`** only. **`pipeline/folder_tracking.py`** was removed (unused `FolderTracker`; SSE logger list in `web_control` updated accordingly).
+**Ledger module (`ledger/store.py`).** All SQLite ledger operations live in the **`ledger`** package (`migrate_ledger_db`, dataframe I/O, category update, compile upsert, static-store import, patch helpers). Call sites import from **`ledger`** / **`ledger.store`**. Schema bootstrap: `app/backend/schema/ledger/full_schema.sql`. Merge ownership: [`docs/ledger-merge-ownership.md`](ledger-merge-ownership.md).
 
-**Pipeline entrypoints.** `pipeline.ingest_transactions_to_ledger` / `pipeline.compile_transactions_main` and `pipeline.compile_holdings_main` in `pipeline/__init__.py` upsert **directly into SQLite** from raw workbooks (no `Compiler` merge for transactions; legacy `Compiler` remains for CSV-only tests). `apps/pipeline_cli.py` exposes CLI commands; `apps/qt_main.py` wires PyQt actions; `web_control/jobs.py` runs pipeline actions from the local control server. **SQLite:** `config.ledger_db_file` and `pipeline.ledger.migrate_ledger_db` create/upgrade the ledger DB from `schema/ledger/full_schema.sql`. **Optional** `PIPELINE_DEBUG_DUMP=1` writes legacy cleaned CSVs under `data/pipeline/*/clean`. **Categorization** in PyQt and web control uses `CategorizeFile(ledger_db_path=...)` against that DB. **Heatmap** (`web_control/heatmap`) loads transactions from **`ledger.sqlite`** via `load_transactions_dataframe_from_ledger`. **MIG-D4** signed **2026-04-11:** SQLite ledger is **declared canonical**; CSV/Sheets-as-truth workflows **deprecated** for operator use (see Section 0.3 tracker).
+**Pipeline entrypoints.** `pipeline/__init__.py` and `apps/pipeline_cli.py` upsert workbooks into SQLite. HTTP jobs run via **`python -m api.main`** (`api/jobs.py`, Pipeline SPA). **PyQt / `web_control` are removed** — the React SPA + FastAPI control server is the daily UI. Optional `PIPELINE_DEBUG_DUMP=1` writes debug CSVs under `data/pipeline/*/clean` only.
 
-**Scripts (`scripts/`).** Maintenance CLIs for **backfill**, **one-shot import**, and **compiled-date repair** were **removed** from the repo (logic remains in `pipeline.ledger` and tests). **Remaining** entrypoints: `verify_ledger_integrity.py` (wraps `audit_ledger_constraints`), `run_categorize_http_workspace.py`, `web_control_restart.py`, `fill_installment_statement_months.py` (optional statement-month helper against `ledger.sqlite`) — see root `README.md`.
+**Scripts (`scripts/`).** Remaining helpers (e.g. integrity / installment statement-month) operate against `ledger.sqlite` — see root `README.md`.
 
-**Tests.** `tests/` contains `unittest`-style modules (for example `test_workspace_config.py`, `test_pipeline_date_roundtrip.py`, `test_categorization_logic.py`, `test_ledger_migrate.py`, `test_static_store_import.py`, `test_ledger_compile_upsert.py`, `test_ingested_at_rules.py`, `test_phase_g_sheets_policy.py`, `test_heatmap_category_mean.py` — most exercising **`pipeline.ledger`** or compile/timestamp rules. **pytest is not listed in `requirements.txt`**; verification should use **`python -m unittest discover`** unless the project adds pytest later. **Current baseline:** **52** tests passing from repo root (`python -m unittest discover -s tests -p "test_*.py"`).
+**Tests.** `tests/` uses `unittest` (`python -m unittest discover -s tests -p "test_*.py"` with `PYTHONPATH=app/backend`). Covers migrate, upsert timestamps (MIG-F3), heatmap SQL parity, ledger search/bulk-patch, Sheets push-only policy, divergence (MIG-E4).
 
-**Google Sheets.** **Push only:** preview/compare and push from local holdings CSV + SQLite ledger export for Totals. **No pull** in code (removed `update_local`, `pull_desktop_sync_from_cloud`, web pull, PyQt pull). **Heatmap** uses **`ledger.sqlite`** directly.
+**Google Sheets.** **Push only** (preview/push from ledger export). **No pull.** Heatmap never auto-fetches Sheets.
 
-**Web vs PyQt.** The evaluation document targets **web as the primary entry point** (evaluation Section 10) while **PyQt remains** for supervised reruns (evaluation Section 12.5). The repo still centers daily operations on **PyQt plus `web_control`**; **web-first** is a **direction**, not a finished state.
+**UI.** Web-first: FastAPI + Vite React under `app/frontend`. Categorize, Explore, Heatmap, Dashboard, Pipeline, Integrity, Holdings, Portfolio are SPA routes.
 
-**Backups.** `pipeline/backup.py`, CLI `--backup-first`, and web **`p_backup`** (when enabled for a compile action) implement optional backup-before-run; **there is still no mandatory default** — users can run pipeline without opting in — **gap** vs evaluation Section 9 and Section 12.2 if you require backup every time.
+**Backups.** `pipeline/backup.py` + Pipeline “backup first” / CLI `--backup-first`; manifests include local ledger fingerprint for **`GET /api/integrity/divergence`** (MIG-E4). S3 Phase H remains deferred.
 
 ### 1.5 Conflicts between code and the evaluation document
 
@@ -299,7 +299,7 @@ If you implement thin mode in tooling, record **included and excluded path patte
 
 ### Phase F — Row timestamps and semantic columns (evaluation Sections 12.4, 13.3, 13.9)
 
-**Goal.** Add **`ingested_at`**, **`category_updated_at`**, **`data_updated_at`** with **clear rules**; add **`statement_month` / `first_seen_at`** as needed (evaluation Sections 12.4, 13.3, 13.9). **Progress:** **MIG-F1** and **MIG-F2** are **Done** in code (DDL, triggers, `ingested_at_rules`, categorizer update path). **MIG-F3** (explicit pipeline documentation + broader test coverage for “no fake user times”) remains open.
+**Goal.** Add **`ingested_at`**, **`category_updated_at`**, **`data_updated_at`** with **clear rules**; add **`statement_month` / `first_seen_at`** as needed (evaluation Sections 12.4, 13.3, 13.9). **Progress:** **MIG-F1**, **MIG-F2**, and **MIG-F3** are **Done** (`ledger.store` ingest helpers, DDL triggers, merge-ownership doc, upsert timestamp tests).
 
 | ID | Title | Description | Dependencies | Owner | Acceptance criteria | Risk |
 |----|--------|-------------|--------------|-------|---------------------|------|

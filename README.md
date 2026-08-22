@@ -342,7 +342,7 @@ Tests from the repo root:
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-Suite lives under **`tests/`** (`unittest`). Background: [`docs/data-architecture-migration-plan.md`](docs/data-architecture-migration-plan.md).
+Suite lives under **`tests/`** (`unittest`). Background: [`docs/data-architecture-migration-plan.md`](docs/data-architecture-migration-plan.md). Sample SQL reports: [`reports/`](reports/).
 
 ## Security and privacy
 

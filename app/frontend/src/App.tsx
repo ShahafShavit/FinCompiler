@@ -1,10 +1,10 @@
-import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import PageShell from './components/PageShell';
 import Sidebar from './components/Sidebar';
-import { fetchJson } from './lib/api';
 import { he } from './lib/he';
+import { openCountFromSummary, useCategorizeSummary } from './lib/useCategorizeSummary';
 import Categorize from './pages/Categorize';
 import Dashboard from './pages/Dashboard';
 import DataIntegrity from './pages/DataIntegrity';
@@ -53,31 +53,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
   }
 }
 
-function useCategorizeBadge(): number | null {
-  const [n, setN] = useState<number | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const r = await fetchJson<{ open_count?: number; pending_count?: number; count?: number }>(
-          '/categorize/api/summary',
-        );
-        if (cancelled || !r.ok) return;
-        const v = r.data.open_count ?? r.data.pending_count ?? r.data.count;
-        if (typeof v === 'number' && Number.isFinite(v)) setN(v);
-      } catch {
-        /* ignore badge errors */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return n;
-}
-
 export default function App() {
-  const badge = useCategorizeBadge();
+  const summaryQ = useCategorizeSummary();
+  const badge = openCountFromSummary(summaryQ.data);
   return (
     <div id="app-shell" className="app-shell">
       <Sidebar categorizeBadge={badge} />

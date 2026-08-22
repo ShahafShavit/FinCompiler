@@ -351,3 +351,89 @@ def search_ledger(qs: dict[str, list[str]] | None = None) -> tuple[int, dict[str
 def handle_search_request(query_string: str) -> tuple[int, dict[str, Any]]:
     qs = parse_qs(query_string, keep_blank_values=False)
     return search_ledger(qs)
+
+
+_BULK_PATCH_ALLOWED = frozenset({"קטגוריה", "excluded_from_calculations"})
+_BULK_MAX_IDS = 500
+
+
+def handle_bulk_patch(raw: bytes) -> tuple[int, dict[str, Any]]:
+    """``POST /api/ledger/bulk-patch`` — safe keys only (category / exclude)."""
+    import json
+
+    from ledger import LEDGER_TX_PATCH_FINGERPRINT_KEYS, patch_ledger_transaction_by_id
+
+    try:
+        data = json.loads(raw.decode("utf-8")) if raw else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return 400, {"ok": False, "error": "invalid_json", "message": "invalid JSON"}
+
+    if not isinstance(data, dict):
+        return 400, {"ok": False, "error": "validation_error", "message": "body must be an object"}
+
+    ids_raw = data.get("ids")
+    patch = data.get("patch")
+    if not isinstance(ids_raw, list) or not ids_raw:
+        return 400, {"ok": False, "error": "validation_error", "message": "ids must be a non-empty array"}
+    if not isinstance(patch, dict) or not patch:
+        return 400, {"ok": False, "error": "validation_error", "message": "patch must be a non-empty object"}
+
+    unknown = set(patch.keys()) - _BULK_PATCH_ALLOWED
+    if unknown:
+        return 400, {
+            "ok": False,
+            "error": "validation_error",
+            "message": f"bulk-patch allows only {sorted(_BULK_PATCH_ALLOWED)}; got {sorted(unknown)}",
+        }
+    fp_hit = set(patch.keys()) & LEDGER_TX_PATCH_FINGERPRINT_KEYS
+    if fp_hit:
+        return 400, {
+            "ok": False,
+            "error": "validation_error",
+            "message": f"fingerprint-driving fields not allowed in bulk-patch: {sorted(fp_hit)}",
+        }
+
+    ids: list[int] = []
+    for x in ids_raw:
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            return 400, {
+                "ok": False,
+                "error": "validation_error",
+                "message": f"invalid id: {x!r}",
+            }
+    if len(ids) > _BULK_MAX_IDS:
+        return 400, {
+            "ok": False,
+            "error": "validation_error",
+            "message": f"at most {_BULK_MAX_IDS} ids per request",
+        }
+
+    path = _ledger_path()
+    if not os.path.isfile(path):
+        return 404, {"ok": False, "error": "not_found", "message": "ledger database missing"}
+
+    updated = 0
+    errors: list[dict[str, Any]] = []
+    for rid in ids:
+        out = patch_ledger_transaction_by_id(path, rid, patch)
+        if out.get("ok"):
+            updated += 1
+        else:
+            errors.append(
+                {
+                    "id": rid,
+                    "error": out.get("error"),
+                    "message": out.get("message"),
+                }
+            )
+
+    ok = updated > 0 and not errors
+    status = 200 if not errors else (207 if updated else 400)
+    return status, {
+        "ok": ok or (updated > 0 and len(errors) < len(ids)),
+        "updated": updated,
+        "requested": len(ids),
+        "errors": errors,
+    }

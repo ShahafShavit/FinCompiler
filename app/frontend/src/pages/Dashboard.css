@@ -499,6 +499,26 @@
   padding: 0.4rem 0 0.6rem;
 }
 
+.dash-installments-strip {
+  margin: 0.75rem 0 1rem;
+  padding: 0.85rem 1rem;
+}
+
+.dash-installments-strip__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+
+.dash-installments-strip__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
 .dash-source-table {
   width: 100%;
   border-collapse: collapse;

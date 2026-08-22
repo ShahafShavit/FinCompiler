@@ -1104,6 +1104,76 @@ function KpiStrip() {
   );
 }
 
+type InstallmentPlansResp = {
+  ok?: boolean;
+  installments?: {
+    summary?: {
+      active?: number;
+      due_this_month?: number;
+      remaining_total?: number;
+    };
+  };
+  recurring?: {
+    summary?: {
+      active?: number;
+      monthly_burn?: number;
+    };
+  };
+};
+
+function InstallmentsStrip() {
+  const meta = useLedgerMetaQuery();
+  const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
+  const q = useQuery({
+    queryKey: ['installment-plans-summary', rev] as const,
+    queryFn: async (): Promise<InstallmentPlansResp> => {
+      const r = await fetchJson<InstallmentPlansResp>('/api/installment-plans');
+      if (!r.ok) throw new Error(`installment-plans: HTTP ${r.status}`);
+      return r.data;
+    },
+    enabled: meta.isSuccess && rev !== null && rev !== 'no_file',
+    staleTime: Infinity,
+    gcTime: DASH_QUERY_GC_MS,
+  });
+
+  if (!q.data?.ok && !q.data?.installments) return null;
+  const inst = q.data.installments?.summary;
+  const rec = q.data.recurring?.summary;
+  if (!inst && !rec) return null;
+
+  return (
+    <div className="dash-installments-strip card">
+      <div className="dash-installments-strip__head">
+        <h2 className="dash-installments-strip__title">{he.dashboard.installmentsStrip}</h2>
+        <Link to="/installments" className="cta-chip">
+          {he.dashboard.openInstallments}
+        </Link>
+      </div>
+      <div className="dash-kpi-strip">
+        <KPI
+          label={he.dashboard.dueThisMonth}
+          value={formatMoney(inst?.due_this_month)}
+          sub={
+            inst?.active != null
+              ? `${inst.active.toLocaleString('he-IL')} ${he.nav.installments}`
+              : undefined
+          }
+        />
+        <KPI label={he.dashboard.remainingLiability} value={formatMoney(inst?.remaining_total)} />
+        <KPI
+          label={he.dashboard.recurringBurn}
+          value={formatMoney(rec?.monthly_burn)}
+          sub={
+            rec?.active != null
+              ? `${rec.active.toLocaleString('he-IL')} active`
+              : undefined
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const meta = useLedgerMetaQuery();
   const [catTab, setCatTab] = useState<'table' | 'matrix'>('table');
@@ -1116,6 +1186,7 @@ export default function Dashboard() {
         </div>
       ) : null}
       <KpiStrip />
+      <InstallmentsStrip />
 
       <section className="dash-section" aria-labelledby="dash-holdings-heading">
         <h2 id="dash-holdings-heading" className="dash-section__title">

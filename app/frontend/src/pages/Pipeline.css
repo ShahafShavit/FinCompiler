@@ -19,13 +19,16 @@
   position: sticky;
   top: 0;
   z-index: 5;
-  margin: 0 0 0.75rem;
+  margin: 0 0 0.35rem;
   padding: 0.55rem 0;
   background: linear-gradient(180deg, var(--bg) 55%, transparent);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .pipe-run-btn {
-  width: 100%;
+  flex: 1 1 12rem;
   padding: 0.7rem 1rem;
   font-size: 1.05rem;
   font-weight: 700;
@@ -33,6 +36,19 @@
   box-shadow: 0 4px 18px var(--accent-glow);
 }
 
+.pipe-preset-btn {
+  flex: 0 0 auto;
+  padding: 0.7rem 1rem;
+  font-weight: 600;
+}
+
+.pipe-preset-hint {
+  margin: 0 0 0.75rem;
+}
+
+.pipe-cat-link--need {
+  color: var(--accent, #6af);
+}
 .pipe-row {
   display: flex;
   align-items: flex-start;
