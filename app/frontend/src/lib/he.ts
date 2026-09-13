@@ -71,6 +71,7 @@ export const he = {
     customCategory: 'קטגוריה מותאמת',
     notes: 'הערות',
     session: 'בהפעלה זו',
+    sessionHint: 'היסטוריית הסשן נשמרת בזיכרון הדפדפן עד רענון — לא ב־SQLite.',
     queueClear: 'התור ריק',
     queuePending: 'ממתין לסיווג',
     pickCategory: 'בחרו קטגוריה',

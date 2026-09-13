@@ -1178,6 +1178,7 @@ export default function Categorize() {
           ref={historySectionRef}
         >
           <h2>{he.categorize.session}</h2>
+          <p className="hint">{he.categorize.sessionHint}</p>
           {history.map((item) => {
             if (item.kind === 'fluid') {
               return (
