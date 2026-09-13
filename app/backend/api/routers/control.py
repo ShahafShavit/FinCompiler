@@ -102,10 +102,15 @@ def register_routes(app: FastAPI) -> None:
                 content=json_bytes_strict(payload),
                 media_type="application/json; charset=utf-8",
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
+            log.exception("GET /api/holdings/timeline failed")
             return Response(
                 content=json_bytes_strict(
-                    {"ok": False, "error": "invalid_request", "message": str(e)}
+                    {
+                        "ok": False,
+                        "error": "invalid_request",
+                        "message": "Holdings timeline request failed.",
+                    }
                 ),
                 status_code=400,
                 media_type="application/json; charset=utf-8",
