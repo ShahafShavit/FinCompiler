@@ -2156,13 +2156,25 @@ INSERT INTO ledger_transaction (
     "fingerprint", "קטגוריה", notes, statement_month, ingested_at
 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT("fingerprint") DO UPDATE SET
-    "תאריך" = excluded."תאריך",
-    "בחובה" = excluded."בחובה",
-    "בזכות" = excluded."בזכות",
-    "מקור עסקה" = excluded."מקור עסקה",
-    "פירוט נוסף" = excluded."פירוט נוסף",
-    "תאור מורחב" = excluded."תאור מורחב",
-    "4 ספרות" = excluded."4 ספרות",
+    "תאריך" = ledger_transaction."תאריך",
+    "בחובה" = ledger_transaction."בחובה",
+    "בזכות" = ledger_transaction."בזכות",
+    "מקור עסקה" = CASE
+        WHEN TRIM(COALESCE(ledger_transaction."מקור עסקה", '')) != '' THEN ledger_transaction."מקור עסקה"
+        ELSE excluded."מקור עסקה"
+    END,
+    "פירוט נוסף" = CASE
+        WHEN TRIM(COALESCE(ledger_transaction."פירוט נוסף", '')) != '' THEN ledger_transaction."פירוט נוסף"
+        ELSE excluded."פירוט נוסף"
+    END,
+    "תאור מורחב" = CASE
+        WHEN TRIM(COALESCE(ledger_transaction."תאור מורחב", '')) != '' THEN ledger_transaction."תאור מורחב"
+        ELSE excluded."תאור מורחב"
+    END,
+    "4 ספרות" = CASE
+        WHEN TRIM(COALESCE(ledger_transaction."4 ספרות", '')) != '' THEN ledger_transaction."4 ספרות"
+        ELSE excluded."4 ספרות"
+    END,
     "קטגוריה" = CASE
         WHEN TRIM(COALESCE(ledger_transaction."קטגוריה", '')) != '' THEN ledger_transaction."קטגוריה"
         ELSE excluded."קטגוריה"
@@ -2208,7 +2220,10 @@ def upsert_compiled_dataframe_to_ledger(
     Upsert transaction rows into ``ledger_transaction`` by ``fingerprint``.
 
     New rows get ``ingested_at`` = local insert date (:func:`ingested_at_for_new_ledger_row`).
-    On conflict, existing ``ingested_at`` is preserved (first insert wins).
+    On conflict, existing ``ingested_at`` is preserved (first insert wins). Identity
+    columns (date, amounts, merchant, details, last-4) keep the stored value when
+    already set; empty last-4 / detail / merchant still fill from the import.
+    Category, notes, and statement_month keep the same nonempty/COALESCE rules.
 
     Skips rows without a computable ``fingerprint``. Empty ``df`` is a no-op.
     """

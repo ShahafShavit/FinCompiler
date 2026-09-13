@@ -281,6 +281,68 @@ class LedgerCompileUpsertTests(unittest.TestCase):
             # category_updated_at must not jump solely because bank fields changed
             self.assertEqual(cat_at2, cat_at1)
 
+    def test_upsert_preserves_user_last4_and_detail_spacing(self) -> None:
+        """Compile must not wipe user last-4 or same-fingerprint detail text."""
+        from ledger import patch_ledger_transaction_by_id, upsert_compiled_dataframe_to_ledger
+
+        base = {
+            "תאריך": "2025-05-01",
+            "בחובה": 12.0,
+            "בזכות": 0.0,
+            "מקור עסקה": "Mart",
+            "פירוט נוסף": "pay 1 of 2",
+            "תאור מורחב": None,
+            "4 ספרות": None,
+            "קטגוריה": "",
+        }
+        fp = generate_transaction_fingerprint(pd.Series(base))
+        self.assertIsNotNone(fp)
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                cfg = _reload_config()
+            upsert_compiled_dataframe_to_ledger(
+                pd.DataFrame([{**base, "notes": None}]), cfg.ledger_db_file
+            )
+            conn = sqlite3.connect(cfg.ledger_db_file)
+            try:
+                rid = int(
+                    conn.execute(
+                        "SELECT id FROM ledger_transaction WHERE fingerprint = ?",
+                        (fp,),
+                    ).fetchone()[0]
+                )
+            finally:
+                conn.close()
+
+            patch_ledger_transaction_by_id(
+                cfg.ledger_db_file, rid, {"4 ספרות": "9999"}
+            )
+
+            again = {
+                **base,
+                "פירוט נוסף": "pay  1 of 2",
+                "4 ספרות": "1234",
+                "notes": None,
+            }
+            self.assertEqual(
+                generate_transaction_fingerprint(pd.Series(again)),
+                fp,
+            )
+            upsert_compiled_dataframe_to_ledger(pd.DataFrame([again]), cfg.ledger_db_file)
+            conn = sqlite3.connect(cfg.ledger_db_file)
+            try:
+                row = conn.execute(
+                    'SELECT "פירוט נוסף", "4 ספרות" FROM ledger_transaction WHERE id = ?',
+                    (rid,),
+                ).fetchone()
+                n = conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(n, 1)
+            self.assertEqual(row[0], "pay 1 of 2")
+            self.assertEqual(str(row[1]), "9999")
+
 
 if __name__ == "__main__":
     unittest.main()
