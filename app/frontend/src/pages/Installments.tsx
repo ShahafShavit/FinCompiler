@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
@@ -200,6 +200,8 @@ export default function Installments() {
   const [selectedRec, setSelectedRec] = useState<Set<string>>(loadRecSelection);
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [mergedOpen, setMergedOpen] = useState<Set<string>>(() => new Set());
+  const spRef = useRef(sp);
+  spRef.current = sp;
 
   useEffect(() => {
     setQDraft(q);
@@ -207,15 +209,15 @@ export default function Installments() {
 
   useEffect(() => {
     const t = window.setTimeout(() => {
-      const next = new URLSearchParams(sp);
+      const current = spRef.current;
+      const next = new URLSearchParams(current);
       const trimmed = qDraft.trim();
       if (trimmed) next.set('q', trimmed);
       else next.delete('q');
-      if (next.toString() !== sp.toString()) setSp(next, { replace: true });
+      if (next.toString() !== current.toString()) setSp(next, { replace: true });
     }, 300);
     return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce qDraft only
-  }, [qDraft]);
+  }, [qDraft, setSp]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
