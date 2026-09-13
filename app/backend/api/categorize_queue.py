@@ -214,14 +214,18 @@ def respond(data: dict[str, Any], *, control_state: Any = None) -> Optional[str]
     if not tid or not kind:
         return "prompt_id and kind required"
     with _lock:
-        from ledger import load_first_transaction_needing_manual_category
+        if control_state is not None and getattr(control_state, "running", False):
+            return "a pipeline job is running; wait until it finishes"
+        from ledger import load_ledger_transaction_by_stable_id
 
         cf = _ledger_queue_categorize_file()
-        row0 = load_first_transaction_needing_manual_category(config.ledger_db_file)
+        row0 = load_ledger_transaction_by_stable_id(config.ledger_db_file, tid)
         if row0 is None:
-            return "no unanswered rows"
-        if str(stable_transaction_key(row0)) != tid:
-            return "not the first unanswered row; refresh /api/next"
+            return "transaction not found"
+        body_fp = str(data.get("fingerprint") or "").strip()
+        row_fp = str(row0.get("fingerprint") or "").strip()
+        if body_fp and row_fp and body_fp != row_fp:
+            return "fingerprint mismatch"
         try:
             p = cf.build_manual_prompt_for_row(row0)
         except ValueError as e:
@@ -263,17 +267,15 @@ def discard(data: dict[str, Any]) -> Optional[str]:
     if not tid:
         return "prompt_id required"
     with _lock:
-        from ledger import load_first_transaction_needing_manual_category
+        from ledger import load_ledger_transaction_by_stable_id
         from ledger import patch_ledger_transaction_by_id
 
         if not os.path.isfile(config.ledger_db_file):
             return "no ledger database"
 
-        row0 = load_first_transaction_needing_manual_category(config.ledger_db_file)
+        row0 = load_ledger_transaction_by_stable_id(config.ledger_db_file, tid)
         if row0 is None:
-            return "no unanswered rows"
-        if str(stable_transaction_key(row0)) != tid:
-            return "not the first unanswered row; refresh /api/next"
+            return "transaction not found"
 
         try:
             rid = int(row0["id"])
