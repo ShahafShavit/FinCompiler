@@ -590,33 +590,66 @@ def last_activity_month(conn: sqlite3.Connection) -> str | None:
     return str(row[0])[:7]
 
 
+_LIST_ALL_CAP = 2000
+
+
 def list_events(
     conn: sqlite3.Connection,
     month: str | None = None,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Return events oldest-first with ``balance_after_agorot``.
 
-    If ``month`` is a ``YYYY-MM`` string, only that month is returned (running
-    balance still walks full history). If ``month`` is None, return all events.
+    A ``YYYY-MM`` month uses one opening-balance aggregate then that month's rows.
+    ``month is None`` (all history) uses a window SUM and is capped.
     """
     ym = parse_month(month) if month else None
+    if ym is not None:
+        opening = int(
+            conn.execute(
+                "SELECT COALESCE(SUM(delta_agorot), 0) FROM cash_event WHERE event_date < ?",
+                (f"{ym}-01",),
+            ).fetchone()[0]
+            or 0
+        )
+        rows = conn.execute(
+            """
+            SELECT id, event_date, kind, delta_agorot, counted_agorot, expected_agorot,
+                   denominations, note, created_at, category
+            FROM cash_event
+            WHERE substr(event_date, 1, 7) = ?
+            ORDER BY event_date ASC, id ASC
+            """,
+            (ym,),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        running = opening
+        for row in rows:
+            running += int(row[3] or 0)
+            item = _row_to_dict(row)
+            item["balance_after_agorot"] = running
+            out.append(item)
+        return out
+
+    cap = _LIST_ALL_CAP if limit is None else max(1, int(limit))
+    off = max(0, int(offset))
     rows = conn.execute(
         """
         SELECT id, event_date, kind, delta_agorot, counted_agorot, expected_agorot,
-               denominations, note, created_at, category
+               denominations, note, created_at, category,
+               SUM(delta_agorot) OVER (ORDER BY event_date ASC, id ASC) AS balance_after_agorot
         FROM cash_event
         ORDER BY event_date ASC, id ASC
-        """
+        LIMIT ? OFFSET ?
+        """,
+        (cap, off),
     ).fetchall()
-    out: list[dict[str, Any]] = []
-    running = 0
+    out = []
     for row in rows:
-        running += int(row[3] or 0)
-        event_date = str(row[1])
-        if ym is not None and event_date[:7] != ym:
-            continue
         item = _row_to_dict(row)
-        item["balance_after_agorot"] = running
+        item["balance_after_agorot"] = int(row[10] or 0)
         out.append(item)
     return out
 
