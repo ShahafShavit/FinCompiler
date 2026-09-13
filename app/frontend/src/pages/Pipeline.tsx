@@ -140,6 +140,7 @@ export default function Pipeline() {
   }, [logText]);
 
   useEffect(() => {
+    if (conn === 'open') return;
     let cancelled = false;
     async function pollStatus() {
       try {
@@ -153,12 +154,12 @@ export default function Pipeline() {
       }
     }
     void pollStatus();
-    const id = setInterval(pollStatus, 2000);
+    const id = window.setInterval(pollStatus, 2000);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      window.clearInterval(id);
     };
-  }, []);
+  }, [conn]);
 
   useEffect(() => {
     let cancelled = false;
