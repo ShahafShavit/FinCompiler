@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import PageShell from '../components/PageShell';
-import CashRegister from '../components/CashRegister';
-import { fetchJson, postJson } from '../lib/api';
+import { fetchJson, isAbortError, postJson } from '../lib/api';
 import { he } from '../lib/he';
 import { acquireLock, releaseLock } from '../lib/saveLock';
 import { useInvalidateCategorizeSummary } from '../lib/useCategorizeSummary';
@@ -11,6 +10,8 @@ import './Categorize.css';
 import './Cash.css';
 
 const CAT = '/categorize';
+
+const CashRegister = lazy(() => import('../components/CashRegister'));
 
 type PayeeStoreMappingRow = { category: string; is_static: number | null };
 
@@ -765,21 +766,29 @@ export default function Categorize() {
   const [mainIsStatic, setMainIsStatic] = useState<0 | 1 | null>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const nextAcRef = useRef<AbortController | null>(null);
 
   const fetchNext = useCallback(async () => {
+    nextAcRef.current?.abort();
+    const ac = new AbortController();
+    nextAcRef.current = ac;
     try {
-      const r = await fetch(`${CAT}/api/next`, { cache: 'no-store' });
+      const r = await fetch(`${CAT}/api/next`, { cache: 'no-store', signal: ac.signal });
+      if (ac.signal.aborted) return;
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       const data = await r.json();
+      if (ac.signal.aborted) return;
       setPayload(normalizeApi(data));
       invalidateSummary();
     } catch (e) {
+      if (isAbortError(e) || ac.signal.aborted) return;
       setStatus(String(e));
     }
   }, [invalidateSummary]);
 
   useEffect(() => {
     void fetchNext();
+    return () => nextAcRef.current?.abort();
   }, [fetchNext]);
 
   const postRevise = async (body: Record<string, unknown>) => {
@@ -1009,7 +1018,9 @@ export default function Categorize() {
             <p>{he.categorize.queueClear}</p>
             <p className="hint">{he.categorize.cashAfterQueueHint}</p>
             <h2 className="categorize-cash-heading">{he.categorize.cashAfterQueue}</h2>
-            <CashRegister compact />
+            <Suspense fallback={null}>
+              <CashRegister compact />
+            </Suspense>
           </>
         ) : p.kind === 'fluid' ? (
           <>
@@ -1169,10 +1180,22 @@ export default function Categorize() {
           <h2>{he.categorize.session}</h2>
           {history.map((item) => {
             if (item.kind === 'fluid') {
-              return <HistoryFluidItem key={item.prompt_id} item={item} {...historyHandlers} />;
+              return (
+                <HistoryFluidItem
+                  key={`${item.prompt_id}:${String(item.response?.category ?? '')}`}
+                  item={item}
+                  {...historyHandlers}
+                />
+              );
             }
             if (item.kind === 'new_store') {
-              return <HistoryNewStoreItem key={item.prompt_id} item={item} {...historyHandlers} />;
+              return (
+                <HistoryNewStoreItem
+                  key={`${item.prompt_id}:${String(item.response?.category ?? '')}`}
+                  item={item}
+                  {...historyHandlers}
+                />
+              );
             }
             if (item.kind === 'resolve_static') {
               return (
