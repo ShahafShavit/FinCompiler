@@ -553,11 +553,7 @@ function CategoryOverviewCard() {
 
   const catUrl = useMemo(() => {
     const p = new URLSearchParams();
-    if (rangeKind === 'preset' && presetPeriod === 'all') {
-      p.set('limit', '0');
-    } else {
-      p.set('limit', String(CATEGORY_STATS_ROW_LIMIT));
-    }
+    p.set('limit', String(CATEGORY_STATS_ROW_LIMIT));
     if (rangeKind === 'preset') {
       p.set('period', presetPeriod);
     } else if (rangeKind === 'year') {
@@ -1127,7 +1123,7 @@ function InstallmentsStrip() {
   const q = useQuery({
     queryKey: ['installment-plans-summary', rev] as const,
     queryFn: async (): Promise<InstallmentPlansResp> => {
-      const r = await fetchJson<InstallmentPlansResp>('/api/installment-plans');
+      const r = await fetchJson<InstallmentPlansResp>('/api/installment-plans?summary=1');
       if (!r.ok) throw new Error(`installment-plans: HTTP ${r.status}`);
       return r.data;
     },
@@ -1136,6 +1132,22 @@ function InstallmentsStrip() {
     gcTime: DASH_QUERY_GC_MS,
   });
 
+  if (q.isPending) {
+    return (
+      <div className="dash-installments-strip card" aria-busy="true">
+        <p className="dash-card-meta-line">{he.dashboard.loading}</p>
+      </div>
+    );
+  }
+  if (q.isError) {
+    return (
+      <div className="dash-installments-strip card">
+        <p className="banner banner--err" role="alert">
+          {he.dashboard.ledgerError}
+        </p>
+      </div>
+    );
+  }
   if (!q.data?.ok && !q.data?.installments) return null;
   const inst = q.data.installments?.summary;
   const rec = q.data.recurring?.summary;

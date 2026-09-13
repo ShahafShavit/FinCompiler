@@ -50,6 +50,7 @@ def list_installment_plans(qs: dict[str, list[str]] | None = None) -> tuple[int,
     include_hidden = (qs.get("include_hidden") or ["0"])[0] in ("1", "true", "yes")
     q = (qs.get("q") or [""])[0].strip() or None
     as_of = (qs.get("as_of") or [""])[0].strip() or None
+    summary_only = (qs.get("summary") or ["0"])[0] in ("1", "true", "yes")
 
     conn = connect_ledger(path)
     try:
@@ -57,6 +58,15 @@ def list_installment_plans(qs: dict[str, list[str]] | None = None) -> tuple[int,
             conn, include_hidden=include_hidden, q=q, as_of=as_of
         )
         payload["ledger_exists"] = True
+        if summary_only:
+            payload["installments"] = {
+                "summary": payload.get("installments", {}).get("summary") or {},
+                "plans": [],
+            }
+            payload["recurring"] = {
+                "summary": payload.get("recurring", {}).get("summary") or {},
+                "fees": [],
+            }
         return 200, payload
     finally:
         conn.close()
