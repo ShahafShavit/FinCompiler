@@ -237,6 +237,15 @@ def handle_patch_event(event_id: int, raw: bytes) -> tuple[int, dict[str, Any]]:
                 "message": "amount_agorot must be a positive integer",
             }
         kwargs["amount_agorot"] = amount
+        dens = body.get("denominations")
+        if dens is not None:
+            if not isinstance(dens, dict):
+                return 400, {
+                    "ok": False,
+                    "error": "invalid_denominations",
+                    "message": "denominations must be an object when provided",
+                }
+            kwargs["denominations"] = dens
     if not kwargs:
         return 400, {
             "ok": False,

@@ -746,7 +746,8 @@ export default function CashRegister({ initialMonth, compact = false }: CashRegi
               <tbody>
                 {events.map((ev) => {
                   const isHole = ev.kind === 'count' && ev.delta_agorot !== 0;
-                  const canEditAmount = ev.kind === 'spend' || ev.kind === 'receive';
+                  const canEditAmount =
+                    (ev.kind === 'spend' || ev.kind === 'receive') && !ev.denominations;
                   const rowKind =
                     ev.kind === 'spend'
                       ? 'cash-register__row--spend'

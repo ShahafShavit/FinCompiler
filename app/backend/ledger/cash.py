@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from datetime import date
 from typing import Any
 
@@ -142,6 +143,30 @@ def denominations_total_agorot(pieces: dict[str, Any] | dict[int, Any]) -> int:
         total += denom * count
     ensure_multiple_of_10_agorot(total)
     return total
+
+
+def _require_matching_delta_denoms(
+    kind: str,
+    amount_agorot: int,
+    denominations: dict[str, Any] | dict[int, Any],
+) -> int:
+    """Return signed denom net; must equal ±amount for spend/receive."""
+    net = denomination_deltas_net_agorot(denominations)
+    if kind == "spend":
+        if net != -amount_agorot:
+            raise CashError(
+                "denomination_mismatch",
+                "denominations net must equal -amount_agorot for spend",
+            )
+    elif kind == "receive":
+        if net != amount_agorot:
+            raise CashError(
+                "denomination_mismatch",
+                "denominations net must equal amount_agorot for receive",
+            )
+    else:
+        raise CashError("invalid_kind", "kind must be spend or receive")
+    return net
 
 
 def denomination_deltas_net_agorot(pieces: dict[str, Any] | dict[int, Any]) -> int:
@@ -300,6 +325,25 @@ def parse_month(value: str | None) -> str:
     return text
 
 
+@contextmanager
+def _immediate_write(conn: sqlite3.Connection, *, commit: bool):
+    """Serialize writers with BEGIN IMMEDIATE when this call owns the transaction."""
+    if not commit:
+        yield
+        return
+    old = conn.isolation_level
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        yield
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.isolation_level = old
+
+
 def balance_agorot(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT COALESCE(SUM(delta_agorot), 0) FROM cash_event").fetchone()
     return int(row[0] or 0) if row else 0
@@ -405,19 +449,20 @@ def insert_spend_or_receive(
     cat_val = _clean_optional_text(category)
     denom_json = None
     if denominations:
+        _require_matching_delta_denoms(kind, amount_agorot, denominations)
         denom_json = normalize_delta_denominations_json(denominations)
-    cur = conn.execute(
-        """
-        INSERT INTO cash_event (
-            event_date, kind, delta_agorot, counted_agorot, expected_agorot,
-            denominations, note, category
-        ) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?)
-        """,
-        (iso, kind, delta, denom_json, note_val, cat_val),
-    )
-    if commit:
-        conn.commit()
-    return get_event(conn, int(cur.lastrowid))
+    with _immediate_write(conn, commit=commit):
+        cur = conn.execute(
+            """
+            INSERT INTO cash_event (
+                event_date, kind, delta_agorot, counted_agorot, expected_agorot,
+                denominations, note, category
+            ) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?)
+            """,
+            (iso, kind, delta, denom_json, note_val, cat_val),
+        )
+        event_id = int(cur.lastrowid)
+    return get_event(conn, event_id)
 
 
 def insert_count(
@@ -432,22 +477,22 @@ def insert_count(
     iso = parse_flexible_date(event_date)
     denom_json = normalize_denominations_json(denominations)
     counted = denominations_total_agorot(denominations)
-    expected = balance_agorot(conn)
-    delta = counted - expected
-    note_val = _clean_optional_text(note)
-    cat_val = _clean_optional_text(category)
-    cur = conn.execute(
-        """
-        INSERT INTO cash_event (
-            event_date, kind, delta_agorot, counted_agorot, expected_agorot,
-            denominations, note, category
-        ) VALUES (?, 'count', ?, ?, ?, ?, ?, ?)
-        """,
-        (iso, delta, counted, expected, denom_json, note_val, cat_val),
-    )
-    if commit:
-        conn.commit()
-    return get_event(conn, int(cur.lastrowid))
+    with _immediate_write(conn, commit=commit):
+        expected = balance_agorot(conn)
+        delta = counted - expected
+        note_val = _clean_optional_text(note)
+        cat_val = _clean_optional_text(category)
+        cur = conn.execute(
+            """
+            INSERT INTO cash_event (
+                event_date, kind, delta_agorot, counted_agorot, expected_agorot,
+                denominations, note, category
+            ) VALUES (?, 'count', ?, ?, ?, ?, ?, ?)
+            """,
+            (iso, delta, counted, expected, denom_json, note_val, cat_val),
+        )
+        event_id = int(cur.lastrowid)
+    return get_event(conn, event_id)
 
 
 def patch_event(
@@ -458,14 +503,16 @@ def patch_event(
     note: str | None | object = ...,
     event_date: str | None | object = ...,
     amount_agorot: int | None | object = ...,
+    denominations: dict[str, Any] | dict[int, Any] | None | object = ...,
 ) -> dict[str, Any]:
     row = conn.execute(
-        "SELECT id, kind, delta_agorot FROM cash_event WHERE id = ?",
+        "SELECT id, kind, delta_agorot, denominations FROM cash_event WHERE id = ?",
         (int(event_id),),
     ).fetchone()
     if not row:
         raise CashError("not_found", f"cash event {event_id} not found")
     kind = str(row[1])
+    existing_denoms = row[3]
     updates: list[str] = []
     params: list[Any] = []
     if category is not ...:
@@ -490,8 +537,22 @@ def patch_event(
         delta = -amount_agorot if kind == "spend" else amount_agorot
         updates.append("delta_agorot = ?")
         params.append(delta)
-        # Clear piece map — amount override replaces denomination delta snapshot
-        updates.append("denominations = NULL")
+        if denominations is not ... and denominations is not None:
+            if not isinstance(denominations, dict):
+                raise CashError("invalid_denominations", "denominations must be an object")
+            _require_matching_delta_denoms(kind, amount_agorot, denominations)
+            updates.append("denominations = ?")
+            params.append(normalize_delta_denominations_json(denominations))
+        elif existing_denoms:
+            raise CashError(
+                "denominations_required",
+                "amount patch on an event with piece counts requires matching denominations",
+            )
+    elif denominations is not ...:
+        raise CashError(
+            "invalid_patch",
+            "denominations can only be updated together with amount_agorot",
+        )
     if not updates:
         raise CashError("empty_patch", "Provide category, note, event_date, and/or amount_agorot")
     params.append(int(event_id))
@@ -705,7 +766,7 @@ def apply_backfill(
     indexed = list(enumerate(rows))
     indexed.sort(key=lambda t: (t[1]["event_date"], t[0]))
     created: list[dict[str, Any]] = []
-    try:
+    with _immediate_write(conn, commit=True):
         for _, row in indexed:
             if row["kind"] == "count":
                 created.append(
@@ -731,10 +792,6 @@ def apply_backfill(
                         commit=False,
                     )
                 )
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
     return {
         "ok": True,
         "inserted": len(created),

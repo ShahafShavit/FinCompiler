@@ -187,6 +187,90 @@ class CashWalletLogicTests(unittest.TestCase):
             conn.close()
             self._tmp.cleanup()
 
+    def test_denom_mismatch_and_amount_patch_keeps_inventory(self) -> None:
+        from ledger.cash import (
+            CashError,
+            current_piece_inventory,
+            inventory_split_agorot,
+            patch_event,
+        )
+
+        _tmp, conn, _path = self._open()
+        try:
+            h = self._helpers
+            h["insert_count"](
+                conn,
+                event_date="2026-08-01",
+                denominations={"20000": 1, "10000": 1},
+            )
+            with self.assertRaises(CashError) as cm:
+                h["insert_spend_or_receive"](
+                    conn,
+                    kind="spend",
+                    event_date="2026-08-02",
+                    amount_agorot=5000,
+                    denominations={"10000": -1},
+                )
+            self.assertEqual(cm.exception.code, "denomination_mismatch")
+
+            spend = h["insert_spend_or_receive"](
+                conn,
+                kind="spend",
+                event_date="2026-08-02",
+                amount_agorot=10000,
+                denominations={"10000": -1},
+            )
+            self.assertEqual(spend["delta_agorot"], -10000)
+            split = inventory_split_agorot(current_piece_inventory(conn))
+            self.assertEqual(split["pieces_agorot"], h["balance_agorot"](conn))
+            self.assertEqual(split["pieces_agorot"], 20000)
+
+            with self.assertRaises(CashError) as cm2:
+                patch_event(conn, spend["id"], amount_agorot=5000)
+            self.assertEqual(cm2.exception.code, "denominations_required")
+
+            patched = patch_event(
+                conn,
+                spend["id"],
+                amount_agorot=5000,
+                denominations={"10000": -1, "5000": 1},
+            )
+            self.assertEqual(patched["delta_agorot"], -5000)
+            split2 = inventory_split_agorot(current_piece_inventory(conn))
+            self.assertEqual(split2["pieces_agorot"], h["balance_agorot"](conn))
+            self.assertEqual(split2["pieces_agorot"], 25000)
+
+            bare = h["insert_spend_or_receive"](
+                conn,
+                kind="spend",
+                event_date="2026-08-03",
+                amount_agorot=1000,
+            )
+            amount_only = patch_event(conn, bare["id"], amount_agorot=2000)
+            self.assertEqual(amount_only["delta_agorot"], -2000)
+            self.assertIsNone(amount_only["denominations"])
+        finally:
+            conn.close()
+            self._tmp.cleanup()
+
+    def test_insert_count_begins_immediate(self) -> None:
+        _tmp, conn, _path = self._open()
+        try:
+            seen: list[str] = []
+            conn.set_trace_callback(lambda sql: seen.append(str(sql).strip().upper()))
+            self._helpers["insert_count"](
+                conn,
+                event_date="2026-08-01",
+                denominations={"10000": 1},
+            )
+            self.assertTrue(
+                any(s.startswith("BEGIN IMMEDIATE") for s in seen),
+                msg=f"expected BEGIN IMMEDIATE, got {seen[:8]!r}",
+            )
+        finally:
+            conn.close()
+            self._tmp.cleanup()
+
 
 class CashApiSmokeTests(unittest.TestCase):
     def tearDown(self) -> None:
@@ -328,13 +412,26 @@ class CashApiSmokeTests(unittest.TestCase):
                 self.assertEqual(sum_default.json().get("last_activity_month"), "2024-03")
                 self.assertEqual(sum_default.json().get("month"), "2024-03")
 
-                amt = client.patch(
+                amt_bare = client.patch(
                     f"/api/cash/events/{eid2}",
                     json={"amount_agorot": 5000, "event_date": "2024-03-02"},
+                )
+                self.assertEqual(amt_bare.status_code, 400, msg=amt_bare.text)
+                self.assertEqual(amt_bare.json().get("error"), "denominations_required")
+
+                amt = client.patch(
+                    f"/api/cash/events/{eid2}",
+                    json={
+                        "amount_agorot": 5000,
+                        "event_date": "2024-03-02",
+                        "denominations": {"5000": -1},
+                    },
                 )
                 self.assertEqual(amt.status_code, 200, msg=amt.text)
                 self.assertEqual(amt.json()["event"]["delta_agorot"], -5000)
                 self.assertEqual(amt.json()["event"]["event_date"], "2024-03-02")
+                inv = client.get("/api/cash/summary").json()
+                self.assertEqual(inv.get("balance_agorot"), inv.get("paper_agorot", 0) + inv.get("coin_agorot", 0))
 
 
 if __name__ == "__main__":
