@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sqlite3
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -322,18 +323,43 @@ def search_ledger(qs: dict[str, list[str]] | None = None) -> tuple[int, dict[str
 
     count_sql = f"SELECT COUNT(*) FROM ledger_transaction WHERE {where_sql}"
     data_sql = (
-        f"SELECT {col_list} FROM ledger_transaction WHERE {where_sql} "
+        f"SELECT {col_list}, COUNT(*) OVER() AS _search_total "
+        f"FROM ledger_transaction WHERE {where_sql} "
         f"ORDER BY ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}) DESC, id DESC "
         f"LIMIT ? OFFSET ?"
     )
 
     conn = ledger_connect_readonly(path)
     try:
-        total = int(conn.execute(count_sql, params).fetchone()[0])
-        cur = conn.execute(data_sql, [*params, limit, offset])
-        cols = [d[0] for d in cur.description] if cur.description else list(_SEARCH_COLUMNS)
+        # Prefer one windowed SELECT. Fall back to COUNT + page if OVER() is unavailable.
+        try:
+            cur = conn.execute(data_sql, [*params, limit, offset])
+            cols_raw = [d[0] for d in cur.description] if cur.description else list(_SEARCH_COLUMNS)
+            fetched = cur.fetchall()
+        except sqlite3.OperationalError:
+            total = int(conn.execute(count_sql, params).fetchone()[0])
+            cur = conn.execute(
+                f"SELECT {col_list} FROM ledger_transaction WHERE {where_sql} "
+                f"ORDER BY ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}) DESC, id DESC "
+                f"LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            )
+            cols = [d[0] for d in cur.description] if cur.description else list(_SEARCH_COLUMNS)
+            rows = [{cols[i]: tup[i] for i in range(len(cols))} for tup in cur.fetchall()]
+            return 200, {
+                "ok": True,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "columns": cols,
+                "rows": rows,
+            }
+        cols = [c for c in cols_raw if c != "_search_total"]
+        total = int(fetched[0][-1]) if fetched else 0
+        if not fetched and offset > 0:
+            total = int(conn.execute(count_sql, params).fetchone()[0])
         rows: list[dict[str, Any]] = []
-        for tup in cur.fetchall():
+        for tup in fetched:
             rows.append({cols[i]: tup[i] for i in range(len(cols))})
     finally:
         conn.close()
