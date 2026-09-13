@@ -122,6 +122,58 @@ class InstallmentPlansTests(unittest.TestCase):
         # Not in recurring
         self.assertEqual(payload["recurring"]["fees"], [])
 
+    def test_summary_query_omits_plan_rows(self) -> None:
+        from api import installment_plans
+
+        db = self._fresh_db()
+        self._insert(
+            db,
+            date="2024-09-05",
+            debit=100.0,
+            source="KSP Store",
+            detail="תשלום 1 מתוך 12",
+            fingerprint="fp-sum-1",
+            category="Shopping",
+        )
+        code, payload = installment_plans.list_installment_plans(
+            {"as_of": ["2025-01"], "summary": ["1"]}
+        )
+        self.assertEqual(code, 200)
+        self.assertEqual(payload["installments"]["plans"], [])
+        self.assertEqual(payload["recurring"]["fees"], [])
+        self.assertGreaterEqual(payload["installments"]["summary"]["active"], 1)
+
+    def test_charge_date_rows_cluster_as_one_plan(self) -> None:
+        from api import installment_plans
+
+        db = self._fresh_db()
+        self._insert(
+            db,
+            date="2024-09-05",
+            debit=80.0,
+            source="SplitDate Shop",
+            detail="תשלום 1 מתוך 4",
+            fingerprint="fp-cd-1",
+        )
+        self._insert(
+            db,
+            date="2024-10-18",
+            debit=80.0,
+            source="SplitDate Shop",
+            detail="תשלום 2 מתוך 4",
+            fingerprint="fp-cd-2",
+        )
+        code, payload = installment_plans.list_installment_plans({"as_of": ["2024-11"]})
+        self.assertEqual(code, 200)
+        plans = [
+            p
+            for p in payload["installments"]["plans"]
+            if p.get("merchant") == "SplitDate Shop"
+        ]
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(plans[0]["paid_count"], 2)
+        self.assertEqual(plans[0]["total_count"], 4)
+
     def test_installment_active_when_caught_up(self) -> None:
         from api import installment_plans
 

@@ -325,24 +325,26 @@ def _build_raw_installment_clusters(
 ) -> list[_RawCluster]:
     """Group tagged installment rows; apply split_by overrides when present."""
     overrides = overrides or {}
-    buckets: dict[tuple[str | None, str, int], list[InstallmentRow]] = {}
+    buckets: dict[tuple[str | None, int], list[InstallmentRow]] = {}
     parion_keys: set[tuple[str | None, str]] = set()
 
     for row in rows:
         if row.is_parion:
             parion_keys.add((row.source, row.taarich))
             continue
-        key = (row.source, row.taarich, row.y)
+        key = (row.source, row.y)
         buckets.setdefault(key, []).append(row)
 
     clusters: list[_RawCluster] = []
-    for (src, ta, y), bucket in buckets.items():
-        if month_after_taarich_installment(ta) is None:
-            continue
-        has_parion = (src, ta) in parion_keys
+    for (src, y), bucket in buckets.items():
         for amt_cluster in cluster_by_amount(bucket, amount_tol):
+            x1 = [r for r in amt_cluster if r.x == 1]
+            purchase = x1[0].taarich if x1 else min((r.taarich for r in amt_cluster), default="")
+            if not purchase or month_after_taarich_installment(purchase) is None:
+                continue
+            has_parion = any((src, r.taarich) in parion_keys for r in amt_cluster)
             med = _median_amount([r.bh for r in amt_cluster])
-            base_id = installment_plan_id(src, ta, y, med)
+            base_id = installment_plan_id(src, purchase, y, med)
             split_by = (overrides.get(base_id) or {}).get("split_by")
 
             if split_by == "last4":
@@ -354,11 +356,11 @@ def _build_raw_installment_clusters(
                     clusters.append(
                         _RawCluster(
                             merchant=src,
-                            purchase_date=ta,
+                            purchase_date=purchase,
                             y=y,
                             rows=croes,
                             median_amount=cmed,
-                            plan_id=installment_plan_id(src, ta, y, cmed, card=card),
+                            plan_id=installment_plan_id(src, purchase, y, cmed, card=card),
                             has_parion=has_parion,
                         )
                     )
@@ -371,11 +373,11 @@ def _build_raw_installment_clusters(
                     clusters.append(
                         _RawCluster(
                             merchant=src,
-                            purchase_date=ta,
+                            purchase_date=purchase,
                             y=y,
                             rows=arows,
                             median_amount=av,
-                            plan_id=installment_plan_id(src, ta, y, av, exact_amount=av),
+                            plan_id=installment_plan_id(src, purchase, y, av, exact_amount=av),
                             has_parion=has_parion,
                         )
                     )
@@ -383,7 +385,7 @@ def _build_raw_installment_clusters(
                 clusters.append(
                     _RawCluster(
                         merchant=src,
-                        purchase_date=ta,
+                        purchase_date=purchase,
                         y=y,
                         rows=amt_cluster,
                         median_amount=med,
