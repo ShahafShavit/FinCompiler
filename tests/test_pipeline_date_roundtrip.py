@@ -101,7 +101,8 @@ class PipelineDateRoundtripTests(unittest.TestCase):
         fc = generate_transaction_fingerprint(c)
         self.assertEqual(fa, fb)
         self.assertEqual(fa, fc)
-        self.assertIn("תשלום1מתוך2", fa or "")
+        self.assertIn("תשלום 1 מתוך 2", fa or "")
+        self.assertIn("אקספרס-גמא", fa or "")
         self.assertNotIn("none", fa or "")
         self.assertNotIn("nan", fa or "")
 

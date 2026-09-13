@@ -49,6 +49,7 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (19, 'installment
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (20, 'installment_plan_override_settled');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (21, 'cash_event_wallet');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (22, 'cash_event_category');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (23, 'fingerprint_keep_text_punctuation');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)

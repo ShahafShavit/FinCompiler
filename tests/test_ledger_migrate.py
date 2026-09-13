@@ -42,7 +42,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 max_v = conn.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0]
-                self.assertEqual(max_v, 22)
+                self.assertEqual(max_v, 23)
                 row_tp = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='trade_portfolio_position'"
                 ).fetchone()
@@ -226,7 +226,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 ).fetchone()
                 self.assertIsNone(gone)
                 max_v = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-                self.assertEqual(max_v, 22)
+                self.assertEqual(max_v, 23)
             finally:
                 conn.close()
 
@@ -271,6 +271,63 @@ class LedgerMigrateTests(unittest.TestCase):
                 conn.close()
 
             self.assertNotIn("מזהה עסקה", names)
+
+    def test_v23_recomputes_fingerprint_keeping_hyphen(self) -> None:
+        """Stripped-punctuation keys are rewritten so hyphenated merchants stay distinct."""
+        import config as config_mod
+        import pandas as pd
+
+        from pipeline.fingerprint import generate_transaction_fingerprint
+        from ledger import migrate_ledger_db
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FINANCE_WORKSPACE_ROOT"] = tmp
+            with patch("dotenv.load_dotenv"):
+                importlib.reload(config_mod)
+
+            db_path = config_mod.ledger_db_file
+            migrate_ledger_db()
+            s = pd.Series(
+                {
+                    "תאריך": "2024-09-05",
+                    "בחובה": 10.0,
+                    "בזכות": 0.0,
+                    "מקור עסקה": "Test-Store",
+                    "פירוט נוסף": "",
+                    "תאור מורחב": "",
+                }
+            )
+            fp_new = generate_transaction_fingerprint(s)
+            self.assertIsNotNone(fp_new)
+            fp_old = "2024-09-05:bh10.00_bz0.00:teststore:"
+
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("DELETE FROM schema_migrations WHERE version >= 23")
+                conn.execute(
+                    """
+                    INSERT INTO ledger_transaction (
+                        "תאריך", "בחובה", "בזכות", "מקור עסקה",
+                        "fingerprint", ingested_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    ("2024-09-05", 10.0, 0.0, "Test-Store", fp_old, "2024-09-05"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            migrate_ledger_db()
+
+            conn = sqlite3.connect(db_path)
+            try:
+                row = conn.execute("SELECT fingerprint FROM ledger_transaction LIMIT 1").fetchone()
+                self.assertEqual(row[0], fp_new)
+                self.assertIn("test-store", str(row[0]).lower())
+                max_v = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+                self.assertEqual(max_v, 23)
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":

@@ -195,5 +195,37 @@ class FingerprintNonFiniteAmountTests(unittest.TestCase):
         self.assertIn("bh0.00_bz0.00", fp)
 
 
+class FingerprintPunctuationTests(unittest.TestCase):
+    """Merchant punctuation is part of identity (review fp-punct)."""
+
+    def test_hyphen_vs_space_do_not_collide(self) -> None:
+        a = generate_transaction_fingerprint(_tx_row("2024-09-05", makor="Test-Store"))
+        b = generate_transaction_fingerprint(_tx_row("2024-09-05", makor="Test Store"))
+        self.assertIsNotNone(a)
+        self.assertIsNotNone(b)
+        self.assertNotEqual(a, b)
+
+    def test_bang_suffix_does_not_match_plain(self) -> None:
+        a = generate_transaction_fingerprint(_tx_row("2024-09-05", makor="Test-Store!!!"))
+        b = generate_transaction_fingerprint(_tx_row("2024-09-05", makor="Test Store"))
+        self.assertIsNotNone(a)
+        self.assertIsNotNone(b)
+        self.assertNotEqual(a, b)
+
+    def test_whitespace_collapse_still_matches(self) -> None:
+        a = generate_transaction_fingerprint(_tx_row("2024-09-05", makor="Test   Store"))
+        b = generate_transaction_fingerprint(_tx_row("2024-09-05", makor="Test Store"))
+        self.assertEqual(a, b)
+
+    def test_detail_punctuation_kept(self) -> None:
+        a = generate_transaction_fingerprint(
+            _tx_row("2024-09-05", makor="Shop", pirur="pay 1/3")
+        )
+        b = generate_transaction_fingerprint(
+            _tx_row("2024-09-05", makor="Shop", pirur="pay 13")
+        )
+        self.assertNotEqual(a, b)
+
+
 if __name__ == "__main__":
     unittest.main()

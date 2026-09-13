@@ -36,6 +36,9 @@ account + security number only (no snapshot date).
 
 **v22** — ``cash_event.category``: optional category label per cash event.
 
+**v23** — recompute ``fingerprint`` keeping merchant/detail punctuation (``A-B`` ≠ ``A B``);
+merge duplicate rows.
+
 Constraint audit mirrors ``full_schema.sql`` CHECK/NOT NULL/FK rules. Compile upsert implements MIG-E2.
 """
 from __future__ import annotations
@@ -932,6 +935,12 @@ CREATE TABLE IF NOT EXISTS trade_portfolio_position_multiplier (
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (22, 'cash_event_category')"
             )
+            ver = _current_schema_version(conn)
+            if ver < 23:
+                _migrate_fingerprint_keep_punctuation(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (23, 'fingerprint_keep_text_punctuation')"
+            )
             conn.commit()
         finally:
             conn.close()
@@ -1733,6 +1742,11 @@ def _migrate_fingerprint_iso_date_parse(conn: sqlite3.Connection) -> None:
     (must match :func:`parse_post_ingest_date_scalar`). Merges duplicate rows like v11.
     """
     _run_ledger_fingerprint_recompute_with_row_factory(conn, log_label="v12")
+
+
+def _migrate_fingerprint_keep_punctuation(conn: sqlite3.Connection) -> None:
+    """v23: recompute fingerprints after keeping punctuation in merchant/detail text."""
+    _run_ledger_fingerprint_recompute_with_row_factory(conn, log_label="v23")
 
 
 def _run_ledger_fingerprint_recompute_with_row_factory(conn: sqlite3.Connection, *, log_label: str) -> None:

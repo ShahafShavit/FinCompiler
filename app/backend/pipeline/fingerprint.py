@@ -13,6 +13,13 @@ from pipeline.compiler import parse_post_ingest_date_scalar
 
 log = logging.getLogger(__name__)
 
+_WS = re.compile(r"\s+")
+
+
+def _normalize_fp_text(s: str) -> str:
+    """Casefold and collapse whitespace; keep punctuation so ``A-B`` ≠ ``A B``."""
+    return _WS.sub(" ", s.lower().strip())
+
 
 def _finite_money(val: Any) -> float | None:
     """Finite ILS amount for the dedupe key.
@@ -81,13 +88,10 @@ def generate_transaction_fingerprint_legacy(row):
         if amount is None:
             return None
         normalized_amount = f"{amount:.2f}"
-        business_name = str(row["מקור עסקה"]).lower().strip()
-        business_name = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", business_name)
-        extract_data = _fingerprint_optional_fragment(row, "פירוט נוסף") + _fingerprint_optional_fragment(
-            row, "תאור מורחב"
-        )
-
-        extra_data = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", extract_data)
+        business_name = _normalize_fp_text(str(row["מקור עסקה"]))
+        pirur = _normalize_fp_text(_fingerprint_optional_fragment(row, "פירוט נוסף"))
+        teur = _normalize_fp_text(_fingerprint_optional_fragment(row, "תאור מורחב"))
+        extra_data = f"{pirur}|{teur}" if (pirur or teur) else ""
         fingerprint_key = f"{normalized_date}:{normalized_amount}:{business_name}:{extra_data}"
         log.debug("Fingerprint legacy key: %s", fingerprint_key)
         return fingerprint_key
@@ -108,13 +112,10 @@ def generate_transaction_fingerprint(row):
         if bh is None or bz is None:
             return None
         normalized_amount = f"bh{bh:.2f}_bz{bz:.2f}"
-        business_name = str(row["מקור עסקה"]).lower().strip()
-        business_name = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", business_name)
-        extract_data = _fingerprint_optional_fragment(row, "פירוט נוסף") + _fingerprint_optional_fragment(
-            row, "תאור מורחב"
-        )
-
-        extra_data = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", extract_data)
+        business_name = _normalize_fp_text(str(row["מקור עסקה"]))
+        pirur = _normalize_fp_text(_fingerprint_optional_fragment(row, "פירוט נוסף"))
+        teur = _normalize_fp_text(_fingerprint_optional_fragment(row, "תאור מורחב"))
+        extra_data = f"{pirur}|{teur}" if (pirur or teur) else ""
         fingerprint_key = f"{normalized_date}:{normalized_amount}:{business_name}:{extra_data}"
         log.debug("Fingerprint key: %s", fingerprint_key)
         return fingerprint_key
