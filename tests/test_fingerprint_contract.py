@@ -156,5 +156,44 @@ class FingerprintOptionalTextTests(unittest.TestCase):
         self.assertNotIn("nan", fa or "")
 
 
+class FingerprintNonFiniteAmountTests(unittest.TestCase):
+    """NaN / Inf amounts must not produce colliding ``bhnan`` keys (review fp-nan)."""
+
+    def test_nan_debit_skips_fingerprint(self) -> None:
+        row = _tx_row("2024-09-05", bh=float("nan"), bz=0.0, makor="A")
+        self.assertIsNone(generate_transaction_fingerprint(row))
+        self.assertIsNone(generate_transaction_fingerprint_legacy(row))
+
+    def test_nan_credit_skips_fingerprint(self) -> None:
+        row = _tx_row("2024-09-05", bh=0.0, bz=float("nan"), makor="A")
+        self.assertIsNone(generate_transaction_fingerprint(row))
+
+    def test_inf_skips_fingerprint(self) -> None:
+        row = _tx_row("2024-09-05", bh=float("inf"), makor="A")
+        self.assertIsNone(generate_transaction_fingerprint(row))
+
+    def test_two_nan_rows_do_not_share_a_key(self) -> None:
+        a = generate_transaction_fingerprint(_tx_row("2024-09-05", bh=float("nan"), makor="A"))
+        b = generate_transaction_fingerprint(_tx_row("2024-09-05", bh=float("nan"), makor="B"))
+        self.assertIsNone(a)
+        self.assertIsNone(b)
+
+    def test_missing_amount_still_zero(self) -> None:
+        row = _tx_row("2024-09-05", bh=1.0, bz=0.0)
+        row["בחובה"] = None
+        row["בזכות"] = None
+        fp = generate_transaction_fingerprint(row)
+        self.assertIsNotNone(fp)
+        assert fp is not None
+        self.assertIn("bh0.00_bz0.00", fp)
+
+    def test_zero_amount_still_fingerprinted(self) -> None:
+        row = _tx_row("2024-09-05", bh=0.0, bz=0.0, makor="Zero")
+        fp = generate_transaction_fingerprint(row)
+        self.assertIsNotNone(fp)
+        assert fp is not None
+        self.assertIn("bh0.00_bz0.00", fp)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,13 +3,43 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
+from typing import Any
 
 import pandas as pd
 
 from pipeline.compiler import parse_post_ingest_date_scalar
 
 log = logging.getLogger(__name__)
+
+
+def _finite_money(val: Any) -> float | None:
+    """Finite ILS amount for the dedupe key.
+
+    Missing / empty → ``0.0`` (same as historic ``float(x or 0)``).
+    Non-finite (NaN, Inf) → ``None`` so the caller skips the row instead of
+    emitting ``bhnan_…`` keys that UNIQUE-merge unrelated transactions.
+    """
+    if val is None:
+        return 0.0
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return 0.0
+        val = s
+    try:
+        if val is pd.NA:
+            return 0.0
+    except (ValueError, TypeError):
+        pass
+    try:
+        n = float(val)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(n):
+        return None
+    return n
 
 
 def _fingerprint_optional_fragment(row, key: str) -> str:
@@ -46,8 +76,11 @@ def generate_transaction_fingerprint_legacy(row):
         if pd.isna(ts):
             return None
         normalized_date = ts.strftime("%Y-%m-%d")
-        amount = row["בחובה"] if row["בחובה"] != 0 else row["בזכות"]
-        normalized_amount = f"{float(amount):.2f}"
+        raw_amount = row["בחובה"] if row["בחובה"] != 0 else row["בזכות"]
+        amount = _finite_money(raw_amount)
+        if amount is None:
+            return None
+        normalized_amount = f"{amount:.2f}"
         business_name = str(row["מקור עסקה"]).lower().strip()
         business_name = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", business_name)
         extract_data = _fingerprint_optional_fragment(row, "פירוט נוסף") + _fingerprint_optional_fragment(
@@ -70,8 +103,10 @@ def generate_transaction_fingerprint(row):
         if pd.isna(ts):
             return None
         normalized_date = ts.strftime("%Y-%m-%d")
-        bh = float(row.get("בחובה") or 0)
-        bz = float(row.get("בזכות") or 0)
+        bh = _finite_money(row.get("בחובה"))
+        bz = _finite_money(row.get("בזכות"))
+        if bh is None or bz is None:
+            return None
         normalized_amount = f"bh{bh:.2f}_bz{bz:.2f}"
         business_name = str(row["מקור עסקה"]).lower().strip()
         business_name = re.sub(r"[^a-z0-9\u0590-\u05ff]", "", business_name)
