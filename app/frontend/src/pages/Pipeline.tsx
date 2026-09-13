@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import PageShell from '../components/PageShell';
 import { fetchJson, getJson } from '../lib/api';
 import { he } from '../lib/he';
+import { appendCappedLog } from '../lib/pipelineLog';
 import {
   CATEGORIZE_SUMMARY_KEY,
   openCountFromSummary,
@@ -68,6 +69,8 @@ export default function Pipeline() {
   const [busyError, setBusyError] = useState<string | null>(null);
   const [catUrl, setCatUrl] = useState('');
   const logRef = useRef<HTMLDivElement | null>(null);
+  const logBuf = useRef('');
+  const logRaf = useRef(0);
   const runningRef = useRef(false);
   const queryClient = useQueryClient();
   const summaryQ = useCategorizeSummary();
@@ -115,9 +118,13 @@ export default function Pipeline() {
 
   const conn = useEventStream('/api/events', {
     log: (msg) => {
-      setLogText((prev) => {
-        const next = prev + msg + '\n';
-        return next.length > 500_000 ? next.slice(-500_000) : next;
+      logBuf.current = appendCappedLog(logBuf.current, msg);
+      if (logRaf.current) return;
+      logRaf.current = window.requestAnimationFrame(() => {
+        logRaf.current = 0;
+        setLogText(logBuf.current);
+        const el = logRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
       });
     },
     state: (isRunning, job, err) => {
@@ -135,9 +142,10 @@ export default function Pipeline() {
   });
 
   useEffect(() => {
-    const el = logRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [logText]);
+    return () => {
+      if (logRaf.current) window.cancelAnimationFrame(logRaf.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (conn === 'open') return;
