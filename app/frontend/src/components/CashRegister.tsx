@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api';
+import { deleteJson, fetchJson, patchJson, postJson, isAbortError } from '../lib/api';
 import { he } from '../lib/he';
 
 import '../pages/Cash.css';
@@ -172,24 +172,29 @@ export default function CashRegister({ initialMonth, compact = false }: CashRegi
   const counted = useMemo(() => padTotal(pad), [pad]);
   const padHasAny = counted > 0;
 
-  const resolveDefaultMonth = useCallback(async () => {
+  const resolveDefaultMonth = useCallback(async (signal?: AbortSignal) => {
     if (defaultedRef.current) return;
     try {
-      const sumR = await fetchJson<SummaryResp>('/api/cash/summary');
+      const sumR = await fetchJson<SummaryResp>('/api/cash/summary', { signal });
+      if (signal?.aborted) return;
       const activity = sumR.data.last_activity_month;
       setMonth(activity || currentMonth());
-    } catch {
+    } catch (e) {
+      if (isAbortError(e) || signal?.aborted) return;
       setMonth(currentMonth());
     } finally {
-      defaultedRef.current = true;
+      if (!signal?.aborted) defaultedRef.current = true;
     }
   }, []);
 
   useEffect(() => {
-    if (!monthReady) void resolveDefaultMonth();
+    if (monthReady) return;
+    const ac = new AbortController();
+    void resolveDefaultMonth(ac.signal);
+    return () => ac.abort();
   }, [monthReady, resolveDefaultMonth]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     if (!month) return;
     setLoading(true);
     setError(null);
@@ -198,9 +203,11 @@ export default function CashRegister({ initialMonth, compact = false }: CashRegi
       const [sumR, evR] = await Promise.all([
         fetchJson<SummaryResp>(
           month === ALL_MONTHS ? '/api/cash/summary' : `/api/cash/summary?month=${monthQ}`,
+          { signal },
         ),
-        fetchJson<EventsResp>(`/api/cash/events?month=${monthQ}`),
+        fetchJson<EventsResp>(`/api/cash/events?month=${monthQ}`, { signal }),
       ]);
+      if (signal?.aborted) return;
       if (!sumR.ok || !sumR.data.ok) {
         setError(sumR.data.message || sumR.data.error || he.cash.error);
         setLoading(false);
@@ -221,14 +228,17 @@ export default function CashRegister({ initialMonth, compact = false }: CashRegi
         setBalance(evR.data.balance_agorot);
       }
     } catch (e) {
+      if (isAbortError(e) || signal?.aborted) return;
       setError(e instanceof Error ? e.message : he.cash.error);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, [month]);
 
   useEffect(() => {
-    void load();
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => ac.abort();
   }, [load]);
 
   const bump = (denom: number, delta: number) => {

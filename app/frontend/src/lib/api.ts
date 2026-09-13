@@ -21,6 +21,13 @@ export async function fetchJson<T = unknown>(
   return { ok: res.ok, status: res.status, data: data as T };
 }
 
+export function isAbortError(e: unknown): boolean {
+  return (
+    (typeof DOMException !== 'undefined' && e instanceof DOMException && e.name === 'AbortError') ||
+    (e instanceof Error && e.name === 'AbortError')
+  );
+}
+
 export async function getJson<T = unknown>(url: string, options?: RequestInit): Promise<T> {
   const r = await fetchJson<T>(url, { cache: 'no-store', ...options });
   if (!r.ok) {

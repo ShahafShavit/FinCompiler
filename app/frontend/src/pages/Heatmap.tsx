@@ -10,7 +10,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 
 import PageShell from '../components/PageShell';
-import { fetchJson } from '../lib/api';
+import { fetchJson, isAbortError } from '../lib/api';
 import {
   heatmapDetailCategory,
   heatmapDetailCell,
@@ -538,6 +538,7 @@ export default function Heatmap() {
   const catSearchRef = useRef<HTMLInputElement>(null);
   const reportTypeRef = useRef(prefs.reportType);
   reportTypeRef.current = prefs.reportType;
+  const prefetchAcRef = useRef<AbortController | null>(null);
 
   const updatePrefs = useCallback((patch: Partial<HeatmapPrefs> | ((p: HeatmapPrefs) => HeatmapPrefs)) => {
     setPrefs((prev) => {
@@ -547,13 +548,15 @@ export default function Heatmap() {
     });
   }, []);
 
-  const loadSnapshot = useCallback(async (type?: ReportType, quiet = false) => {
+  const loadSnapshot = useCallback(async (type?: ReportType, quiet = false, signal?: AbortSignal) => {
     const reportType = type ?? reportTypeRef.current;
     if (!quiet) setRefreshStatus(he.heatmap.loading);
     try {
       const r = await fetchJson<HeatmapSnapshot>(`/heatmap/api/data?type=${reportType}`, {
         cache: 'no-store',
+        signal,
       });
+      if (signal?.aborted) return;
       const data = r.data;
       setSnapshot((prev) => {
         if (!data.ok) return prev ?? data;
@@ -582,21 +585,30 @@ export default function Heatmap() {
         `${he.heatmap.ledger}: ${(st.ledger_path || data.source || '').replace(/\\/g, '/')}${cnt}`,
       );
     } catch (e) {
-      if (quiet) return;
+      if (isAbortError(e) || signal?.aborted || quiet) return;
       setErr('שגיאת רשת: ' + (e instanceof Error ? e.message : String(e)));
       setRefreshStatus('');
     }
   }, []);
 
   useEffect(() => {
-    void loadSnapshot();
+    const ac = new AbortController();
+    void loadSnapshot(undefined, false, ac.signal);
+    return () => ac.abort();
   }, [loadSnapshot]);
 
   useEffect(() => {
+    const ac = new AbortController();
+    prefetchAcRef.current = ac;
+    return () => ac.abort();
+  }, []);
+
+  useEffect(() => {
     if (!snapshot?.ok) return;
+    const signal = prefetchAcRef.current?.signal;
     for (const t of VIEW_TABS) {
       if (!snapshot.views?.[t.key]) {
-        void loadSnapshot(t.key, true);
+        void loadSnapshot(t.key, true, signal);
       }
     }
   }, [snapshot, loadSnapshot]);

@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
 import PageShell from '../components/PageShell';
-import { fetchJson, formatMoney, patchJson } from '../lib/api';
+import { fetchJson, formatMoney, patchJson, isAbortError } from '../lib/api';
 import { hashColor } from '../lib/chartColors';
 import { he } from '../lib/he';
 import { dropUndoEntry } from '../lib/undoStack';
@@ -217,7 +217,7 @@ export default function Installments() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce qDraft only
   }, [qDraft]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setErr(null);
     const params = new URLSearchParams();
@@ -226,23 +226,28 @@ export default function Installments() {
     try {
       const r = await fetchJson<PlansResponse>(`/api/installment-plans?${params}`, {
         cache: 'no-store',
+        signal,
       });
+      if (signal?.aborted) return;
       if (!r.ok || r.data.ok === false) {
         setErr(r.data.message || r.data.error || he.installments.error);
         setData(null);
       } else {
         setData(r.data);
       }
-    } catch {
+    } catch (e) {
+      if (isAbortError(e) || signal?.aborted) return;
       setErr(he.installments.error);
       setData(null);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, [q, includeHidden]);
 
   useEffect(() => {
-    void load();
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => ac.abort();
   }, [load]);
 
   const undoLabelFor = (body: Record<string, unknown>): string | null => {

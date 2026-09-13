@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 
 import PageShell from '../components/PageShell';
 import TopCategoriesBoard from '../components/TopCategoriesBoard';
-import { fetchJson, patchJson, postJson } from '../lib/api';
+import { fetchJson, patchJson, postJson, isAbortError } from '../lib/api';
 import { heatmapDetailCategory, heatmapDetailSource } from '../lib/drilldown';
 import { he } from '../lib/he';
 
@@ -81,15 +81,16 @@ export default function DataIntegrity() {
   const [quickFingerprint, setQuickFingerprint] = useState('');
   const [topCats, setTopCats] = useState<TopCategoriesResponse | null>(null);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setErr(null);
     try {
       const [rpt, st, tc] = await Promise.all([
-        fetchJson<ReportResponse>('/api/integrity/report', { cache: 'no-store' }),
-        fetchJson<StoresResponse>('/api/integrity/stores', { cache: 'no-store' }),
-        fetchJson<TopCategoriesResponse>('/api/integrity/top-categories', { cache: 'no-store' }),
+        fetchJson<ReportResponse>('/api/integrity/report', { cache: 'no-store', signal }),
+        fetchJson<StoresResponse>('/api/integrity/stores', { cache: 'no-store', signal }),
+        fetchJson<TopCategoriesResponse>('/api/integrity/top-categories', { cache: 'no-store', signal }),
       ]);
+      if (signal?.aborted) return;
       if (!rpt.ok) throw new Error(`integrity report: HTTP ${rpt.status}`);
       if (!st.ok) throw new Error(`integrity stores: HTTP ${st.status}`);
       if (!tc.ok) throw new Error(`integrity top-categories: HTTP ${tc.status}`);
@@ -97,14 +98,17 @@ export default function DataIntegrity() {
       setStores(st.data.stores ?? []);
       setTopCats(tc.data);
     } catch (e) {
+      if (isAbortError(e) || signal?.aborted) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadAll();
+    const ac = new AbortController();
+    void loadAll(ac.signal);
+    return () => ac.abort();
   }, [loadAll]);
 
   const sections = report?.sections ?? [];

@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import PageShell from '../components/PageShell';
-import { fetchJson, formatMoney, patchJson, postJson } from '../lib/api';
+import { fetchJson, formatMoney, patchJson, postJson, isAbortError } from '../lib/api';
 import { explorePager, exploreQueryLimit } from '../lib/explorePager';
 import { he } from '../lib/he';
 
@@ -200,29 +200,34 @@ export default function Explore() {
   const [presets, setPresets] = useState<SavedPreset[]>(() => loadPresets());
   const [presetName, setPresetName] = useState('');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setErr(null);
     try {
       const r = await fetchJson<SearchResponse>(`/api/ledger/search?${apiQuery}`, {
         cache: 'no-store',
+        signal,
       });
+      if (signal?.aborted) return;
       if (!r.ok || r.data.ok === false) {
         setErr(r.data.message || r.data.error || he.explore.error);
         setData(null);
       } else {
         setData(r.data);
       }
-    } catch {
+    } catch (e) {
+      if (isAbortError(e) || signal?.aborted) return;
       setErr(he.explore.error);
       setData(null);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, [apiQuery]);
 
   useEffect(() => {
-    void load();
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => ac.abort();
   }, [load]);
 
   useEffect(() => {
