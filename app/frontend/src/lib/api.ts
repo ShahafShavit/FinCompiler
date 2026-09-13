@@ -21,8 +21,16 @@ export async function fetchJson<T = unknown>(
   return { ok: res.ok, status: res.status, data: data as T };
 }
 
-export async function getJson<T = unknown>(url: string): Promise<T> {
-  const r = await fetchJson<T>(url, { cache: 'no-store' });
+export async function getJson<T = unknown>(url: string, options?: RequestInit): Promise<T> {
+  const r = await fetchJson<T>(url, { cache: 'no-store', ...options });
+  if (!r.ok) {
+    const data = r.data as { message?: unknown; error?: unknown } | null;
+    const detail =
+      (typeof data?.message === 'string' && data.message) ||
+      (typeof data?.error === 'string' && data.error) ||
+      `HTTP ${r.status}`;
+    throw new Error(detail);
+  }
   return r.data;
 }
 
