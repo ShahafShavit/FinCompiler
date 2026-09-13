@@ -50,6 +50,7 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (20, 'installment
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (21, 'cash_event_wallet');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (22, 'cash_event_category');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (23, 'fingerprint_keep_text_punctuation');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (24, 'ledger_effective_ym_expr_index');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -94,6 +95,15 @@ CREATE TABLE IF NOT EXISTS ledger_transaction (
 
 CREATE INDEX IF NOT EXISTS idx_ledger_transaction_date ON ledger_transaction ("תאריך");
 CREATE INDEX IF NOT EXISTS idx_ledger_transaction_category ON ledger_transaction ("קטגוריה");
+CREATE INDEX IF NOT EXISTS idx_ledger_tx_effective_ym ON ledger_transaction (
+  CASE
+    WHEN statement_month IS NOT NULL
+     AND TRIM(COALESCE(statement_month, '')) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'
+     AND LENGTH(TRIM(COALESCE(statement_month, ''))) = 7
+    THEN TRIM(statement_month)
+    ELSE strftime('%Y-%m', date("תאריך"))
+  END
+);
 
 -- -----------------------------------------------------------------------------
 -- Store → categories (replaces data/static/stores_to_categories.csv)

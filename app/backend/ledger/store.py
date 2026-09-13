@@ -957,6 +957,18 @@ CREATE TABLE IF NOT EXISTS trade_portfolio_position_multiplier (
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (23, 'fingerprint_keep_text_punctuation')"
             )
+            ver = _current_schema_version(conn)
+            if ver < 24:
+                conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS idx_ledger_tx_effective_ym ON ledger_transaction (
+                      {LEDGER_SQL_EFFECTIVE_YM_EXPR}
+                    )
+                    """
+                )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (24, 'ledger_effective_ym_expr_index')"
+            )
             conn.commit()
         finally:
             conn.close()
