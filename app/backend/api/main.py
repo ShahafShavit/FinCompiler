@@ -37,6 +37,9 @@ async def _lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001
         log.exception("Ledger migrate at control server startup failed; serving anyway")
     yield
+    state = getattr(app.state, "control_state", None)
+    if state is not None:
+        state.join_job(timeout=120.0)
 
 
 def create_app() -> FastAPI:
@@ -48,6 +51,23 @@ def create_app() -> FastAPI:
         openapi_url=None,
     )
     app.state.control_state = ControlState()
+
+    if not config.control_bind_is_loopback():
+        from starlette.responses import Response as StarletteResponse
+
+        @app.middleware("http")
+        async def _lan_bearer(request, call_next):  # type: ignore[no-untyped-def]
+            expected = config.control_http_token
+            auth = (request.headers.get("authorization") or "").strip()
+            token = ""
+            if auth.lower().startswith("bearer "):
+                token = auth[7:].strip()
+            if not token:
+                token = str(request.query_params.get("token") or "").strip()
+            if not expected or token != expected:
+                return StarletteResponse(content=b"unauthorized", status_code=401)
+            return await call_next(request)
+
     register_routes(app)
     return app
 
@@ -59,6 +79,7 @@ def main() -> int:
     log.info("FINANCE_WORKSPACE_ROOT: %s", config.workspace_root() or "(unset; cwd layout)")
     host = getattr(config, "control_http_host", "127.0.0.1")
     port = int(getattr(config, "control_http_port", 8780))
+    config.validate_control_bind(host)
     assert_control_port_available(host, port)
 
     import uvicorn

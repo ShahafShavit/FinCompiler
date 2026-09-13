@@ -8,8 +8,8 @@ from typing import Any
 import config
 from fastapi import APIRouter, FastAPI, Request, Response
 
-from api import providers_config, sheets, transaction_drop_rules_config
-from api.utils import json_bytes_strict, run_blocking
+from api import jobs, providers_config, sheets, transaction_drop_rules_config
+from api.utils import StateDep, json_bytes_strict, run_blocking
 
 
 def _json_bytes(obj: Any) -> bytes:
@@ -87,27 +87,16 @@ def register_settings_routes(app: FastAPI) -> None:
         )
 
     @r.post("/api/sheets/preview", include_in_schema=False)
-    async def sheets_preview() -> Response:
-        snap = await run_blocking(sheets.desktop_preview)
-        if snap.get("error") == "not_configured":
-            return Response(
-                content=json_bytes_strict(snap),
-                status_code=503,
-                media_type="application/json; charset=utf-8",
-            )
-        if snap.get("error") == "no_ledger":
-            return Response(
-                content=json_bytes_strict(snap),
-                status_code=503,
-                media_type="application/json; charset=utf-8",
-            )
+    def sheets_preview(state: StateDep) -> Response:
+        code, payload = jobs.start_background_job(state, "sheets_preview", {})
         return Response(
-            content=json_bytes_strict(snap),
+            content=json_bytes_strict(payload),
+            status_code=code,
             media_type="application/json; charset=utf-8",
         )
 
     @r.post("/api/sheets/push", include_in_schema=False)
-    async def sheets_push(request: Request) -> Response:
+    async def sheets_push(request: Request, state: StateDep) -> Response:
         try:
             data = json.loads((await request.body()).decode("utf-8") or "{}")
         except json.JSONDecodeError:
@@ -118,18 +107,7 @@ def register_settings_routes(app: FastAPI) -> None:
             )
         opts = data if isinstance(data, dict) else {}
         force = bool(opts.get("force"))
-        ok, msg, preview = await run_blocking(sheets.desktop_push, force=force)
-        payload: dict = {"ok": ok, "message": msg}
-        if preview is not None:
-            payload["preview"] = preview
-        if ok:
-            code = 200
-        elif preview is not None:
-            code = 409
-        elif "not configured" in (msg or "").lower():
-            code = 503
-        else:
-            code = 502
+        code, payload = jobs.start_background_job(state, "sheets_push", {"force": force})
         return Response(
             content=json_bytes_strict(payload),
             status_code=code,

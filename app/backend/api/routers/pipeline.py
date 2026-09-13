@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import queue as queue_mod
-import threading
-import traceback
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
@@ -15,19 +12,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from api import jobs
 from api.utils import StateDep
-from logger import attach_sink_log_handlers, detach_sink_log_handlers
-
-log = logging.getLogger(__name__)
-
-_JOB_SSE_LOGGERS = [
-    "pipeline.fetch",
-    "pipeline.route_inbox",
-    "pipeline.spreadsheet_ingest",
-    "pipeline.workbook_normalize",
-    "pipeline.fingerprint",
-    "pipeline.compiler",
-    "api.categorize",
-]
 
 
 def _json_bytes(obj: Any) -> bytes:
@@ -66,35 +50,10 @@ def register_pipeline_routes(app: FastAPI) -> None:
                 media_type="application/json; charset=utf-8",
             )
 
-        ok, info = state.try_start_job(action)
-        if not ok:
-            return Response(
-                content=_json_bytes({"ok": False, "error": info}),
-                status_code=409,
-                media_type="application/json; charset=utf-8",
-            )
-        job_id = info
-
-        def worker() -> None:
-            def sink(msg: str) -> None:
-                state.log_line(msg)
-
-            err: BaseException | None = None
-            log_pairs = attach_sink_log_handlers(sink, _JOB_SSE_LOGGERS)
-            try:
-                jobs.run_action(action, options, sink=sink, control_state=state)
-            except BaseException as e:  # noqa: BLE001
-                err = e
-                tb = traceback.format_exc()
-                state.log_line(tb)
-            finally:
-                detach_sink_log_handlers(log_pairs)
-                state.finish_job(err)
-
-        threading.Thread(target=worker, name=f"job-{job_id}", daemon=True).start()
+        code, payload = jobs.start_background_job(state, action, options)
         return Response(
-            content=_json_bytes({"ok": True, "job_id": job_id}),
-            status_code=202,
+            content=_json_bytes(payload),
+            status_code=code,
             media_type="application/json; charset=utf-8",
         )
 

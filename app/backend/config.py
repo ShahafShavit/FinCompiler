@@ -124,3 +124,31 @@ incomes_web_file = os.path.join(_web_root, "incomes_web.html")
 # Local web control dashboard: pipeline at / and categorization at /categorize/ on the same port
 control_http_host = os.environ.get("FINANCE_CONTROL_HTTP_HOST", "127.0.0.1").strip() or "127.0.0.1"
 control_http_port = int(os.environ.get("FINANCE_CONTROL_HTTP_PORT", "8780") or "8780")
+control_allow_lan = os.environ.get("FINANCE_CONTROL_ALLOW_LAN", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+control_http_token = os.environ.get("FINANCE_CONTROL_TOKEN", "").strip()
+
+
+def control_bind_is_loopback(host: str | None = None) -> bool:
+    h = (host if host is not None else control_http_host).strip().lower()
+    return h in {"127.0.0.1", "::1", "localhost"}
+
+
+def validate_control_bind(host: str | None = None) -> None:
+    """Refuse LAN binds unless explicitly enabled, and then require a bearer token."""
+    h = (host if host is not None else control_http_host).strip() or "127.0.0.1"
+    if control_bind_is_loopback(h):
+        return
+    if not control_allow_lan:
+        raise RuntimeError(
+            f"Refusing to bind control server to {h!r}. "
+            "Use 127.0.0.1, or set FINANCE_CONTROL_ALLOW_LAN=1 and FINANCE_CONTROL_TOKEN."
+        )
+    if not control_http_token:
+        raise RuntimeError(
+            "FINANCE_CONTROL_ALLOW_LAN is set but FINANCE_CONTROL_TOKEN is empty; "
+            "LAN binds require a bearer token."
+        )

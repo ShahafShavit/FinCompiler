@@ -35,6 +35,8 @@ def put_config(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     current = providers.load_document()
     try:
         merged = providers.merge_put_update(current, body)
+    except ValueError as e:
+        return 400, {"ok": False, "error": "validation_error", "message": str(e)}
     except Exception:  # noqa: BLE001
         log.exception("providers merge_put_update failed")
         return 500, {"ok": False, "error": "server_error", "message": "Failed to merge providers (see server log)."}

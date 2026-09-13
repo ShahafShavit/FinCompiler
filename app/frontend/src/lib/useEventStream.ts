@@ -24,6 +24,15 @@ export function useEventStream(url: string, handlers: SseHandlers): SseConnState
         // ignore malformed events
       }
     });
+    es.addEventListener('log_overflow', (ev) => {
+      try {
+        const d = JSON.parse((ev as MessageEvent).data);
+        const msg = String(d.message || 'Live log overflow: dropped oldest events');
+        if (handlersRef.current.log) handlersRef.current.log(msg);
+      } catch {
+        // ignore malformed events
+      }
+    });
     es.addEventListener('state', (ev) => {
       try {
         const d = JSON.parse((ev as MessageEvent).data);

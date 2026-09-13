@@ -32,12 +32,13 @@ async def run_blocking(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
 
 
 class EventHub:
-    def __init__(self) -> None:
+    def __init__(self, *, maxsize: int = 500) -> None:
         self._lock = threading.Lock()
         self._subs: list[queue.Queue[dict[str, Any]]] = []
+        self._maxsize = max(1, int(maxsize))
 
     def subscribe(self) -> queue.Queue[dict[str, Any]]:
-        q: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=500)
+        q: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=self._maxsize)
         with self._lock:
             self._subs.append(q)
         return q
@@ -47,16 +48,35 @@ class EventHub:
             if q in self._subs:
                 self._subs.remove(q)
 
+    @staticmethod
+    def _offer_drop_oldest(sub: queue.Queue[dict[str, Any]], event: dict[str, Any]) -> bool:
+        try:
+            sub.put_nowait(event)
+            return True
+        except queue.Full:
+            pass
+        try:
+            sub.get_nowait()
+        except queue.Empty:
+            return False
+        try:
+            sub.put_nowait(event)
+            return True
+        except queue.Full:
+            return False
+
     def publish(self, event: dict[str, Any]) -> None:
+        overflow = {
+            "type": "log_overflow",
+            "message": "Live log overflow: dropped oldest events",
+        }
         with self._lock:
-            stale: list[queue.Queue[dict[str, Any]]] = []
             for sub in self._subs:
                 try:
                     sub.put_nowait(event)
                 except queue.Full:
-                    stale.append(sub)
-            for sub in stale:
-                self._subs.remove(sub)
+                    EventHub._offer_drop_oldest(sub, overflow)
+                    EventHub._offer_drop_oldest(sub, event)
 
 
 _CATEGORIZE_HISTORY_MAX = 30
@@ -72,6 +92,7 @@ class ControlState:
         self._job_seq = 0
         self._categorize_history: list[dict[str, Any]] = []
         self._categorize_history_lock = threading.Lock()
+        self._job_thread: threading.Thread | None = None
 
     def try_start_job(self, name: str) -> tuple[bool, str]:
         if not self._job_lock.acquire(blocking=False):
@@ -96,6 +117,16 @@ class ControlState:
             self._job_lock.release()
         except RuntimeError:
             pass
+
+    def spawn_job_thread(self, target: Any, *, name: str) -> None:
+        t = threading.Thread(target=target, name=name, daemon=False)
+        self._job_thread = t
+        t.start()
+
+    def join_job(self, timeout: float | None = 120.0) -> None:
+        t = self._job_thread
+        if t is not None and t.is_alive():
+            t.join(timeout)
 
     def log_line(self, msg: str) -> None:
         self.hub.publish({"type": "log", "message": msg, "ts": time.time()})

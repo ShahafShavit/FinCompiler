@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
 import PageShell from '../components/PageShell';
-import { fetchJson, getJson, postJson } from '../lib/api';
+import { fetchJson, getJson } from '../lib/api';
 import { he } from '../lib/he';
 import {
   CATEGORIZE_SUMMARY_KEY,
@@ -219,40 +219,21 @@ export default function Pipeline() {
   }, [conn]);
 
   async function postSheetsAction(action: 'preview' | 'push') {
-    setSheetsOut(action === 'preview' ? 'Loading…' : 'Running…');
-    if (action === 'push') setSheetsBusy(true);
+    setSheetsOut(action === 'preview' ? 'Queued preview…' : 'Queued push…');
+    setSheetsBusy(true);
     try {
-      const url = '/api/sheets/' + action;
-      const body = action === 'preview' ? {} : { force: sheetsForce };
-      const r = await postJson<unknown>(url, body);
-      setSheetsOut(JSON.stringify(r.data, null, 2));
-      if (r.ok && action === 'push') {
-        try {
-          const j = await getJson<SheetsStatus>('/api/sheets/status');
-          if (!j.configured) {
-            setSheetsStatusText(
-              'Google Sheets: not configured — set service account path and spreadsheet id under Settings → Providers.',
-            );
-          } else {
-            setSheetsStatusText(
-              'Targets: ' +
-                (j.pairs ?? [])
-                  .map((p) => `${p.sheet} (${p.local_source ?? 'ledger'})`)
-                  .join(' · '),
-            );
-          }
-        } catch {
-          // ignore refresh failure
-        }
-      }
+      await postJob(action === 'preview' ? 'sheets_preview' : 'sheets_push', {
+        force: sheetsForce,
+      });
+      setSheetsOut((prev) => prev + '\nWatch the live log for Sheets output.');
     } catch (e) {
       setSheetsOut('Error: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
-      if (action === 'push') setSheetsBusy(false);
+      setSheetsBusy(false);
     }
   }
 
-  async function postJob(action: 'pipeline' | 'categorize', options: object) {
+  async function postJob(action: string, options: object) {
     setStatusText('');
     try {
       const r = await fetchJson<{ ok?: boolean; job_id?: string; error?: string }>(

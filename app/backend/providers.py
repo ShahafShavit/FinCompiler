@@ -182,6 +182,22 @@ def _expand_path(p: Optional[str]) -> Optional[str]:
     return os.path.normpath(os.path.expanduser(os.path.expandvars(p.strip())))
 
 
+def constrain_service_account_path(raw: str) -> str:
+    """Require the Google JSON key to live under ``data/private/`` (no ``..`` escapes)."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    expanded = os.path.abspath(_expand_path(text) or text)
+    root = os.path.abspath(config.private_dir)
+    try:
+        common = os.path.commonpath([root, expanded])
+    except ValueError as e:
+        raise ValueError("service account JSON must live under data/private/") from e
+    if common != root:
+        raise ValueError("service account JSON must live under data/private/")
+    return expanded
+
+
 @dataclass(frozen=True)
 class ResolvedProviders:
     bank_provider: str
@@ -220,6 +236,11 @@ def resolve_document(doc: dict[str, Any]) -> ResolvedProviders:
             il = _nonempty(c.get("last6"))
     gs = doc["google_sheets"]
     gpath = _nonempty(gs.get("service_account_json_path"))
+    if gpath:
+        try:
+            gpath = constrain_service_account_path(gpath)
+        except ValueError:
+            gpath = None
     inv_doc = doc.get("investment_portfolio") if isinstance(doc.get("investment_portfolio"), dict) else {}
     inv_enabled = bool(inv_doc.get("enabled", True))
     return ResolvedProviders(
@@ -234,7 +255,7 @@ def resolve_document(doc: dict[str, Any]) -> ResolvedProviders:
         isracard_password=ip,
         isracard_last6=il,
         investment_portfolio_enabled=inv_enabled,
-        google_service_account_json_path=_expand_path(gpath) if gpath else None,
+        google_service_account_json_path=gpath,
         google_worksheet_id=_nonempty(gs.get("worksheet_id")),
     )
 
@@ -313,7 +334,10 @@ def merge_put_update(current: dict[str, Any], body: dict[str, Any]) -> dict[str,
     if isinstance(gs_in, dict):
         gs = out["google_sheets"]
         if "service_account_json_path" in gs_in:
-            gs["service_account_json_path"] = str(gs_in.get("service_account_json_path") or "")
+            raw_path = str(gs_in.get("service_account_json_path") or "")
+            gs["service_account_json_path"] = (
+                constrain_service_account_path(raw_path) if raw_path.strip() else ""
+            )
         if "worksheet_id" in gs_in:
             gs["worksheet_id"] = str(gs_in.get("worksheet_id") or "")
 

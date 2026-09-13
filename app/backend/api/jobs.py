@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
-import os
+import traceback
 from typing import Any, Callable, Optional
 
 import config
@@ -13,6 +14,16 @@ from pipeline.trade_portfolio_import import import_newest_trade_portfolio
 log = logging.getLogger(__name__)
 
 Sink = Callable[[str], None]
+
+_JOB_SSE_LOGGERS = [
+    "pipeline.fetch",
+    "pipeline.route_inbox",
+    "pipeline.spreadsheet_ingest",
+    "pipeline.workbook_normalize",
+    "pipeline.fingerprint",
+    "pipeline.compiler",
+    "api.categorize",
+]
 
 
 def _maybe_backup_first(options: dict[str, Any], sink: Sink) -> None:
@@ -193,9 +204,58 @@ def run_action(
         _run_categorize_from_control(sink, control_state)
         return
 
+    if action == "sheets_preview":
+        from api import sheets
+
+        snap = sheets.desktop_preview()
+        sink(json.dumps(snap, ensure_ascii=False, indent=2)[:8000])
+        if not snap.get("ok"):
+            raise RuntimeError(str(snap.get("message") or snap.get("error") or "sheets preview failed"))
+        return
+
+    if action == "sheets_push":
+        from api import sheets
+
+        force = bool(options.get("force"))
+        ok, msg, preview = sheets.desktop_push(force=force)
+        sink(msg)
+        if preview is not None:
+            sink(json.dumps(preview, ensure_ascii=False, indent=2)[:8000])
+        if not ok:
+            raise RuntimeError(msg or "sheets push failed")
+        return
+
     raise ValueError(f"unknown action: {action!r}")
 
 
 def _run_categorize_from_control(sink: Sink, control_state: Any = None) -> None:
     """Auto-assign what we can; anything left is visible at ``/categorize/`` (no blocking session)."""
     pipeline.run_auto_categorize_with_web_remainder(sink=sink)
+
+
+def start_background_job(state: Any, action: str, options: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Acquire the control job lock and run ``action`` on a non-daemon thread."""
+    from logger import attach_sink_log_handlers, detach_sink_log_handlers
+
+    ok, info = state.try_start_job(action)
+    if not ok:
+        return 409, {"ok": False, "error": info}
+    job_id = info
+
+    def worker() -> None:
+        def sink(msg: str) -> None:
+            state.log_line(msg)
+
+        err: BaseException | None = None
+        log_pairs = attach_sink_log_handlers(sink, _JOB_SSE_LOGGERS)
+        try:
+            run_action(action, options, sink=sink, control_state=state)
+        except BaseException as e:  # noqa: BLE001
+            err = e
+            state.log_line(traceback.format_exc())
+        finally:
+            detach_sink_log_handlers(log_pairs)
+            state.finish_job(err)
+
+    state.spawn_job_thread(worker, name=f"job-{job_id}")
+    return 202, {"ok": True, "job_id": job_id}
