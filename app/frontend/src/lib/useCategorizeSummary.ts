@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { fetchJson } from './api';
@@ -38,5 +39,8 @@ export function useCategorizeSummary() {
 
 export function useInvalidateCategorizeSummary() {
   const qc = useQueryClient();
-  return () => void qc.invalidateQueries({ queryKey: CATEGORIZE_SUMMARY_KEY });
+  return useCallback(
+    () => void qc.invalidateQueries({ queryKey: CATEGORIZE_SUMMARY_KEY }),
+    [qc],
+  );
 }

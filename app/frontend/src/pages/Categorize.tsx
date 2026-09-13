@@ -779,12 +779,11 @@ export default function Categorize() {
       const data = await r.json();
       if (ac.signal.aborted) return;
       setPayload(normalizeApi(data));
-      invalidateSummary();
     } catch (e) {
       if (isAbortError(e) || ac.signal.aborted) return;
       setStatus(String(e));
     }
-  }, [invalidateSummary]);
+  }, []);
 
   useEffect(() => {
     void fetchNext();
