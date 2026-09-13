@@ -1,10 +1,14 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 const PY_BACKEND = 'http://127.0.0.1:8780';
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
   server: {
     port: 5173,
     strictPort: true,
