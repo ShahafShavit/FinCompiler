@@ -9,14 +9,14 @@ melted. Normalizes known spelling variants for the deposits column.
 from __future__ import annotations
 
 import logging
-import sqlite3
+import os
 from typing import Any
 
 import pandas as pd
 
 import config
 from pipeline.compiler import parse_post_ingest_date_scalar
-from ledger import migrate_ledger_db
+from ledger import connect_ledger, migrate_ledger_db
 
 log = logging.getLogger(__name__)
 
@@ -80,8 +80,7 @@ def wide_holdings_to_long(df: pd.DataFrame) -> pd.DataFrame:
 
 def load_holdings_long_dataframe(db_path: str) -> pd.DataFrame:
     """All rows in ``holdings_balance`` (dedupe identity = ``(as_of_date, activity_type)``)."""
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path, readonly=True)
     try:
         df = pd.read_sql_query(
             "SELECT as_of_date, activity_type, balance_ils FROM holdings_balance ORDER BY as_of_date, activity_type",
@@ -95,8 +94,7 @@ def load_holdings_long_dataframe(db_path: str) -> pd.DataFrame:
 def list_holdings_activity_types(db_path: str | None = None) -> list[str]:
     """Distinct activity types in holdings_balance, sorted by name."""
     db = db_path if db_path is not None else config.ledger_db_file
-    migrate_ledger_db(db)
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db, readonly=True)
     try:
         rows = conn.execute(
             """
@@ -114,8 +112,7 @@ def list_holdings_activity_types(db_path: str | None = None) -> list[str]:
 def get_holdings_meta(db_path: str | None = None) -> dict[str, Any]:
     """Metadata snapshot for holdings page filters and stats."""
     db = db_path if db_path is not None else config.ledger_db_file
-    migrate_ledger_db(db)
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db, readonly=True)
     try:
         row = conn.execute(
             """
@@ -148,7 +145,6 @@ def query_holdings_timeline(
 ) -> pd.DataFrame:
     """Timeline rows from holdings_balance with optional date/activity filters."""
     db = db_path if db_path is not None else config.ledger_db_file
-    migrate_ledger_db(db)
 
     where_parts: list[str] = []
     params: list[Any] = []
@@ -170,7 +166,7 @@ def query_holdings_timeline(
         params.extend(normalized_activities)
     where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db, readonly=True)
     try:
         df = pd.read_sql_query(
             f"""
@@ -223,7 +219,8 @@ def get_holdings_conflicts(
 ) -> list[dict[str, Any]]:
     """Existing rows that would be overwritten by the given payload rows."""
     db = db_path if db_path is not None else config.ledger_db_file
-    migrate_ledger_db(db)
+    if not os.path.isfile(db):
+        return []
     work = normalize_holdings_rows(rows)
     if work.empty:
         return []
@@ -234,7 +231,7 @@ def get_holdings_conflicts(
     for d, a in keys:
         params.extend([d, a])
 
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db, readonly=True)
     try:
         existing = pd.read_sql_query(
             f"""
@@ -327,7 +324,7 @@ def move_holdings_date(
             "rows_moved": 0,
         }
 
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db)
     try:
         src_rows = conn.execute(
             """
@@ -536,7 +533,7 @@ def upsert_holdings_long(
         combined["balance_ils"] = pd.to_numeric(combined["balance_ils"], errors="coerce").fillna(0.0)
         combined = combined.drop_duplicates(subset=["as_of_date", "activity_type"], keep="last")
 
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         if clear_holdings_first:
@@ -584,7 +581,7 @@ def upsert_holdings_wide_to_ledger(wide_df: pd.DataFrame, db_path: str | None = 
 
 
 def verify_holdings_long(expected: pd.DataFrame, db_path: str) -> dict[str, Any]:
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path, readonly=True)
     try:
         got = pd.read_sql_query(
             "SELECT as_of_date, activity_type, balance_ils FROM holdings_balance",

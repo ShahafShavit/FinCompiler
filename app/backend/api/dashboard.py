@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import threading
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Any
@@ -23,8 +24,8 @@ import config
 from ledger import (
     LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR,
     LEDGER_SQL_TX_INCLUDED,
+    connect_ledger,
     ledger_connect_readonly,
-    migrate_ledger_db,
 )
 
 from ledger import dashboard_sql as dashboard_tx_sql
@@ -33,6 +34,7 @@ log = logging.getLogger(__name__)
 
 _DASH_CACHE_MAX = 64
 _dash_response_cache: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+_dash_cache_lock = threading.Lock()
 
 
 # --- shared helpers ---------------------------------------------------------
@@ -114,7 +116,11 @@ def _tx_conn() -> sqlite3.Connection | None:
 def _holdings_conn() -> sqlite3.Connection | None:
     if not _ledger_exists():
         return None
-    return sqlite3.connect(_ledger_path())
+    try:
+        return connect_ledger(_ledger_path(), readonly=True)
+    except Exception:  # noqa: BLE001
+        log.exception("dashboard: failed to open ledger")
+        return None
 
 
 # --- 1. summary KPIs --------------------------------------------------------
@@ -148,8 +154,6 @@ def summary() -> dict[str, Any]:
         out["kpis"] = kpis
         return out
     try:
-        migrate_ledger_db(_ledger_path())
-        conn.execute("PRAGMA foreign_keys = ON")
         # Net worth = sum of latest holdings_balance snapshot.
         latest_row = conn.execute(
             "SELECT MAX(as_of_date) FROM holdings_balance"
@@ -624,15 +628,17 @@ def handle_dashboard_request(name: str, qs: dict[str, list[str]]) -> dict[str, A
     """Dispatch with in-memory JSON cache keyed by endpoint + query + ledger ``mtime_ns``."""
     rev = _ledger_mtime_ns_for_cache()
     ckey = (str(name), _qs_cache_key(qs), rev)
-    if ckey in _dash_response_cache:
-        _dash_response_cache.move_to_end(ckey)
-        return _dash_response_cache[ckey]
+    with _dash_cache_lock:
+        if ckey in _dash_response_cache:
+            _dash_response_cache.move_to_end(ckey)
+            return _dash_response_cache[ckey]
     payload = _dispatch_dashboard_request_uncached(name, qs)
     if payload.get("ok") is True:
-        _dash_response_cache[ckey] = payload
-        _dash_response_cache.move_to_end(ckey)
-        while len(_dash_response_cache) > _DASH_CACHE_MAX:
-            _dash_response_cache.popitem(last=False)
+        with _dash_cache_lock:
+            _dash_response_cache[ckey] = payload
+            _dash_response_cache.move_to_end(ckey)
+            while len(_dash_response_cache) > _DASH_CACHE_MAX:
+                _dash_response_cache.popitem(last=False)
     return payload
 
 

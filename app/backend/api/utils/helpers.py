@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import logging
 import mimetypes
@@ -10,13 +11,22 @@ import re
 import socket
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, TypeVar
 from urllib.parse import unquote
 
 from fastapi import Depends, Request
 
 log = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+async def run_blocking(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+    """Run blocking SQLite/pandas/Sheets work off the asyncio event loop."""
+    return await asyncio.to_thread(fn, *args, **kwargs)
+
 
 # --- In-process job + SSE hub -------------------------------------------------
 

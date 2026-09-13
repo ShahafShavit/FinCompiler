@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 from typing import Any
 from urllib.parse import parse_qs
 
 import config
-from ledger import migrate_ledger_db
+from ledger import connect_ledger
 from ledger.installment_logic import (
     build_plans_payload,
     plan_section,
@@ -52,9 +51,7 @@ def list_installment_plans(qs: dict[str, list[str]] | None = None) -> tuple[int,
     q = (qs.get("q") or [""])[0].strip() or None
     as_of = (qs.get("as_of") or [""])[0].strip() or None
 
-    migrate_ledger_db(path)
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = connect_ledger(path)
     try:
         payload = build_plans_payload(
             conn, include_hidden=include_hidden, q=q, as_of=as_of
@@ -164,9 +161,7 @@ def patch_installment_plan(plan_id: str, raw: bytes) -> tuple[int, dict[str, Any
     if not os.path.isfile(path):
         return 404, {"ok": False, "error": "no_ledger", "message": "Ledger database not found"}
 
-    migrate_ledger_db(path)
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = connect_ledger(path)
     try:
         if hidden is not None or merged_into is not ... or settled is not None:
             upsert_override(

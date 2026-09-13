@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import config
+from ledger import connect_ledger
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ def ledger_file_fingerprint(db_path: str | None = None) -> dict[str, Any] | None
             h.update(chunk)
     row_count: int | None = None
     try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        conn = connect_ledger(path, readonly=True)
         try:
             row = conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()
             row_count = int(row[0]) if row else 0

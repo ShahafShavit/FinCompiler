@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 import sys
 
 _repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,7 +19,7 @@ if _repo not in sys.path:
     sys.path.insert(0, _repo)
 
 import config
-from ledger import audit_ledger_constraints, format_report
+from ledger import audit_ledger_constraints, connect_ledger, format_report
 
 
 def main() -> int:
@@ -30,9 +29,8 @@ def main() -> int:
     args = p.parse_args()
     path = args.db or config.ledger_db_file
 
-    conn = sqlite3.connect(path)
+    conn = connect_ledger(path)
     try:
-        conn.execute("PRAGMA foreign_keys = ON")
         report = audit_ledger_constraints(conn)
     finally:
         conn.close()

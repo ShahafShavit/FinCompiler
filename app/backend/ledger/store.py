@@ -74,6 +74,23 @@ def ingested_at_for_new_ledger_row() -> str:
 # otherwise interleave DROP/CREATE TRIGGER and hit "already exists" (see tr_ledger_transaction_*).
 _migrate_ledger_lock = threading.RLock()
 
+LEDGER_CONNECT_TIMEOUT_SEC = 30.0
+LEDGER_BUSY_TIMEOUT_MS = 5000
+
+
+def connect_ledger(db_path: str, *, readonly: bool = False) -> sqlite3.Connection:
+    """Open the ledger with WAL, busy_timeout, and foreign_keys (write) or mode=ro (read)."""
+    timeout = LEDGER_CONNECT_TIMEOUT_SEC
+    if readonly:
+        uri = Path(db_path).resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=timeout)
+    else:
+        conn = sqlite3.connect(str(db_path), timeout=timeout)
+        conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(f"PRAGMA busy_timeout = {int(LEDGER_BUSY_TIMEOUT_MS)}")
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
 # --- Constraint audit (read-time; ex-ledger_constraint_audit) ---
 
 
@@ -782,9 +799,8 @@ def migrate_ledger_db(db_path: str | None = None) -> None:
         raise FileNotFoundError(f"Ledger schema SQL not found: {sql_file}")
 
     with _migrate_ledger_lock:
-        conn = sqlite3.connect(path)
+        conn = connect_ledger(path)
         try:
-            conn.execute("PRAGMA foreign_keys = ON")
             current = _current_schema_version(conn)
 
             if _ledger_is_pre_v8_legacy_shape(conn) or (0 < current < 8):
@@ -948,8 +964,7 @@ CREATE TABLE IF NOT EXISTS trade_portfolio_position_multiplier (
 
 def ledger_connect_readonly(db_path: str) -> sqlite3.Connection:
     """Open the ledger database read-only (URI ``mode=ro``)."""
-    uri = Path(db_path).resolve().as_uri() + "?mode=ro"
-    return sqlite3.connect(uri, uri=True)
+    return connect_ledger(db_path, readonly=True)
 
 
 # SQL fragment: effective calendar month for dashboard / reports — valid ``statement_month`` (YYYY-MM)
@@ -987,9 +1002,8 @@ def update_category_by_fingerprint(db_path: str, fingerprint: str, category: str
     """Set ``קטגוריה`` for a row; trigger fills ``category_updated_at`` when the value changes."""
     if not fingerprint or not str(fingerprint).strip():
         return
-    migrate_ledger_db(db_path)
     cat_str = "" if category is None else str(category)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         fp = str(fingerprint).strip()
@@ -1007,8 +1021,7 @@ def update_notes_by_fingerprint(db_path: str, fingerprint: str, notes: str) -> N
     """Set ``notes`` for a row (does not change category). ``notes`` may be empty to clear."""
     if not fingerprint or not str(fingerprint).strip():
         return
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         fp = str(fingerprint).strip()
@@ -1028,9 +1041,8 @@ def update_category_and_notes_by_fingerprint(
     """Set ``קטגוריה`` and ``notes`` in one UPDATE (categorize queue save)."""
     if not fingerprint or not str(fingerprint).strip():
         return
-    migrate_ledger_db(db_path)
     cat_str = "" if category is None else str(category)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         fp = str(fingerprint).strip()
@@ -1062,8 +1074,7 @@ def update_categories_by_fingerprint_batch(
         params.append((c, f))
     if not params:
         return 0
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         sql = (
@@ -1192,7 +1203,6 @@ def patch_ledger_transaction_by_id(
 
     Returns ``{"ok": True}`` or ``{"ok": False, "error": "...", "message": "..."}``.
     """
-    migrate_ledger_db(db_path)
     if not patch:
         return {"ok": False, "error": "validation_error", "message": "patch object is empty"}
 
@@ -1221,7 +1231,7 @@ def patch_ledger_transaction_by_id(
                 "message": f"Type the phrase {LEDGER_FINGERPRINT_CONFIRM_PHRASE!r} to confirm.",
             }
 
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
@@ -1375,7 +1385,7 @@ _LEDGER_TX_READ_SQL = (
 
 def read_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
     """Read all ledger rows without running migrations (schema must already match)."""
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         df = pd.read_sql_query(_LEDGER_TX_READ_SQL, conn)
     finally:
@@ -1393,7 +1403,6 @@ def read_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
 
 def load_transactions_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
     """Return all ledger rows as a DataFrame (empty table → empty frame with expected columns)."""
-    migrate_ledger_db(db_path)
     return read_transactions_dataframe_from_ledger(db_path)
 
 
@@ -1418,8 +1427,7 @@ def apply_auto_categories_from_static_stores_sql(db_path: str) -> int:
     Only updates rows that still need a manual category (empty / awaiting) and have a
     fingerprint. One ``UPDATE`` — same outcome as scanning ``stores_df`` in Python.
     """
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         sql = f"""
@@ -1467,11 +1475,10 @@ def forward_fill_uncategorized_for_store_if_static_sql(db_path: str, store_name:
     for that store **only** where the category is still empty / ``awaiting``. Never overwrites
     an already-assigned category.
     """
-    migrate_ledger_db(db_path)
     sn = str(store_name or "").strip()
     if not sn:
         return 0
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         row = conn.execute(
@@ -1512,8 +1519,7 @@ def forward_fill_uncategorized_for_store_if_static_sql(db_path: str, store_name:
 
 def count_transactions_needing_manual_category(db_path: str) -> int:
     """Rows with empty / awaiting category and a usable fingerprint (manual categorization queue size)."""
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         n = conn.execute(
             f"""
@@ -1530,8 +1536,7 @@ def count_transactions_needing_manual_category(db_path: str) -> int:
 
 def count_ledger_transaction_rows(db_path: str) -> int:
     """Total rows in ``ledger_transaction`` (for logging / progress without loading a dataframe)."""
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         n = conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0]
     finally:
@@ -1541,8 +1546,7 @@ def count_ledger_transaction_rows(db_path: str) -> int:
 
 def load_first_transaction_needing_manual_category(db_path: str) -> pd.Series | None:
     """Next row for manual categorization (oldest effective date first)."""
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         base = _LEDGER_TX_READ_BODY.strip()
         q = f"""
@@ -1573,8 +1577,7 @@ def load_ledger_transaction_by_stable_id(db_path: str, stable_id: str) -> pd.Ser
     sid = str(stable_id or "").strip()
     if not sid:
         return None
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         base = _LEDGER_TX_READ_BODY.strip()
         q = f"""
@@ -1597,8 +1600,7 @@ def load_ledger_transaction_by_stable_id(db_path: str, stable_id: str) -> pd.Ser
 
 def load_stores_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
     """``store`` + ``store_category`` as a stores_to_categories-shaped DataFrame."""
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         df = pd.read_sql_query(
             """
@@ -1618,8 +1620,7 @@ def load_stores_dataframe_from_ledger(db_path: str) -> pd.DataFrame:
 
 def load_known_transactions_backup_from_ledger(db_path: str) -> pd.DataFrame | None:
     """Fingerprint → category hints for ``auto_categorize`` (replaces legacy CSV backup)."""
-    migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         df = pd.read_sql_query(
             f"""
@@ -1859,7 +1860,7 @@ def _simulate_null_fingerprints(
     stats = BackfillStats()
     duplicates: list[WouldDuplicateDetail] = []
 
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     conn.row_factory = sqlite3.Row
     try:
         cur = conn.execute(
@@ -1997,7 +1998,7 @@ def import_stores_to_ledger_from_dataframe(
     df = normalize_stores_to_categories_dataframe(df)
 
     if df.empty:
-        conn = sqlite3.connect(db)
+        conn = connect_ledger(db)
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             if replace:
@@ -2028,7 +2029,7 @@ def import_stores_to_ledger_from_dataframe(
 
     sc_tuples = [(str(r["store_name"]), str(r["category"])) for _, r in df.iterrows()]
 
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         if replace:
@@ -2071,7 +2072,7 @@ def sync_stores_to_ledger_from_dataframe(db_path: str, df: pd.DataFrame) -> None
     Replace ``store`` / ``store_category`` from an in-memory frame (``store_name``, ``category``, ``is_static``).
     """
     migrate_ledger_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("DELETE FROM store")
@@ -2252,7 +2253,7 @@ def upsert_compiled_dataframe_to_ledger(
             "db_path": db_path,
         }
 
-    conn = sqlite3.connect(db_path)
+    conn = connect_ledger(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executemany(_UPSERT_SQL, tuples)
@@ -2446,7 +2447,7 @@ def run_installment_statement_month_fill(
 
     migrate_ledger_db(path)
 
-    conn = sqlite3.connect(path)
+    conn = connect_ledger(path)
     conn.execute("PRAGMA foreign_keys = ON")
     rows_updated = 0
     try:
@@ -2538,16 +2539,13 @@ def run_installment_statement_month_fill(
 
 def heatmap_ledger_row_counts(db_path: str) -> dict[str, Any]:
     """Counts for heatmap source status. ``transaction_count`` is included rows; ``-1`` on query error."""
-    import sqlite3 as _sqlite3
-
     payload: dict[str, Any] = {
         "transaction_count": 0,
         "transaction_count_total_stored": 0,
         "transaction_count_excluded": 0,
     }
     try:
-        migrate_ledger_db(db_path)
-        conn = _sqlite3.connect(db_path)
+        conn = connect_ledger(db_path, readonly=True)
         try:
             total = int(conn.execute("SELECT COUNT(*) FROM ledger_transaction").fetchone()[0] or 0)
             inc = int(

@@ -7,7 +7,6 @@ import logging
 import math
 import os
 import re
-import sqlite3
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any, Callable, Optional
@@ -15,7 +14,7 @@ from typing import Any, Callable, Optional
 import pandas as pd
 
 import config
-from ledger.store import migrate_ledger_db
+from ledger.store import connect_ledger, migrate_ledger_db
 from pipeline.compiler import parse_post_ingest_date_scalar
 
 log = logging.getLogger(__name__)
@@ -354,7 +353,7 @@ def upsert_trade_portfolio_snapshot(
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """
 
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.execute(

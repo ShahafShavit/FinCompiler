@@ -29,10 +29,9 @@ def desktop_sync_sheet_status() -> list[dict[str, Any]]:
 
 def _ledger_sync_frames() -> tuple[list[str], list]:
     """Build (sheet titles, DataFrames) for Holdings wide + Totals from ``ledger_db_file``."""
-    from ledger import load_transactions_dataframe_from_ledger, migrate_ledger_db
+    from ledger import load_transactions_dataframe_from_ledger
     from pipeline.holdings_balance import holdings_long_to_wide, load_holdings_long_dataframe
 
-    migrate_ledger_db()
     db = config.ledger_db_file
     if not os.path.isfile(db):
         raise FileNotFoundError(f"Ledger database not found: {db}")

@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import parse_qs
 
 import config
-from ledger import migrate_ledger_db
+from ledger import connect_ledger
 from ledger.cash import (
     CashError,
     DENOMINATION_AGOROT,
@@ -35,9 +35,7 @@ def _ledger_path() -> str:
 
 def _connect() -> sqlite3.Connection:
     path = _ledger_path()
-    migrate_ledger_db(path)
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = connect_ledger(path)
     return conn
 
 

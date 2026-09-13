@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 from typing import Any
 
 import config
-from ledger.store import migrate_ledger_db
+from ledger.store import connect_ledger
 
 # Unit separator — unlikely in bank account or security ids; stable in URLs when encoded.
 _SERIES_SEP = "\x1f"
@@ -71,8 +70,7 @@ def get_trade_portfolio_meta(db_path: str | None = None) -> dict[str, Any]:
             "default_metric": DEFAULT_METRIC,
         }
 
-    migrate_ledger_db(db)
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db, readonly=True)
     try:
         agg = conn.execute(
             """
@@ -180,8 +178,6 @@ def query_trade_portfolio_timeseries(
             "points": [],
         }
 
-    migrate_ledger_db(db)
-
     where: list[str] = []
     params: list[Any] = []
 
@@ -236,7 +232,7 @@ def query_trade_portfolio_timeseries(
         ORDER BY p.snapshot_date, p.portfolio_account, p.security_number
     """
 
-    conn = sqlite3.connect(db)
+    conn = connect_ledger(db, readonly=True)
     try:
         rows = conn.execute(sql, params).fetchall()
     finally:

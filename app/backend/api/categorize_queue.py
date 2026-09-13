@@ -64,9 +64,7 @@ def _attach_category_columns(base: dict[str, Any]) -> dict[str, Any]:
 
 def summary() -> dict[str, Any]:
     from ledger import count_transactions_needing_manual_category
-    from ledger import migrate_ledger_db
 
-    migrate_ledger_db()
     path = config.ledger_db_file
     if not os.path.isfile(path):
         return {"open_count": 0, "compiled_exists": False}
@@ -135,9 +133,7 @@ def next_payload(*, control_state: Any = None) -> dict[str, Any]:
         from ledger import count_transactions_needing_manual_category
         from ledger import forward_fill_uncategorized_for_static_stores_sql
         from ledger import load_first_transaction_needing_manual_category
-        from ledger import migrate_ledger_db
 
-        migrate_ledger_db()
         if not os.path.isfile(config.ledger_db_file):
             return _attach_category_columns(
                 {
@@ -219,9 +215,6 @@ def respond(data: dict[str, Any], *, control_state: Any = None) -> Optional[str]
         return "prompt_id and kind required"
     with _lock:
         from ledger import load_first_transaction_needing_manual_category
-        from ledger import migrate_ledger_db
-
-        migrate_ledger_db()
 
         cf = _ledger_queue_categorize_file()
         row0 = load_first_transaction_needing_manual_category(config.ledger_db_file)
@@ -245,9 +238,6 @@ def respond(data: dict[str, Any], *, control_state: Any = None) -> Optional[str]
 
 def revise(data: dict[str, Any]) -> Optional[str]:
     with _lock:
-        from ledger import migrate_ledger_db
-
-        migrate_ledger_db()
         cf = _ledger_queue_categorize_file()
         return cf.apply_queue_revise(data)
 
@@ -274,10 +264,8 @@ def discard(data: dict[str, Any]) -> Optional[str]:
         return "prompt_id required"
     with _lock:
         from ledger import load_first_transaction_needing_manual_category
-        from ledger import migrate_ledger_db
         from ledger import patch_ledger_transaction_by_id
 
-        migrate_ledger_db()
         if not os.path.isfile(config.ledger_db_file):
             return "no ledger database"
 

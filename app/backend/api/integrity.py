@@ -12,9 +12,9 @@ import config
 from ledger import (
     LEDGER_SQL_LT_TX_INCLUDED,
     LEDGER_SQL_TX_INCLUDED,
+    connect_ledger,
     forward_fill_uncategorized_for_store_if_static_sql,
     ledger_connect_readonly,
-    migrate_ledger_db,
 )
 from ledger.top_categories import (
     build_top_categories_payload,
@@ -78,7 +78,6 @@ def build_integrity_report() -> dict[str, Any]:
     if not os.path.isfile(path):
         return {"ok": True, "ledger_exists": False, "sections": []}
 
-    migrate_ledger_db(path)
     conn = ledger_connect_readonly(path)
     try:
         sections: list[dict[str, Any]] = []
@@ -376,7 +375,6 @@ def list_stores_aggregated() -> dict[str, Any]:
     path = _ledger_path()
     if not os.path.isfile(path):
         return {"ok": True, "ledger_exists": False, "stores": []}
-    migrate_ledger_db(path)
     conn = ledger_connect_readonly(path)
     try:
         rows = _rows_from_conn(
@@ -414,7 +412,6 @@ def get_top_categories() -> dict[str, Any]:
     path = _ledger_path()
     if not os.path.isfile(path):
         return {"ok": True, "ledger_exists": False, "columns": [], "unassigned": []}
-    migrate_ledger_db(path)
     conn = ledger_connect_readonly(path)
     try:
         lay = build_top_categories_payload(conn)
@@ -437,8 +434,7 @@ def put_top_categories(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     if not os.path.isfile(path):
         return 404, {"ok": False, "error": "no_ledger", "message": "Ledger database not found"}
 
-    migrate_ledger_db(path)
-    conn = sqlite3.connect(path)
+    conn = connect_ledger(path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         ok, err = replace_top_categories_layout(conn, cols)
@@ -470,8 +466,7 @@ def rename_category(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     if not os.path.isfile(path):
         return 404, {"ok": False, "error": "no_ledger", "message": "Ledger database not found"}
 
-    migrate_ledger_db(path)
-    conn = sqlite3.connect(path)
+    conn = connect_ledger(path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         n_led = conn.execute(
@@ -546,8 +541,7 @@ def patch_store_static(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     if not os.path.isfile(path):
         return 404, {"ok": False, "error": "no_ledger", "message": "Ledger database not found"}
 
-    migrate_ledger_db(path)
-    conn = sqlite3.connect(path)
+    conn = connect_ledger(path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         row = conn.execute("SELECT 1 FROM store WHERE store_name = ?", (store_name,)).fetchone()
@@ -633,8 +627,7 @@ def patch_ledger_transaction(raw_body: bytes) -> tuple[int, dict[str, Any]]:
         path = _ledger_path()
         if not os.path.isfile(path):
             return 404, {"ok": False, "error": "no_ledger", "message": "Ledger database not found"}
-        migrate_ledger_db(path)
-        conn = sqlite3.connect(path)
+        conn = connect_ledger(path)
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             row = conn.execute(

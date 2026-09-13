@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, FastAPI, Request, Response
 
 from api import heatmap
-from api.utils import json_bytes_strict
+from api.utils import json_bytes_strict, run_blocking
 
 log = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ def register_heatmap_routes(app: FastAPI) -> None:
     r = APIRouter()
 
     @r.get("/heatmap/api/data", include_in_schema=False)
-    async def heatmap_data() -> Response:
+    def heatmap_data() -> Response:
         try:
             snap = heatmap.api_snapshot()
             body = json_bytes_strict(snap)
@@ -34,7 +34,7 @@ def register_heatmap_routes(app: FastAPI) -> None:
         return Response(content=body, media_type="application/json; charset=utf-8")
 
     @r.get("/heatmap/api/detail", include_in_schema=False)
-    async def heatmap_detail(request: Request) -> Response:
+    def heatmap_detail(request: Request) -> Response:
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(str(request.url))
@@ -77,7 +77,7 @@ def register_heatmap_routes(app: FastAPI) -> None:
     async def heatmap_tx_patch(request: Request) -> Response:
         raw = await request.body()
         try:
-            status, payload = heatmap.patch_ledger_transaction(raw)
+            status, payload = await run_blocking(heatmap.patch_ledger_transaction, raw)
             body = json_bytes_strict(payload)
         except Exception:  # noqa: BLE001
             log.exception("PATCH /heatmap/api/transaction failed")

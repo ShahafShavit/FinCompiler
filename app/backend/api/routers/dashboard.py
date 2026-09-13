@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, FastAPI, Request, Response
 
 from api import dashboard, installment_plans, integrity, ledger_search
-from api.utils import json_bytes_strict
+from api.utils import json_bytes_strict, run_blocking
 
 log = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
     r = APIRouter()
 
     @r.get("/api/ledger-meta", include_in_schema=False)
-    async def ledger_meta() -> Response:
+    def ledger_meta() -> Response:
         try:
             payload = dashboard.ledger_meta()
         except Exception:  # noqa: BLE001
@@ -28,7 +28,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
         )
 
     @r.get("/api/ledger/search", include_in_schema=False)
-    async def ledger_search_api(request: Request) -> Response:
+    def ledger_search_api(request: Request) -> Response:
         try:
             code, payload = ledger_search.handle_search_request(str(request.url.query))
         except Exception:  # noqa: BLE001
@@ -53,7 +53,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
     async def ledger_bulk_patch_api(request: Request) -> Response:
         raw = await request.body()
         try:
-            code, payload = ledger_search.handle_bulk_patch(raw)
+            code, payload = await run_blocking(ledger_search.handle_bulk_patch, raw)
         except Exception:  # noqa: BLE001
             log.exception("POST /api/ledger/bulk-patch failed")
             code, payload = 500, {
@@ -68,7 +68,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
         )
 
     @r.get("/api/installment-plans", include_in_schema=False)
-    async def installment_plans_list(request: Request) -> Response:
+    def installment_plans_list(request: Request) -> Response:
         try:
             code, payload = installment_plans.handle_list_request(str(request.url.query))
         except Exception:  # noqa: BLE001
@@ -92,7 +92,9 @@ def register_dashboard_routes(app: FastAPI) -> None:
         try:
             from urllib.parse import unquote
 
-            code, payload = installment_plans.patch_installment_plan(unquote(plan_id), raw)
+            code, payload = await run_blocking(
+                installment_plans.patch_installment_plan, unquote(plan_id), raw
+            )
         except Exception:  # noqa: BLE001
             log.exception("PATCH /api/installment-plans failed")
             code, payload = 500, {
@@ -107,7 +109,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
         )
 
     @r.get("/api/dashboard/{name:path}", include_in_schema=False)
-    async def dashboard_named(name: str, request: Request) -> Response:
+    def dashboard_named(name: str, request: Request) -> Response:
         from urllib.parse import parse_qs
 
         qs = parse_qs(str(request.url.query), keep_blank_values=False)
@@ -127,7 +129,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
         )
 
     @r.get("/api/integrity/report", include_in_schema=False)
-    async def integrity_report() -> Response:
+    def integrity_report() -> Response:
         try:
             payload = integrity.build_integrity_report()
             body = json_bytes_strict(payload)
@@ -144,7 +146,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
         return Response(content=body, media_type="application/json; charset=utf-8")
 
     @r.get("/api/integrity/divergence", include_in_schema=False)
-    async def integrity_divergence() -> Response:
+    def integrity_divergence() -> Response:
         try:
             payload = integrity.divergence_status()
             body = json_bytes_strict(payload)
@@ -160,7 +162,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
         return Response(content=body, media_type="application/json; charset=utf-8")
 
     @r.get("/api/integrity/stores", include_in_schema=False)
-    async def integrity_stores() -> Response:
+    def integrity_stores() -> Response:
         try:
             payload = integrity.list_stores_aggregated()
             body = json_bytes_strict(payload)
@@ -177,7 +179,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
         return Response(content=body, media_type="application/json; charset=utf-8")
 
     @r.get("/api/integrity/top-categories", include_in_schema=False)
-    async def integrity_top_categories_get() -> Response:
+    def integrity_top_categories_get() -> Response:
         try:
             payload = integrity.get_top_categories()
             body = json_bytes_strict(payload)
@@ -198,7 +200,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
     async def integrity_top_categories_put(request: Request) -> Response:
         raw = await request.body()
         try:
-            status, payload = integrity.put_top_categories(raw)
+            status, payload = await run_blocking(integrity.put_top_categories, raw)
             body = json_bytes_strict(payload)
         except Exception:  # noqa: BLE001
             log.exception("PUT /api/integrity/top-categories failed")
@@ -216,7 +218,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
     async def integrity_rename(request: Request) -> Response:
         raw = await request.body()
         try:
-            status, payload = integrity.rename_category(raw)
+            status, payload = await run_blocking(integrity.rename_category, raw)
             body = json_bytes_strict(payload)
         except Exception:  # noqa: BLE001
             log.exception("POST /api/integrity/rename-category failed")
@@ -234,7 +236,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
     async def integrity_ledger_tx(request: Request) -> Response:
         raw = await request.body()
         try:
-            status, payload = integrity.patch_ledger_transaction(raw)
+            status, payload = await run_blocking(integrity.patch_ledger_transaction, raw)
             body = json_bytes_strict(payload)
         except Exception:  # noqa: BLE001
             log.exception("PATCH /api/integrity/ledger-tx failed")
@@ -252,7 +254,7 @@ def register_dashboard_routes(app: FastAPI) -> None:
     async def integrity_store_static(request: Request) -> Response:
         raw = await request.body()
         try:
-            status, payload = integrity.patch_store_static(raw)
+            status, payload = await run_blocking(integrity.patch_store_static, raw)
             body = json_bytes_strict(payload)
         except Exception:  # noqa: BLE001
             log.exception("PATCH /api/integrity/store-static failed")

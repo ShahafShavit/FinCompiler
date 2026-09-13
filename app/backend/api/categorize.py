@@ -456,9 +456,7 @@ class CategorizeFile:
         self._io_lock = threading.Lock()
 
         from ledger import load_transactions_dataframe_from_ledger
-        from ledger import migrate_ledger_db
 
-        migrate_ledger_db(db)
         self.file_path = db
         self.file_name = os.path.basename(db)
         if materialize_transactions:

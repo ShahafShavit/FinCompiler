@@ -38,7 +38,7 @@ def register_pipeline_routes(app: FastAPI) -> None:
     r = APIRouter()
 
     @r.get("/api/status", include_in_schema=False)
-    async def api_status(state: StateDep) -> JSONResponse:
+    def api_status(state: StateDep) -> JSONResponse:
         return JSONResponse(
             {
                 "running": state.running,

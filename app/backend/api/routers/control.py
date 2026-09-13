@@ -21,6 +21,7 @@ from api.utils import (
     content_type_for,
     json_bytes_strict,
     normalize_http_path,
+    run_blocking,
     safe_subpath,
     spa_assets_dir,
     spa_dist_dir,
@@ -58,19 +59,19 @@ def register_routes(app: FastAPI) -> None:
 
     @r.get("/categorize", include_in_schema=False)
     @r.get("/categorizer", include_in_schema=False)
-    async def redirect_categorize() -> RedirectResponse:
+    def redirect_categorize() -> RedirectResponse:
         return RedirectResponse("/categorize/", status_code=302)
 
     @r.get("/holdings", include_in_schema=False)
-    async def redirect_holdings() -> RedirectResponse:
+    def redirect_holdings() -> RedirectResponse:
         return RedirectResponse("/holdings/", status_code=302)
 
     @r.get("/portfolio", include_in_schema=False)
-    async def redirect_portfolio() -> RedirectResponse:
+    def redirect_portfolio() -> RedirectResponse:
         return RedirectResponse("/portfolio/", status_code=302)
 
     @r.get("/api/holdings/meta", include_in_schema=False)
-    async def holdings_meta() -> Response:
+    def holdings_meta() -> Response:
         from pipeline.holdings_balance import get_holdings_meta
 
         return Response(
@@ -79,7 +80,7 @@ def register_routes(app: FastAPI) -> None:
         )
 
     @r.get("/api/holdings/timeline", include_in_schema=False)
-    async def holdings_timeline(request: Request) -> Response:
+    def holdings_timeline(request: Request) -> Response:
         from urllib.parse import parse_qs, urlparse
 
         from pipeline.holdings_balance import query_holdings_timeline
@@ -111,7 +112,7 @@ def register_routes(app: FastAPI) -> None:
             )
 
     @r.get("/api/portfolio/meta", include_in_schema=False)
-    async def portfolio_meta() -> Response:
+    def portfolio_meta() -> Response:
         from pipeline.trade_portfolio_queries import get_trade_portfolio_meta
 
         try:
@@ -131,7 +132,7 @@ def register_routes(app: FastAPI) -> None:
         )
 
     @r.get("/api/portfolio/timeseries", include_in_schema=False)
-    async def portfolio_timeseries(request: Request) -> Response:
+    def portfolio_timeseries(request: Request) -> Response:
         from urllib.parse import parse_qs, urlparse
 
         from pipeline.trade_portfolio_queries import query_trade_portfolio_timeseries
@@ -211,7 +212,7 @@ def register_routes(app: FastAPI) -> None:
             )
         rows = data.get("rows") if isinstance(data.get("rows"), list) else []
         try:
-            conflicts = get_holdings_conflicts(rows, config.ledger_db_file)
+            conflicts = await run_blocking(get_holdings_conflicts, rows, config.ledger_db_file)
         except Exception as e:  # noqa: BLE001
             return Response(
                 content=json_bytes_strict(
@@ -244,7 +245,12 @@ def register_routes(app: FastAPI) -> None:
         rows = data.get("rows") if isinstance(data.get("rows"), list) else []
         overwrite = bool(data.get("overwrite_conflicts"))
         try:
-            out = upsert_holdings_rows(rows, config.ledger_db_file, overwrite_conflicts=overwrite)
+            out = await run_blocking(
+                upsert_holdings_rows,
+                rows,
+                config.ledger_db_file,
+                overwrite_conflicts=overwrite,
+            )
         except Exception as e:  # noqa: BLE001
             return Response(
                 content=json_bytes_strict(
@@ -278,7 +284,8 @@ def register_routes(app: FastAPI) -> None:
         target_date = (data or {}).get("target_date")
         overwrite = bool((data or {}).get("overwrite_conflicts"))
         try:
-            out = move_holdings_date(
+            out = await run_blocking(
+                move_holdings_date,
                 source_date,
                 target_date,
                 config.ledger_db_file,
@@ -300,7 +307,7 @@ def register_routes(app: FastAPI) -> None:
         )
 
     @r.get("/assets/{path:path}", include_in_schema=False)
-    async def spa_assets(path: str) -> Response:
+    def spa_assets(path: str) -> Response:
         root = spa_assets_dir()
         target = safe_subpath(root, path)
         if target is None or not target.is_file():
@@ -312,12 +319,12 @@ def register_routes(app: FastAPI) -> None:
         )
 
     @r.get("/", include_in_schema=False)
-    async def spa_root() -> Response:
+    def spa_root() -> Response:
         return _spa_index_response()
 
     @r.get("/vite.svg", include_in_schema=False)
     @r.get("/favicon.ico", include_in_schema=False)
-    async def spa_root_icons(request: Request) -> Response:
+    def spa_root_icons(request: Request) -> Response:
         p = normalize_http_path(request.url.path)
         target = spa_dist_dir() / p.lstrip("/")
         if target.is_file():
@@ -329,7 +336,7 @@ def register_routes(app: FastAPI) -> None:
         return Response(content=b"", status_code=404, media_type="image/x-icon")
 
     @r.get("/{path:path}", include_in_schema=False)
-    async def spa_shell_or_404(request: Request, path: str) -> Response:
+    def spa_shell_or_404(request: Request, path: str) -> Response:
         p = normalize_http_path("/" + path if path else "/")
         if p in SPA_ROUTES or p == "/index.html":
             return _spa_index_response()

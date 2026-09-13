@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal
@@ -24,12 +25,14 @@ log = logging.getLogger(__name__)
 ReportType = Literal["expense", "income", "net"]
 
 _bundle_cache: dict[str, Any] = {"path": "", "mtime": 0.0, "bundle": None}
+_bundle_cache_lock = threading.Lock()
 
 
 def invalidate_bundle_cache() -> None:
-    _bundle_cache["path"] = ""
-    _bundle_cache["mtime"] = 0.0
-    _bundle_cache["bundle"] = None
+    with _bundle_cache_lock:
+        _bundle_cache["path"] = ""
+        _bundle_cache["mtime"] = 0.0
+        _bundle_cache["bundle"] = None
 
 
 # Heatmap-only: normalize mixed sheet/CSV date strings for bucketing (ISO YYYY-MM-DD first,
@@ -533,8 +536,9 @@ def get_bundle() -> HeatmapBundle | None:
     except OSError:
         return None
     c = _bundle_cache
-    if c["path"] == db and c["mtime"] == st.st_mtime and c["bundle"] is not None:
-        return c["bundle"]
+    with _bundle_cache_lock:
+        if c["path"] == db and c["mtime"] == st.st_mtime and c["bundle"] is not None:
+            return c["bundle"]
     from ledger.heatmap_sql import fetch_month_category_sums
 
     try:
@@ -550,9 +554,10 @@ def get_bundle() -> HeatmapBundle | None:
     if bundle is None:
         log.warning("heatmap: ledger empty or no amounts")
         return None
-    c["path"] = db
-    c["mtime"] = st.st_mtime
-    c["bundle"] = bundle
+    with _bundle_cache_lock:
+        c["path"] = db
+        c["mtime"] = st.st_mtime
+        c["bundle"] = bundle
     return bundle
 
 
