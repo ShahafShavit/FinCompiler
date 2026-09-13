@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import PageShell from '../components/PageShell';
 import { fetchJson, postJson, putJson } from '../lib/api';
@@ -107,16 +107,19 @@ export default function Settings() {
   const [dropRulesErr, setDropRulesErr] = useState<string | null>(null);
   const [dropRulesMsg, setDropRulesMsg] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setErr(null);
     setLoading(true);
-    const ctrl = new AbortController();
-    const t = window.setTimeout(() => ctrl.abort(), 20_000);
+    const timeout = new AbortController();
+    const t = window.setTimeout(() => timeout.abort(), 20_000);
+    const onAbort = () => timeout.abort();
+    signal?.addEventListener('abort', onAbort);
     try {
       const r = await fetchJson<ProvidersApi>('/api/providers-config', {
         cache: 'no-store',
-        signal: ctrl.signal,
+        signal: timeout.signal,
       });
+      if (signal?.aborted) return;
       if (!r.ok) {
         const hint =
           r.status === 404
@@ -153,8 +156,9 @@ export default function Settings() {
       setDropRulesMsg(null);
       const dr = await fetchJson<Record<string, unknown>>('/api/transaction-drop-rules', {
         cache: 'no-store',
-        signal: ctrl.signal,
+        signal: timeout.signal,
       });
+      if (signal?.aborted) return;
       if (dr.ok && dr.data && typeof dr.data === 'object') {
         const doc = dr.data as Record<string, unknown>;
         const next = rowsFromDropRulesApi(doc);
@@ -174,6 +178,7 @@ export default function Settings() {
         );
       }
     } catch (e) {
+      if (signal?.aborted) return;
       if (e instanceof Error && e.name === 'AbortError') {
         setErr(
           'Request timed out. If you use the Vite dev server (port 5173), ensure python -m api.main is running on 8780.',
@@ -183,12 +188,15 @@ export default function Settings() {
       }
     } finally {
       window.clearTimeout(t);
-      setLoading(false);
+      signal?.removeEventListener('abort', onAbort);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => ac.abort();
   }, [load]);
 
   async function save() {
