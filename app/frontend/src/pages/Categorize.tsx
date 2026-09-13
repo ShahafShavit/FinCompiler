@@ -4,6 +4,7 @@ import PageShell from '../components/PageShell';
 import CashRegister from '../components/CashRegister';
 import { fetchJson, postJson } from '../lib/api';
 import { he } from '../lib/he';
+import { acquireLock, releaseLock } from '../lib/saveLock';
 import { useInvalidateCategorizeSummary } from '../lib/useCategorizeSummary';
 
 import './Categorize.css';
@@ -762,6 +763,8 @@ export default function Categorize() {
   const [mainCustom, setMainCustom] = useState('');
   const [mainNotes, setMainNotes] = useState('');
   const [mainIsStatic, setMainIsStatic] = useState<0 | 1 | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const fetchNext = useCallback(async () => {
     try {
@@ -798,6 +801,8 @@ export default function Categorize() {
 
   const submit = useCallback(
     async (body: Record<string, unknown>) => {
+      if (!acquireLock(savingRef)) return;
+      setSaving(true);
       setStatus('Saving…');
       scrollCategorizePageToTop();
       try {
@@ -808,12 +813,14 @@ export default function Categorize() {
         });
         if (!r.ok) throw new Error((r.data as { error?: string })?.error || r.status.toString());
         setHoveredCategory(null);
-        setPayload((prev) => ({ ...prev, pending: { kind: 'idle' } }));
         setStatus('Saved.');
         invalidateSummary();
         await fetchNext();
       } catch (e) {
         setStatus(`Error: ${e}`);
+      } finally {
+        releaseLock(savingRef);
+        setSaving(false);
       }
     },
     [fetchNext, invalidateSummary],
@@ -868,6 +875,7 @@ export default function Categorize() {
   };
 
   const trySaveMain = useCallback(() => {
+    if (savingRef.current) return;
     if (!p || p.kind === 'idle') return;
     if (p.kind === 'fluid') {
       const cat = resolveCategory(mainCategory, mainCustom);
@@ -1034,6 +1042,7 @@ export default function Categorize() {
                 <button
                   type="button"
                   className="categorize-btn-save"
+                  disabled={saving}
                   onClick={() => trySaveMain()}
                 >
                   {he.categorize.save}
@@ -1064,6 +1073,7 @@ export default function Categorize() {
               <button
                 type="button"
                 className="secondary"
+                disabled={saving}
                 onClick={() =>
                   void submit({
                     kind: 'resolve_static',
@@ -1077,6 +1087,7 @@ export default function Categorize() {
               </button>
               <button
                 type="button"
+                disabled={saving}
                 onClick={() =>
                   void submit({
                     kind: 'resolve_static',
@@ -1132,6 +1143,7 @@ export default function Categorize() {
                 <button
                   type="button"
                   className="categorize-btn-save"
+                  disabled={saving}
                   onClick={() => trySaveMain()}
                 >
                   {he.categorize.save}
