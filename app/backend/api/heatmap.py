@@ -616,7 +616,7 @@ def _view_payload(
     }
 
 
-def api_snapshot() -> dict[str, Any]:
+def api_snapshot(report_type: str | None = None) -> dict[str, Any]:
     bundle = get_bundle()
     source_status = _ledger_heatmap_status()
     if bundle is None:
@@ -677,6 +677,10 @@ def api_snapshot() -> dict[str, Any]:
             "byMonth": _stats_df_to_tabular(bundle.net_summary["by_month"], "חודש"),
         },
     }
+    wanted = (report_type or "").strip().lower()
+    if wanted in views:
+        views = {wanted: views[wanted]}
+        stats_tables = {wanted: stats_tables[wanted]}
     return {
         "ok": True,
         "error": None,
@@ -865,6 +869,7 @@ def _detail_rows_to_frame(rows: list[dict[str, Any]], visible: list[str]) -> pd.
     if not rows:
         return pd.DataFrame(columns=["id"] + visible)
     df = pd.DataFrame(rows)
+    df = df.drop(columns=["_detail_truncated", "_detail_limit"], errors="ignore")
     cols = _detail_column_order(df, visible)
     return df.loc[:, [c for c in cols if c in df.columns]]
 
@@ -1132,10 +1137,24 @@ def detail_api_payload(qs: dict[str, list[str]]) -> tuple[int, dict[str, Any]]:
         return 404, {"ok": False, "error": "not_found", "message": "No matching rows."}
     title, frames = built
     sections: list[dict[str, Any]] = []
+    truncated = False
+    detail_limit = 1000
     for sub, frame in frames:
+        if "_detail_truncated" in frame.columns:
+            if frame["_detail_truncated"].any():
+                truncated = True
+            frame = frame.drop(columns=["_detail_truncated", "_detail_limit"], errors="ignore")
+        if len(frame.index) >= detail_limit:
+            truncated = True
         cols, rows = _df_to_json_detail_table(frame)
         sections.append({"subtitle": sub, "columns": cols, "rows": rows})
-    return 200, {"ok": True, "title": title, "sections": sections}
+    return 200, {
+        "ok": True,
+        "title": title,
+        "sections": sections,
+        "truncated": truncated,
+        "detail_limit": detail_limit,
+    }
 
 
 def _ledger_patch_http_status(result: dict[str, Any]) -> int:

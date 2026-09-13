@@ -43,6 +43,8 @@ type HeatmapDetailResponse = {
   sections?: HeatmapDetailSection[];
   error?: string;
   message?: string;
+  truncated?: boolean;
+  detail_limit?: number;
 };
 
 type PatchErrPayload = {
@@ -453,6 +455,9 @@ export default function HeatmapDetail() {
         <p className="hm-detail-empty">{he.heatmap.loading}</p>
       ) : (
         <>
+          {data.truncated ? (
+            <p className="hm-detail-empty">{he.heatmap.detailTruncated}</p>
+          ) : null}
           {(data.sections ?? []).map((sec, si) => {
             const cols = visibleColumns(sec.columns);
             return (

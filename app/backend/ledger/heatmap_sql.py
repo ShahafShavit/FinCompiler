@@ -203,11 +203,18 @@ def fetch_detail_rows(
     FROM ledger_transaction
     WHERE {where}
     ORDER BY ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}) DESC, "תאריך" DESC, id DESC
+    LIMIT ?
     """
+    cap = 1000
     conn = ledger_connect_readonly(db_path)
     try:
-        cur = conn.execute(sql, params)
+        cur = conn.execute(sql, [*params, cap + 1])
         cols = [d[0] for d in cur.description]
-        return [{cols[i]: row[i] for i in range(len(cols))} for row in cur.fetchall()]
+        fetched = [{cols[i]: row[i] for i in range(len(cols))} for row in cur.fetchall()]
     finally:
         conn.close()
+    truncated = len(fetched) > cap
+    rows = fetched[:cap]
+    if rows:
+        rows[0] = {**rows[0], "_detail_truncated": truncated, "_detail_limit": cap}
+    return rows

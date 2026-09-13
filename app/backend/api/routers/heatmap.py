@@ -16,9 +16,13 @@ def register_heatmap_routes(app: FastAPI) -> None:
     r = APIRouter()
 
     @r.get("/heatmap/api/data", include_in_schema=False)
-    def heatmap_data() -> Response:
+    def heatmap_data(request: Request) -> Response:
+        from urllib.parse import parse_qs, urlparse
+
+        qs = parse_qs(urlparse(str(request.url)).query, keep_blank_values=False)
+        report_type = (qs.get("type") or [None])[0]
         try:
-            snap = heatmap.api_snapshot()
+            snap = heatmap.api_snapshot(report_type)
             body = json_bytes_strict(snap)
         except Exception:  # noqa: BLE001
             log.exception("GET /heatmap/api/data failed")

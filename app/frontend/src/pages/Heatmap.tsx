@@ -380,11 +380,6 @@ function HeatmapGrid({
                     showTipDelayed({ kind: 'col', c, x: e.clientX, y: e.clientY })
                   }
                   onMouseLeave={hideTip}
-                  onMouseMove={(e) => {
-                    if (tip?.kind === 'col' && tip.c === c) {
-                      setTip({ kind: 'col', c, x: e.clientX, y: e.clientY });
-                    }
-                  }}
                 >
                   <div className="colsum-wrap">
                     <div>
@@ -493,17 +488,6 @@ function HeatmapGrid({
                         })
                       }
                       onMouseLeave={hideTip}
-                      onMouseMove={(e) => {
-                        if (tip?.kind === 'cell' && tip.r === i && tip.c === j) {
-                          setTip({
-                            kind: 'cell',
-                            r: i,
-                            c: j,
-                            x: e.clientX,
-                            y: e.clientY,
-                          });
-                        }
-                      }}
                     >
                       {lab}
                     </td>
@@ -552,6 +536,8 @@ export default function Heatmap() {
   const [catQuery, setCatQuery] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
   const catSearchRef = useRef<HTMLInputElement>(null);
+  const reportTypeRef = useRef(prefs.reportType);
+  reportTypeRef.current = prefs.reportType;
 
   const updatePrefs = useCallback((patch: Partial<HeatmapPrefs> | ((p: HeatmapPrefs) => HeatmapPrefs)) => {
     setPrefs((prev) => {
@@ -561,18 +547,31 @@ export default function Heatmap() {
     });
   }, []);
 
-  const loadSnapshot = useCallback(async () => {
-    setRefreshStatus(he.heatmap.loading);
+  const loadSnapshot = useCallback(async (type?: ReportType, quiet = false) => {
+    const reportType = type ?? reportTypeRef.current;
+    if (!quiet) setRefreshStatus(he.heatmap.loading);
     try {
-      const r = await fetchJson<HeatmapSnapshot>('/heatmap/api/data', { cache: 'no-store' });
+      const r = await fetchJson<HeatmapSnapshot>(`/heatmap/api/data?type=${reportType}`, {
+        cache: 'no-store',
+      });
       const data = r.data;
-      setSnapshot(data);
+      setSnapshot((prev) => {
+        if (!data.ok) return prev ?? data;
+        if (!prev?.ok) return data;
+        return {
+          ...data,
+          views: { ...prev.views, ...data.views },
+        };
+      });
       const ledgerExists = data.sourceStatus?.ledger_exists !== false;
       if (!data.ok) {
-        setErr(data.message || 'טעינת נתונים נכשלה');
-        setRefreshStatus(!ledgerExists ? he.heatmap.noLedger : '');
+        if (!quiet) {
+          setErr(data.message || 'טעינת נתונים נכשלה');
+          setRefreshStatus(!ledgerExists ? he.heatmap.noLedger : '');
+        }
         return;
       }
+      if (quiet) return;
       setErr('');
       const st = data.sourceStatus || {};
       const cnt =
@@ -583,6 +582,7 @@ export default function Heatmap() {
         `${he.heatmap.ledger}: ${(st.ledger_path || data.source || '').replace(/\\/g, '/')}${cnt}`,
       );
     } catch (e) {
+      if (quiet) return;
       setErr('שגיאת רשת: ' + (e instanceof Error ? e.message : String(e)));
       setRefreshStatus('');
     }
@@ -591,6 +591,15 @@ export default function Heatmap() {
   useEffect(() => {
     void loadSnapshot();
   }, [loadSnapshot]);
+
+  useEffect(() => {
+    if (!snapshot?.ok) return;
+    for (const t of VIEW_TABS) {
+      if (!snapshot.views?.[t.key]) {
+        void loadSnapshot(t.key, true);
+      }
+    }
+  }, [snapshot, loadSnapshot]);
 
   useEffect(() => {
     const root = document.getElementById('app-shell');
@@ -934,7 +943,10 @@ export default function Heatmap() {
             key={t.key}
             type="button"
             className={prefs.reportType === t.key ? 'active' : ''}
-            onClick={() => updatePrefs({ reportType: t.key })}
+            onClick={() => {
+              updatePrefs({ reportType: t.key });
+              if (!snapshot?.views?.[t.key]) void loadSnapshot(t.key, true);
+            }}
           >
             {t.label}
           </button>

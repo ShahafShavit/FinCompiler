@@ -285,6 +285,7 @@ export const he = {
     noLedger: 'אין ledger.sqlite — הריצו עיבוד קודם.',
     updated: 'עודכן.',
     clickHint: 'לחץ על תא לפירוט',
+    detailTruncated: 'מוצגות 1,000 השורות הראשונות. פתחו את הקטלוג לשאר.',
     back: 'חזרה',
     noParams: 'אין פרמטרי פירוט בכתובת.',
     corner: 'חודש \\ קטגוריה',

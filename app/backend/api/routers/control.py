@@ -315,7 +315,7 @@ def register_routes(app: FastAPI) -> None:
         return Response(
             content=target.read_bytes(),
             media_type=content_type_for(target),
-            headers={"Cache-Control": "no-store"},
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
         )
 
     @r.get("/", include_in_schema=False)
