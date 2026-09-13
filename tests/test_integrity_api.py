@@ -65,6 +65,46 @@ class IntegrityApiTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_rename_category_keeps_destination_layout(self) -> None:
+        from api import integrity
+
+        db = self._fresh_db()
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute(
+                """
+                INSERT INTO ledger_transaction (
+                  "תאריך", "בחובה", "בזכות", "מקור עסקה", "fingerprint", ingested_at, "קטגוריה"
+                ) VALUES ('2024-06-01', 10, 0, 'PayA', 'fp-a', '2024-06-01', 'FromCat')
+                """
+            )
+            conn.execute(
+                "INSERT INTO top_category_column (sort_order, top_name) VALUES (0, 'Col')"
+            )
+            conn.execute(
+                """
+                INSERT INTO top_categories (top_name, sort_order, sub_category)
+                VALUES ('Col', 0, 'ToCat'), ('Col', 1, 'FromCat')
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        status, payload = integrity.rename_category(
+            json.dumps({"from": "FromCat", "to": "ToCat", "dry_run": False}).encode("utf-8")
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload.get("rows_updated", {}).get("top_categories_kept"), 1)
+        conn = sqlite3.connect(db)
+        try:
+            rows = conn.execute(
+                "SELECT sub_category, sort_order FROM top_categories ORDER BY sort_order"
+            ).fetchall()
+            self.assertEqual(rows, [("ToCat", 0)])
+        finally:
+            conn.close()
+
     def test_patch_store_static_rejects_multiple_categories(self) -> None:
         from api import integrity
 

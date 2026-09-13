@@ -496,11 +496,21 @@ def rename_category(raw_body: bytes) -> tuple[int, dict[str, Any]]:
             }
         conn.execute('UPDATE ledger_transaction SET "קטגוריה" = ? WHERE "קטגוריה" = ?', (to_cat, from_cat))
         conn.execute("UPDATE store_category SET category = ? WHERE category = ?", (to_cat, from_cat))
-        conn.execute("DELETE FROM top_categories WHERE sub_category = ?", (to_cat,))
-        conn.execute(
-            "UPDATE top_categories SET sub_category = ? WHERE sub_category = ?",
-            (to_cat, from_cat),
-        )
+        to_layout = conn.execute(
+            "SELECT 1 FROM top_categories WHERE sub_category = ? LIMIT 1",
+            (to_cat,),
+        ).fetchone()
+        layout_moved = 0
+        layout_kept = 0
+        if to_layout:
+            conn.execute("DELETE FROM top_categories WHERE sub_category = ?", (from_cat,))
+            layout_kept = 1
+        else:
+            cur = conn.execute(
+                "UPDATE top_categories SET sub_category = ? WHERE sub_category = ?",
+                (to_cat, from_cat),
+            )
+            layout_moved = int(cur.rowcount or 0)
         conn.commit()
         try:
             from api import heatmap as _heatmap_mod
@@ -513,7 +523,8 @@ def rename_category(raw_body: bytes) -> tuple[int, dict[str, Any]]:
             "rows_updated": {
                 "ledger_transaction": int(n_led),
                 "store_category": int(n_sc),
-                "top_categories": n_top,
+                "top_categories_moved": layout_moved,
+                "top_categories_kept": layout_kept,
             },
         }
     finally:
