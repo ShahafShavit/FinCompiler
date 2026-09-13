@@ -34,9 +34,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
         <PageShell title={he.app.renderError} width="narrow">
           <div className="card eb-wrap">
             <p className="banner banner--err" role="alert">
-              {this.state.error.name}: {this.state.error.message}
+              {he.app.renderError}
             </p>
-            <pre>{this.state.error.stack}</pre>
             <button
               type="button"
               onClick={() => {
