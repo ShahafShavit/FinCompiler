@@ -184,6 +184,23 @@ class LedgerSearchTests(unittest.TestCase):
         self.assertEqual(len(payload["rows"]), 2)
         self.assertEqual({r["fingerprint"] for r in payload["rows"]}, {"fp_a", "fp_b"})
 
+    def test_ids_filter_respects_limit_and_offset(self) -> None:
+        from api import ledger_search
+
+        db = self._fresh_db()
+        ids = [
+            self._insert(db, date=f"2024-01-{i:02d}", debit=10, source="A", fingerprint=f"fp_{i}")
+            for i in range(1, 6)
+        ]
+        code, payload = ledger_search.search_ledger(
+            {"ids": [",".join(str(i) for i in ids)], "limit": ["2"], "offset": ["2"]}
+        )
+        self.assertEqual(code, 200)
+        self.assertEqual(payload["total"], 5)
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["offset"], 2)
+        self.assertEqual(len(payload["rows"]), 2)
+
     def test_filters_combine_with_and(self) -> None:
         from api import ledger_search
 

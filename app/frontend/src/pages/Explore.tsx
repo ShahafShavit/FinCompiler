@@ -3,11 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 
 import PageShell from '../components/PageShell';
 import { fetchJson, formatMoney, patchJson, postJson } from '../lib/api';
+import { explorePager, exploreQueryLimit } from '../lib/explorePager';
 import { he } from '../lib/he';
 
 import './Explore.css';
 
-const PAGE_SIZE = 50;
 const PRESETS_KEY = 'fincompiler.explore.presets';
 
 type SavedPreset = { name: string; query: string };
@@ -184,11 +184,7 @@ export default function Explore() {
 
   const apiQuery = useMemo(() => {
     const sp = filtersToSearchParams(filters);
-    const idCount = filters.ids
-      .split(/[,;\s]+/)
-      .filter((p) => /^\d+$/.test(p)).length;
-    const pageSize = idCount > 0 ? Math.min(Math.max(idCount, PAGE_SIZE), 2000) : PAGE_SIZE;
-    sp.set('limit', String(pageSize));
+    sp.set('limit', String(exploreQueryLimit()));
     if (!sp.has('offset')) sp.set('offset', '0');
     return sp.toString();
   }, [filters]);
@@ -333,10 +329,8 @@ export default function Explore() {
   const total = data?.total ?? 0;
   const offset = filters.offset;
   const cols = visibleColumns(data?.columns || []);
-  const page = Math.floor(offset / PAGE_SIZE) + 1;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const canPrev = offset > 0;
-  const canNext = offset + PAGE_SIZE < total;
+  const pager = explorePager(offset, total, data?.limit ?? exploreQueryLimit());
+  const { page, pageCount, canPrev, canNext, pageSize } = pager;
 
   const pageIds = useMemo(() => {
     const out: number[] = [];
@@ -541,7 +535,7 @@ export default function Explore() {
                 type="button"
                 className="secondary"
                 disabled={!canPrev || loading}
-                onClick={() => patchFilters({ offset: Math.max(0, offset - PAGE_SIZE) }, false)}
+                onClick={() => patchFilters({ offset: Math.max(0, offset - pageSize) }, false)}
               >
                 {he.explore.prev}
               </button>
@@ -549,7 +543,7 @@ export default function Explore() {
                 type="button"
                 className="secondary"
                 disabled={!canNext || loading}
-                onClick={() => patchFilters({ offset: offset + PAGE_SIZE }, false)}
+                onClick={() => patchFilters({ offset: offset + pageSize }, false)}
               >
                 {he.explore.next}
               </button>
