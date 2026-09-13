@@ -31,7 +31,7 @@ export function useCategorizeSummary() {
   return useQuery({
     queryKey: CATEGORIZE_SUMMARY_KEY,
     queryFn: fetchCategorizeSummary,
-    staleTime: 0,
+    staleTime: 20_000,
     refetchOnWindowFocus: true,
   });
 }
