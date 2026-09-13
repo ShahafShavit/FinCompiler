@@ -1,10 +1,12 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 
 import PageShell from '../components/PageShell';
 import { fetchJson, formatMoney, patchJson, postJson, isAbortError } from '../lib/api';
 import { explorePager, exploreQueryLimit } from '../lib/explorePager';
 import { he } from '../lib/he';
+import { invalidateLedgerViews } from '../lib/invalidateLedger';
 
 import './Explore.css';
 
@@ -155,6 +157,7 @@ function normalizeEditPayload(column: string, raw: string): unknown {
 
 export default function Explore() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const filters = useMemo(() => parseFilters(searchParams), [searchParams]);
 
   const [draftQ, setDraftQ] = useState(filters.q);
@@ -275,6 +278,7 @@ export default function Explore() {
         ),
       };
     });
+    invalidateLedgerViews(queryClient);
   };
 
   const toggleExclude = async (row: Record<string, unknown>) => {
@@ -301,6 +305,7 @@ export default function Explore() {
         ),
       };
     });
+    invalidateLedgerViews(queryClient);
   };
 
   const runBulkPatch = async (patch: Record<string, unknown>) => {
@@ -322,6 +327,7 @@ export default function Explore() {
       }
       setBulkMsg(`${he.explore.bulkOk}: ${r.data.updated ?? 0}`);
       setSelected(new Set());
+      invalidateLedgerViews(queryClient);
       await load();
     } catch {
       setBulkMsg(he.explore.bulkFailed);
