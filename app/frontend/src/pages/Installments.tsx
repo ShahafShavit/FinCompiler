@@ -6,6 +6,7 @@ import PageShell from '../components/PageShell';
 import { fetchJson, formatMoney, patchJson } from '../lib/api';
 import { hashColor } from '../lib/chartColors';
 import { he } from '../lib/he';
+import { dropUndoEntry } from '../lib/undoStack';
 
 import './Installments.css';
 
@@ -313,9 +314,12 @@ export default function Installments() {
         }
         await load();
         setMergeFor(null);
+        return true;
       }
+      return false;
     } catch {
       setErr(he.installments.error);
+      return false;
     } finally {
       setBusyId(null);
     }
@@ -324,8 +328,10 @@ export default function Installments() {
   const undoLast = async () => {
     const last = undoStack[undoStack.length - 1];
     if (!last || busyId) return;
-    setUndoStack((prev) => prev.slice(0, -1));
-    await patchPlan(last.planId, last.body, { skipUndo: true });
+    const ok = await patchPlan(last.planId, last.body, { skipUndo: true });
+    if (ok) {
+      setUndoStack((prev) => dropUndoEntry(prev, last));
+    }
   };
 
   useEffect(() => {
