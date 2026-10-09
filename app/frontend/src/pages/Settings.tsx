@@ -231,7 +231,9 @@ export default function Settings() {
         },
       ],
       google_sheets: {
-        service_account_json_path: gPath,
+        ...(gPath !== (cfg?.google_sheets.service_account_json_path || '')
+          ? { service_account_json_path: gPath }
+          : {}),
         worksheet_id: gSheet,
       },
       investment_portfolio: { enabled: invPortEn },
@@ -519,7 +521,7 @@ export default function Settings() {
             className="settings-input-wide"
             value={gPath}
             onChange={(e) => setGPath(e.target.value)}
-            placeholder="e.g. data/static/your-project.json"
+            placeholder="e.g. data/private/your-project.json"
           />
         </label>
         <label className="settings-label">

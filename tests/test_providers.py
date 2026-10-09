@@ -60,6 +60,33 @@ class ProvidersTests(unittest.TestCase):
         r = ps.resolve_document(merged)
         self.assertTrue(r.investment_portfolio_enabled)
 
+    def test_merge_keeps_unchanged_service_account_path(self) -> None:
+        import providers as ps
+
+        base = ps.default_document()
+        legacy = os.path.join("data", "static", "key.json")
+        base["google_sheets"]["service_account_json_path"] = legacy
+        base["bank"]["credentials"]["password"] = "old"
+        merged = ps.merge_put_update(
+            base,
+            {
+                "bank": {"credentials": {"password": "new"}},
+                "google_sheets": {"service_account_json_path": legacy},
+            },
+        )
+        self.assertEqual(merged["bank"]["credentials"]["password"], "new")
+        self.assertEqual(merged["google_sheets"]["service_account_json_path"], legacy)
+
+    def test_merge_rejects_new_service_account_path_outside_private(self) -> None:
+        import providers as ps
+
+        base = ps.default_document()
+        with self.assertRaises(ValueError):
+            ps.merge_put_update(
+                base,
+                {"google_sheets": {"service_account_json_path": os.path.join("data", "static", "key.json")}},
+            )
+
     def test_providers_file_respects_workspace(self) -> None:
         import config as config_mod
         import providers as ps

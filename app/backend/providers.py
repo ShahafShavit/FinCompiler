@@ -182,6 +182,19 @@ def _expand_path(p: Optional[str]) -> Optional[str]:
     return os.path.normpath(os.path.expanduser(os.path.expandvars(p.strip())))
 
 
+def _paths_equal(a: str, b: str) -> bool:
+    """True when two path strings name the same file (case and slash differences ignored)."""
+    left = (a or "").strip()
+    right = (b or "").strip()
+    if not left and not right:
+        return True
+    if not left or not right:
+        return False
+    ea = os.path.normcase(os.path.abspath(_expand_path(left) or left))
+    eb = os.path.normcase(os.path.abspath(_expand_path(right) or right))
+    return ea == eb
+
+
 def constrain_service_account_path(raw: str) -> str:
     """Require the Google JSON key to live under ``data/private/`` (no ``..`` escapes)."""
     text = (raw or "").strip()
@@ -193,7 +206,7 @@ def constrain_service_account_path(raw: str) -> str:
         common = os.path.commonpath([root, expanded])
     except ValueError as e:
         raise ValueError("service account JSON must live under data/private/") from e
-    if common != root:
+    if os.path.normcase(common) != os.path.normcase(root):
         raise ValueError("service account JSON must live under data/private/")
     return expanded
 
@@ -335,9 +348,15 @@ def merge_put_update(current: dict[str, Any], body: dict[str, Any]) -> dict[str,
         gs = out["google_sheets"]
         if "service_account_json_path" in gs_in:
             raw_path = str(gs_in.get("service_account_json_path") or "")
-            gs["service_account_json_path"] = (
-                constrain_service_account_path(raw_path) if raw_path.strip() else ""
-            )
+            previous = str(gs.get("service_account_json_path") or "")
+            if not raw_path.strip():
+                gs["service_account_json_path"] = ""
+            elif _paths_equal(raw_path, previous):
+                # Password saves resend the stored path. Keep it so an older location
+                # does not reject the whole providers update.
+                gs["service_account_json_path"] = previous
+            else:
+                gs["service_account_json_path"] = constrain_service_account_path(raw_path)
         if "worksheet_id" in gs_in:
             gs["worksheet_id"] = str(gs_in.get("worksheet_id") or "")
 
