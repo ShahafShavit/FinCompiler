@@ -96,6 +96,34 @@ class BookIsolationTests(unittest.TestCase):
             finally:
                 reset_active_book(token)
 
+    def test_categorize_next_follows_the_book_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _reload_config(tmp)
+            personal = _movement_ledger_row(_movement("2026-01-02", "p1"))
+            assert personal is not None
+            personal["merchant"] = "personal-shop"
+            personal["debit"] = 10
+            shared = _movement_ledger_row(_movement("2026-01-03", "s1"))
+            assert shared is not None
+            shared["merchant"] = "shared-shop"
+            shared["debit"] = 40
+            upsert_api_rows(ledger_path("personal"), [personal])
+            upsert_api_rows(ledger_path("shared"), [shared])
+            with TestClient(create_app()) as client:
+                shared_res = client.get(
+                    "/categorize/api/next",
+                    headers={"X-Finance-Book": "shared"},
+                )
+                personal_res = client.get("/categorize/api/next")
+            self.assertEqual(shared_res.status_code, 200)
+            self.assertEqual(personal_res.status_code, 200)
+            shared_body = shared_res.json()
+            personal_body = personal_res.json()
+            self.assertEqual(shared_body["open_count"], 1)
+            self.assertEqual(shared_body["pending"]["store_name"], "shared-shop")
+            self.assertEqual(personal_body["open_count"], 1)
+            self.assertEqual(personal_body["pending"]["store_name"], "personal-shop")
+
     def test_unknown_book_header_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _reload_config(tmp)

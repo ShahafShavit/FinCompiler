@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import PageShell from '../components/PageShell';
 import { fetchJson, isAbortError, postJson } from '../lib/api';
+import { useBook } from '../lib/book';
 import { he } from '../lib/he';
 import { acquireLock, releaseLock } from '../lib/saveLock';
 import { useInvalidateCategorizeSummary } from '../lib/useCategorizeSummary';
@@ -750,6 +751,7 @@ function HistoryResolveStaticItem({
 }
 
 export default function Categorize() {
+  const { bookId } = useBook();
   const invalidateSummary = useInvalidateCategorizeSummary();
   const historySectionRef = useRef<HTMLElement | null>(null);
   const [payload, setPayload] = useState<CatApi>({
@@ -773,17 +775,15 @@ export default function Categorize() {
     const ac = new AbortController();
     nextAcRef.current = ac;
     try {
-      const r = await fetch(`${CAT}/api/next`, { cache: 'no-store', signal: ac.signal });
+      const r = await fetchJson(`${CAT}/api/next`, { cache: 'no-store', signal: ac.signal });
       if (ac.signal.aborted) return;
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-      const data = await r.json();
-      if (ac.signal.aborted) return;
-      setPayload(normalizeApi(data));
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setPayload(normalizeApi(r.data));
     } catch (e) {
       if (isAbortError(e) || ac.signal.aborted) return;
       setStatus(String(e));
     }
-  }, []);
+  }, [bookId]);
 
   useEffect(() => {
     void fetchNext();

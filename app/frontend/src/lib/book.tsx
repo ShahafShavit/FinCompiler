@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 
 import { getJson, getActiveBookId, setActiveBookId } from './api';
 
@@ -29,6 +29,11 @@ export function BookProvider({ children }: { children: ReactNode }) {
   });
   const [books, setBooks] = useState<BookInfo[]>(FALLBACK);
 
+  const setBookId = useCallback((id: string) => {
+    setActiveBookId(id);
+    setBookIdState(id);
+  }, []);
+
   useEffect(() => {
     setActiveBookId(bookId);
   }, [bookId]);
@@ -48,7 +53,7 @@ export function BookProvider({ children }: { children: ReactNode }) {
   }, [bookId]);
 
   return (
-    <BookContext.Provider value={{ bookId, books, setBookId: setBookIdState }}>
+    <BookContext.Provider value={{ bookId, books, setBookId }}>
       {children}
     </BookContext.Provider>
   );
