@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import PageShell from '../components/PageShell';
 import { fetchJson, postJson, putJson } from '../lib/api';
@@ -642,6 +642,8 @@ export default function Settings() {
         </details>
       </section>
 
+      <CardPayerSection />
+
       <div className="settings-actions">
         <button type="button" onClick={() => void save()}>
           {he.settings.save}
@@ -654,5 +656,83 @@ export default function Settings() {
         </button>
       </div>
     </PageShell>
+  );
+}
+
+type PayerRow = { last_four: string; payer: string };
+
+function CardPayerSection() {
+  const [rows, setRows] = useState<PayerRow[]>([]);
+  const [known, setKnown] = useState<string[]>([]);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  const loadPayers = useCallback(async () => {
+    const r = await fetchJson<{ ok?: boolean; rows?: PayerRow[]; known_last_fours?: string[]; message?: string }>(
+      '/api/books/card-payers',
+    );
+    if (!r.ok) {
+      setError(typeof r.data.message === 'string' ? r.data.message : 'Request failed');
+      return;
+    }
+    const mapped = new Map((r.data.rows ?? []).map((row) => [row.last_four, row.payer]));
+    const digits = Array.from(new Set([...(r.data.known_last_fours ?? []), ...mapped.keys()]));
+    setKnown(digits);
+    setRows(digits.map((last_four) => ({ last_four, payer: mapped.get(last_four) ?? '' })));
+  }, []);
+
+  useEffect(() => {
+    void loadPayers();
+  }, [loadPayers]);
+
+  async function savePayers() {
+    setError('');
+    setSaved(false);
+    const r = await putJson('/api/books/card-payers', {
+      rows: rows.filter((row) => row.last_four.trim() && row.payer.trim()),
+    });
+    if (!r.ok) {
+      const data = r.data as { message?: string };
+      setError(data.message || 'Request failed');
+      return;
+    }
+    setSaved(true);
+    await loadPayers();
+  }
+
+  return (
+    <section className="card">
+      <h2>{he.books.payers}</h2>
+      <p className="hint">{he.books.payerHint}</p>
+      {rows.length === 0 && known.length === 0 ? <p className="hint">{he.dashboard.empty}</p> : null}
+      {rows.map((row, index) => (
+        <div className="pipe-grid2" key={row.last_four} style={{ marginBottom: '0.5rem' }}>
+          <label>
+            {he.books.lastFour}
+            <input value={row.last_four} readOnly />
+          </label>
+          <label>
+            {he.books.payer}
+            <input
+              value={row.payer}
+              onChange={(e) => {
+                const next = rows.slice();
+                next[index] = { ...row, payer: e.target.value };
+                setRows(next);
+              }}
+            />
+          </label>
+        </div>
+      ))}
+      <button type="button" onClick={() => void savePayers()}>
+        {he.books.savePayers}
+      </button>
+      {saved ? <p className="hint">{he.settings.saved}</p> : null}
+      {error ? (
+        <p className="banner banner--err" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
   );
 }

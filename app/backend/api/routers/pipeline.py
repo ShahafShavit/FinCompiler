@@ -43,6 +43,10 @@ def register_pipeline_routes(app: FastAPI) -> None:
             )
         action = str(data.get("action") or "").strip()
         options = data.get("options") if isinstance(data.get("options"), dict) else {}
+        options = dict(options)
+        from ledger.books import active_book_id
+
+        options["book"] = active_book_id()
         if not action:
             return Response(
                 content=_json_bytes({"ok": False, "error": "action required"}),

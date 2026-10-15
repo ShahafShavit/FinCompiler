@@ -9,13 +9,13 @@ import sqlite3
 from typing import Any
 from urllib.parse import parse_qs
 
-import config
 from ledger import (
     LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR,
     LEDGER_SQL_EFFECTIVE_YM_EXPR,
     LEDGER_SQL_TX_INCLUDED,
     ledger_connect_readonly,
 )
+from ledger.card_payer import payer_sql
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +58,9 @@ _EU_DATE_RE = re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{4})$")
 
 
 def _ledger_path() -> str:
-    return config.ledger_db_file
+    from ledger.books import active_ledger_path
+
+    return active_ledger_path()
 
 
 def _first(qs: dict[str, list[str]], key: str) -> str | None:
@@ -318,6 +320,7 @@ def search_ledger(qs: dict[str, list[str]] | None = None) -> tuple[int, dict[str
             "category_updated_at",
             "data_updated_at",
             "excluded_from_calculations",
+            f"{payer_sql()} AS payer",
         ]
     )
 

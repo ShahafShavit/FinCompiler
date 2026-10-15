@@ -2,8 +2,11 @@ import { useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { fetchJson } from './api';
+import { useBook } from './book';
 
-export const CATEGORIZE_SUMMARY_KEY = ['categorize-summary'] as const;
+export function categorizeSummaryKey(bookId: string) {
+  return [bookId, 'categorize-summary'] as const;
+}
 
 export type CategorizeSummary = {
   open_count?: number;
@@ -29,8 +32,9 @@ export async function fetchCategorizeSummary(): Promise<CategorizeSummary> {
 
 /** Shared queue count for sidebar badge, Pipeline hint, and Categorize invalidation. */
 export function useCategorizeSummary() {
+  const { bookId } = useBook();
   return useQuery({
-    queryKey: CATEGORIZE_SUMMARY_KEY,
+    queryKey: categorizeSummaryKey(bookId),
     queryFn: fetchCategorizeSummary,
     staleTime: 20_000,
     refetchOnWindowFocus: true,
@@ -39,8 +43,9 @@ export function useCategorizeSummary() {
 
 export function useInvalidateCategorizeSummary() {
   const qc = useQueryClient();
+  const { bookId } = useBook();
   return useCallback(
-    () => void qc.invalidateQueries({ queryKey: CATEGORIZE_SUMMARY_KEY }),
-    [qc],
+    () => void qc.invalidateQueries({ queryKey: categorizeSummaryKey(bookId) }),
+    [qc, bookId],
   );
 }

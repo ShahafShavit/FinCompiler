@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-import config
+from ledger.books import active_ledger_path
 from api.categorize import CategorizeFile, stable_transaction_key
 from .utils import json_bytes_strict
 
@@ -46,7 +46,7 @@ def _session_categories(cf: CategorizeFile) -> list[str]:
 
 def _attach_category_columns(base: dict[str, Any]) -> dict[str, Any]:
     """Add ``category_columns`` from ledger (QoL grouping; optional for UI)."""
-    path = config.ledger_db_file
+    path = active_ledger_path()
     if not path or not os.path.isfile(path):
         base["category_columns"] = {"columns": [], "unassigned": []}
         return base
@@ -65,7 +65,7 @@ def _attach_category_columns(base: dict[str, Any]) -> dict[str, Any]:
 def summary() -> dict[str, Any]:
     from ledger import count_transactions_needing_manual_category
 
-    path = config.ledger_db_file
+    path = active_ledger_path()
     if not os.path.isfile(path):
         return {"open_count": 0, "compiled_exists": False}
 
@@ -76,7 +76,7 @@ def summary() -> dict[str, Any]:
 def _ledger_queue_categorize_file() -> CategorizeFile:
     """Lightweight: stores + SQL helpers only (no full ``ledger_transaction`` dataframe)."""
     return CategorizeFile(
-        ledger_db_path=config.ledger_db_file,
+        ledger_db_path=active_ledger_path(),
         materialize_transactions=False,
     )
 
@@ -134,7 +134,7 @@ def next_payload(*, control_state: Any = None) -> dict[str, Any]:
         from ledger import forward_fill_uncategorized_for_static_stores_sql
         from ledger import load_first_transaction_needing_manual_category
 
-        if not os.path.isfile(config.ledger_db_file):
+        if not os.path.isfile(active_ledger_path()):
             return _attach_category_columns(
                 {
                     "pending": {"kind": "idle"},
@@ -144,13 +144,13 @@ def next_payload(*, control_state: Any = None) -> dict[str, Any]:
                 }
             )
 
-        forward_fill_uncategorized_for_static_stores_sql(config.ledger_db_file)
+        forward_fill_uncategorized_for_static_stores_sql(active_ledger_path())
 
         cf = _ledger_queue_categorize_file()
         cats = _session_categories(cf)
 
         for attempt in range(2):
-            open_n = count_transactions_needing_manual_category(config.ledger_db_file)
+            open_n = count_transactions_needing_manual_category(active_ledger_path())
             if open_n == 0:
                 return _attach_category_columns(
                     {
@@ -160,7 +160,7 @@ def next_payload(*, control_state: Any = None) -> dict[str, Any]:
                         "session_categories": cats,
                     }
                 )
-            row = load_first_transaction_needing_manual_category(config.ledger_db_file)
+            row = load_first_transaction_needing_manual_category(active_ledger_path())
             if row is None:
                 return _attach_category_columns(
                     {
@@ -219,7 +219,7 @@ def respond(data: dict[str, Any], *, control_state: Any = None) -> Optional[str]
         from ledger import load_ledger_transaction_by_stable_id
 
         cf = _ledger_queue_categorize_file()
-        row0 = load_ledger_transaction_by_stable_id(config.ledger_db_file, tid)
+        row0 = load_ledger_transaction_by_stable_id(active_ledger_path(), tid)
         if row0 is None:
             return "transaction not found"
         body_fp = str(data.get("fingerprint") or "").strip()
@@ -270,10 +270,10 @@ def discard(data: dict[str, Any]) -> Optional[str]:
         from ledger import load_ledger_transaction_by_stable_id
         from ledger import patch_ledger_transaction_by_id
 
-        if not os.path.isfile(config.ledger_db_file):
+        if not os.path.isfile(active_ledger_path()):
             return "no ledger database"
 
-        row0 = load_ledger_transaction_by_stable_id(config.ledger_db_file, tid)
+        row0 = load_ledger_transaction_by_stable_id(active_ledger_path(), tid)
         if row0 is None:
             return "transaction not found"
 
@@ -283,7 +283,7 @@ def discard(data: dict[str, Any]) -> Optional[str]:
             return "ledger row has no id"
 
         patch_out = patch_ledger_transaction_by_id(
-            config.ledger_db_file,
+            active_ledger_path(),
             rid,
             {"excluded_from_calculations": 1},
         )

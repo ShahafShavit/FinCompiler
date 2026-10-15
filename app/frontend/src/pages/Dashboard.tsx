@@ -29,6 +29,7 @@ import {
   heatmapDetailSourceCategory,
 } from '../lib/drilldown';
 import { he } from '../lib/he';
+import { useBook } from '../lib/book';
 import type {
   AllocationRow,
   AllocationTimelineRow,
@@ -46,8 +47,9 @@ import './Dashboard.css';
 const DASH_QUERY_GC_MS = 60 * 60 * 1000;
 
 function useLedgerMetaQuery() {
+  const { bookId } = useBook();
   return useQuery({
-    queryKey: ['ledger-meta'] as const,
+    queryKey: [bookId, 'ledger-meta'] as const,
     queryFn: async (): Promise<LedgerMeta> => {
       const r = await fetchJson<LedgerMeta>('/api/ledger-meta');
       if (!r.ok) throw new Error(`ledger-meta: HTTP ${r.status}`);
@@ -73,8 +75,9 @@ async function fetchDashboardJson<T>(url: string): Promise<T> {
 }
 
 function useDashboardQuery<T>(revision: number | 'no_file' | null, url: string, metaReady: boolean) {
+  const { bookId } = useBook();
   return useQuery({
-    queryKey: ['dashboard', url, revision] as const,
+    queryKey: [bookId, 'dashboard', url, revision] as const,
     queryFn: () => fetchDashboardJson<T>(url),
     enabled: metaReady && revision !== null,
     staleTime: Infinity,
@@ -1118,10 +1121,11 @@ type InstallmentPlansResp = {
 };
 
 function InstallmentsStrip() {
+  const { bookId } = useBook();
   const meta = useLedgerMetaQuery();
   const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
   const q = useQuery({
-    queryKey: ['installment-plans-summary', rev] as const,
+    queryKey: [bookId, 'installment-plans-summary', rev] as const,
     queryFn: async (): Promise<InstallmentPlansResp> => {
       const r = await fetchJson<InstallmentPlansResp>('/api/installment-plans?summary=1');
       if (!r.ok) throw new Error(`installment-plans: HTTP ${r.status}`);
@@ -1186,6 +1190,44 @@ function InstallmentsStrip() {
   );
 }
 
+function PayersCard() {
+  const meta = useLedgerMetaQuery();
+  const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
+  const q = useDashboardQuery<{ ok?: boolean; rows?: Array<{ payer: string; expense: number; income: number; count: number }> }>(
+    rev,
+    '/api/dashboard/payers',
+    meta.isSuccess,
+  );
+  const rows = q.data?.rows ?? [];
+  if (!rows.length) return null;
+  return (
+    <section className="dash-section" aria-labelledby="dash-payers-heading">
+      <h2 id="dash-payers-heading" className="dash-section__title">
+        {he.books.payers}
+      </h2>
+      <p className="hint">{he.books.payerHint}</p>
+      <table className="dash-matrix-table">
+        <thead>
+          <tr>
+            <th>{he.books.payer}</th>
+            <th>{he.dashboard.expense30d}</th>
+            <th>{he.dashboard.income30d}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.payer}>
+              <td>{row.payer}</td>
+              <td>{formatMoney(row.expense)}</td>
+              <td>{formatMoney(row.income)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 export default function Dashboard() {
   const meta = useLedgerMetaQuery();
   const [catTab, setCatTab] = useState<'table' | 'matrix'>('table');
@@ -1199,6 +1241,7 @@ export default function Dashboard() {
       ) : null}
       <KpiStrip />
       <InstallmentsStrip />
+      <PayersCard />
 
       <section className="dash-section" aria-labelledby="dash-holdings-heading">
         <h2 id="dash-holdings-heading" className="dash-section__title">

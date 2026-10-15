@@ -15,7 +15,7 @@ from typing import Any, Mapping, Optional, Union
 
 import pandas as pd
 
-import config
+from ledger.books import active_ledger_path
 
 log = logging.getLogger(__name__)
 
@@ -445,7 +445,7 @@ class CategorizeFile:
         ledger_db_path: str | None = None,
         materialize_transactions: bool = True,
     ):
-        db = ledger_db_path or config.ledger_db_file
+        db = ledger_db_path or active_ledger_path()
         if not db or not os.path.isfile(db):
             raise ValueError(
                 "CategorizeFile requires an existing ledger database "

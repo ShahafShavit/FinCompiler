@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import logging
 
-import config
+from ledger.books import active_ledger_path
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
 
+from api.routers.books import register_book_routes
 from api.routers.cash import register_cash_routes
 from api.routers.categorize import register_categorize_routes
 from api.routers.dashboard import register_dashboard_routes
@@ -54,6 +55,7 @@ def register_routes(app: FastAPI) -> None:
     register_settings_routes(app)
     register_pipeline_routes(app)
     register_cash_routes(app)
+    register_book_routes(app)
 
     r = APIRouter()
 
@@ -75,7 +77,7 @@ def register_routes(app: FastAPI) -> None:
         from pipeline.holdings_balance import get_holdings_meta
 
         return Response(
-            content=json_bytes_strict(get_holdings_meta(config.ledger_db_file)),
+            content=json_bytes_strict(get_holdings_meta(active_ledger_path())),
             media_type="application/json; charset=utf-8",
         )
 
@@ -92,7 +94,7 @@ def register_routes(app: FastAPI) -> None:
         activities = [str(x) for x in (qs.get("activity") or []) if str(x).strip()]
         try:
             df = query_holdings_timeline(
-                config.ledger_db_file,
+                active_ledger_path(),
                 start_date=str(from_date).strip() if from_date else None,
                 end_date=str(to_date).strip() if to_date else None,
                 activity_types=activities,
@@ -121,7 +123,7 @@ def register_routes(app: FastAPI) -> None:
         from pipeline.trade_portfolio_queries import get_trade_portfolio_meta
 
         try:
-            payload = get_trade_portfolio_meta(config.ledger_db_file)
+            payload = get_trade_portfolio_meta(active_ledger_path())
         except Exception:  # noqa: BLE001
             log.exception("GET /api/portfolio/meta failed")
             payload = {
@@ -151,7 +153,7 @@ def register_routes(app: FastAPI) -> None:
         series_params = [str(x) for x in (qs.get("series") or []) if str(x).strip()]
         try:
             payload = query_trade_portfolio_timeseries(
-                config.ledger_db_file,
+                active_ledger_path(),
                 start_date=str(from_date).strip() if from_date else None,
                 end_date=str(to_date).strip() if to_date else None,
                 portfolio_account=str(account).strip() if account else None,
@@ -217,7 +219,7 @@ def register_routes(app: FastAPI) -> None:
             )
         rows = data.get("rows") if isinstance(data.get("rows"), list) else []
         try:
-            conflicts = await run_blocking(get_holdings_conflicts, rows, config.ledger_db_file)
+            conflicts = await run_blocking(get_holdings_conflicts, rows, active_ledger_path())
         except Exception as e:  # noqa: BLE001
             return Response(
                 content=json_bytes_strict(
@@ -253,7 +255,7 @@ def register_routes(app: FastAPI) -> None:
             out = await run_blocking(
                 upsert_holdings_rows,
                 rows,
-                config.ledger_db_file,
+                active_ledger_path(),
                 overwrite_conflicts=overwrite,
             )
         except Exception as e:  # noqa: BLE001
@@ -293,7 +295,7 @@ def register_routes(app: FastAPI) -> None:
                 move_holdings_date,
                 source_date,
                 target_date,
-                config.ledger_db_file,
+                active_ledger_path(),
                 overwrite_conflicts=overwrite,
             )
         except Exception as e:  # noqa: BLE001

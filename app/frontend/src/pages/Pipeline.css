@@ -133,3 +133,40 @@
   opacity: 0.9;
   color: var(--fg-muted);
 }
+
+.session-status {
+  margin: 0.75rem 0 1rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.session-status h3 {
+  margin: 0 0 0.15rem;
+  font-size: 0.95rem;
+}
+
+.session-status__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.session-status__ok {
+  color: var(--good-fg);
+}
+
+.session-status__bad {
+  color: var(--bad-fg);
+}
+
+.session-steps {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}

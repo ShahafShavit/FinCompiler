@@ -4,11 +4,40 @@ export type ApiResult<T> = {
   data: T;
 };
 
+const BOOK_STORAGE_KEY = 'fincompiler.book';
+
+let activeBookId = 'personal';
+try {
+  const saved = localStorage.getItem(BOOK_STORAGE_KEY);
+  if (saved) activeBookId = saved;
+} catch {
+  /* storage unavailable */
+}
+
+export function getActiveBookId(): string {
+  return activeBookId;
+}
+
+export function setActiveBookId(id: string): void {
+  activeBookId = id;
+  try {
+    localStorage.setItem(BOOK_STORAGE_KEY, id);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function withBook(options?: RequestInit): RequestInit {
+  const headers = new Headers(options?.headers);
+  if (!headers.has('X-Finance-Book')) headers.set('X-Finance-Book', activeBookId);
+  return { ...options, headers };
+}
+
 export async function fetchJson<T = unknown>(
   url: string,
   options?: RequestInit,
 ): Promise<ApiResult<T>> {
-  const res = await fetch(url, options);
+  const res = await fetch(url, withBook(options));
   const text = await res.text();
   let data: unknown = {};
   try {

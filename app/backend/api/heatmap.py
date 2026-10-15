@@ -18,14 +18,18 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-import config
-
 log = logging.getLogger(__name__)
 
 ReportType = Literal["expense", "income", "net"]
 
 _bundle_cache: dict[str, Any] = {"path": "", "mtime": 0.0, "bundle": None}
 _bundle_cache_lock = threading.Lock()
+
+
+def _active_ledger_path() -> str:
+    from ledger.books import active_ledger_path
+
+    return active_ledger_path()
 
 
 def invalidate_bundle_cache() -> None:
@@ -496,7 +500,7 @@ def _build_bundle_from_dataframe(df: pd.DataFrame, source_label: str) -> Heatmap
 
 def _ledger_heatmap_status() -> dict[str, Any]:
     """JSON-friendly status for the heatmap API (SQLite canonical; no Sheets pull)."""
-    p = config.ledger_db_file
+    p = _active_ledger_path()
     exists = os.path.isfile(p)
     payload: dict[str, Any] = {
         "ledger_path": p,
@@ -527,7 +531,7 @@ def get_bundle() -> HeatmapBundle | None:
     Paint / column order / stats stay in Python on the compact pivots — no full-ledger
     DataFrame on the snapshot path. Detail drills query SQL separately.
     """
-    db = config.ledger_db_file
+    db = _active_ledger_path()
     if not os.path.isfile(db):
         log.warning("heatmap: ledger database missing at %s", db)
         return None
@@ -621,7 +625,7 @@ def api_snapshot(report_type: str | None = None) -> dict[str, Any]:
     source_status = _ledger_heatmap_status()
     if bundle is None:
         if not source_status["ledger_exists"]:
-            msg = f"Could not load heatmap: ledger database not found at {config.ledger_db_file}."
+            msg = f"Could not load heatmap: ledger database not found at {_active_ledger_path()}."
         elif source_status.get("transaction_count") == 0:
             msg = "Could not load heatmap: ledger has no transactions yet."
         else:
@@ -823,6 +827,7 @@ _DETAIL_EXTRA_COLS = [
     "ingested_at",
     "category_updated_at",
     "data_updated_at",
+    "payer",
 ]
 _COLS_EXP = ["תאריך", "מקור עסקה", "קטגוריה", "בחובה", "תאור מורחב", "פירוט נוסף"] + _DETAIL_EXTRA_COLS
 _COLS_IN = ["תאריך", "מקור עסקה", "קטגוריה", "בזכות", "תאור מורחב", "פירוט נוסף"] + _DETAIL_EXTRA_COLS
@@ -1195,7 +1200,7 @@ def patch_ledger_transaction(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     phrase = str(data.get("confirm_fingerprint_phrase") or "")
 
     result = patch_ledger_transaction_by_id(
-        config.ledger_db_file,
+        _active_ledger_path(),
         rid,
         patch,
         confirm_fingerprint_change=confirm_change,

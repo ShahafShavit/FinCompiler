@@ -26,16 +26,18 @@ from api.utils import (
     fail_port_in_use,
 )
 from ledger import migrate_ledger_db
+from ledger.books import BOOK_PERSONAL, BOOK_SHARED, ledger_path, reset_active_book, set_active_book
 
 log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    try:
-        migrate_ledger_db(config.ledger_db_file)
-    except Exception:  # noqa: BLE001
-        log.exception("Ledger migrate at control server startup failed; serving anyway")
+    for book_id in (BOOK_PERSONAL, BOOK_SHARED):
+        try:
+            migrate_ledger_db(ledger_path(book_id))
+        except Exception:  # noqa: BLE001
+            log.exception("Ledger migrate failed for book %s; serving anyway", book_id)
     yield
     state = getattr(app.state, "control_state", None)
     if state is not None:
@@ -51,6 +53,23 @@ def create_app() -> FastAPI:
         openapi_url=None,
     )
     app.state.control_state = ControlState()
+
+    @app.middleware("http")
+    async def _finance_book(request, call_next):  # type: ignore[no-untyped-def]
+        from starlette.responses import JSONResponse
+
+        raw = (request.headers.get("x-finance-book") or "").strip() or BOOK_PERSONAL
+        try:
+            token = set_active_book(raw)
+        except KeyError:
+            return JSONResponse(
+                {"ok": False, "error": "unknown_book", "message": "Unknown book."},
+                status_code=400,
+            )
+        try:
+            return await call_next(request)
+        finally:
+            reset_active_book(token)
 
     if not config.control_bind_is_loopback():
         from starlette.responses import Response as StarletteResponse

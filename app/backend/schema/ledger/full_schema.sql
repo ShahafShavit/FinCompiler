@@ -51,6 +51,7 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (21, 'cash_event_
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (22, 'cash_event_category');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (23, 'fingerprint_keep_text_punctuation');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (24, 'ledger_effective_ym_expr_index');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (25, 'card_payer_by_last_four');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -328,6 +329,12 @@ BEGIN
 END;
 
 -- If one UPDATE changes both category and data columns, both triggers may run; acceptable.
+
+-- Payer is the person mapped to a card last-four. Rows join this table. They do not store the name.
+CREATE TABLE IF NOT EXISTS card_payer (
+    last_four TEXT PRIMARY KEY CHECK (length(trim(last_four)) > 0),
+    payer     TEXT NOT NULL CHECK (length(trim(payer)) > 0)
+) STRICT;
 
 -- =============================================================================
 -- Views (convenience)

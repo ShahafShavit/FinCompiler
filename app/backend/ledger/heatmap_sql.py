@@ -15,6 +15,7 @@ from ledger.store import (
     LEDGER_SQL_TX_INCLUDED,
     ledger_connect_readonly,
 )
+from ledger.card_payer import payer_sql
 
 ReportType = Literal["expense", "income", "net"]
 
@@ -34,6 +35,7 @@ SELECT
   ingested_at,
   category_updated_at,
   data_updated_at,
+  ({payer_sql()}) AS payer,
   ({LEDGER_SQL_EFFECTIVE_YM_EXPR}) AS YearMonth,
   ({LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR}) AS effective_tx_date
 FROM ledger_transaction

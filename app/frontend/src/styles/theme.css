@@ -211,6 +211,22 @@ textarea {
   color: var(--accent);
 }
 
+.sidebar__book {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0 0.55rem 0.85rem;
+}
+
+.sidebar__book select {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.4rem;
+}
+
 .sidebar__nav {
   display: flex;
   flex-direction: column;

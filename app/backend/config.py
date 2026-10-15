@@ -68,6 +68,8 @@ compiled_dir = os.path.join(_export_root, "compiled") + os.sep
 # keeps this file (and the rest of ``data/``) out of version control. WAL/SHM
 # sidecars, if enabled, live beside the DB path and are likewise under ``data/``.
 ledger_db_file = _data("ledger.sqlite")
+# Second ledger. Same schema as ``ledger_db_file``. API reads follow the active book.
+shared_ledger_file = _data("books", "shared.sqlite")
 
 _static_root = _w("data", "static")
 static_dir = _static_root + os.sep

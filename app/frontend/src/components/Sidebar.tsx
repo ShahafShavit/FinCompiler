@@ -1,6 +1,7 @@
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useEffect, useState, type ReactNode } from 'react';
 
+import { useBook } from '../lib/book';
 import { he } from '../lib/he';
 
 const RAIL_PATHS = ['/heatmap', '/integrity'];
@@ -134,6 +135,7 @@ function pathWantsRail(pathname: string): boolean {
 
 export default function Sidebar({ categorizeBadge }: { categorizeBadge?: number | null }) {
   const loc = useLocation();
+  const { bookId, books, setBookId } = useBook();
   const wantsRail = pathWantsRail(loc.pathname);
   const [forcedExpand, setForcedExpand] = useState(false);
 
@@ -191,6 +193,20 @@ export default function Sidebar({ categorizeBadge }: { categorizeBadge?: number 
       <Link to="/" className="sidebar__brand" title={he.app.wordmark}>
         {rail ? 'פ״ק' : he.app.wordmark}
       </Link>
+      <label className="sidebar__book">
+        <span className="sidebar__ops-title">{he.books.label}</span>
+        <select
+          value={bookId}
+          onChange={(e) => setBookId(e.target.value)}
+          aria-label={he.books.label}
+        >
+          {books.map((book) => (
+            <option key={book.id} value={book.id}>
+              {book.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <nav className="sidebar__nav">{daily.map(renderLink)}</nav>
       <div className="sidebar__ops">
         <div className="sidebar__ops-title">{he.app.system}</div>

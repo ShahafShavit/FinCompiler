@@ -3,11 +3,12 @@ import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
 import PageShell from '../components/PageShell';
-import { fetchJson, getJson } from '../lib/api';
+import { fetchJson, getJson, postJson } from '../lib/api';
+import { useBook } from '../lib/book';
 import { he } from '../lib/he';
 import { appendCappedLog } from '../lib/pipelineLog';
 import {
-  CATEGORIZE_SUMMARY_KEY,
+  categorizeSummaryKey,
   openCountFromSummary,
   useCategorizeSummary,
 } from '../lib/useCategorizeSummary';
@@ -73,6 +74,9 @@ export default function Pipeline() {
   const logRaf = useRef(0);
   const runningRef = useRef(false);
   const queryClient = useQueryClient();
+  const { bookId, books } = useBook();
+  const apiBook = books.find((book) => book.id === bookId);
+  const isApi = Boolean(apiBook?.fetcher);
   const summaryQ = useCategorizeSummary();
   const openCount = openCountFromSummary(summaryQ.data);
 
@@ -135,8 +139,8 @@ export default function Pipeline() {
       if (err) setBusyError(err);
       else setBusyError(null);
       if (wasRunning && !isRunning && !err) {
-        void queryClient.invalidateQueries({ queryKey: ['ledger-meta'] });
-        void queryClient.invalidateQueries({ queryKey: CATEGORIZE_SUMMARY_KEY });
+        void queryClient.invalidateQueries({ queryKey: [bookId, 'ledger-meta'] });
+        void queryClient.invalidateQueries({ queryKey: categorizeSummaryKey(bookId) });
       }
     },
   });
@@ -339,6 +343,7 @@ export default function Pipeline() {
       actions={headerActions}
       className="pipe-shell"
     >
+      {isApi ? null : (
       <div className="pipe-sticky-run">
         <button type="button" className="pipe-run-btn" disabled={running} onClick={() => void runPipeline()}>
           {running ? he.pipeline.busy : he.pipeline.run}
@@ -353,8 +358,10 @@ export default function Pipeline() {
           {he.pipeline.monthlyClose}
         </button>
       </div>
-      <p className="hint pipe-preset-hint">{he.pipeline.monthlyCloseHint}</p>
+      )}
+      {isApi ? null : <p className="hint pipe-preset-hint">{he.pipeline.monthlyCloseHint}</p>}
 
+      {isApi ? null : (
       <section className="card">
         <h2>{he.pipeline.pipeline}</h2>
         <p className="hint">{he.pipeline.hintOrder}</p>
@@ -512,6 +519,9 @@ export default function Pipeline() {
           </p>
         ) : null}
       </section>
+      )}
+
+      {isApi ? <ApiSyncCard backfill={Boolean(apiBook?.backfill)} running={running} /> : null}
 
       <section className="card">
         <h2>{he.pipeline.categorizeOnly}</h2>
@@ -524,6 +534,7 @@ export default function Pipeline() {
       <section className="card">
         <h2>{he.pipeline.sheets}</h2>
         <p className="hint">{he.pipeline.sheetsHint}</p>
+        {isApi ? <p className="hint">{he.books.sheetsPersonal}</p> : null}
         <p className="hint">{sheetsStatusText}</p>
         <label className="pipe-row">
           <input
@@ -559,5 +570,287 @@ export default function Pipeline() {
         <p className="pipe-status">{statusText}</p>
       </section>
     </PageShell>
+  );
+}
+
+function currentMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function messageOf(data: unknown): string {
+  if (data && typeof data === 'object' && 'message' in data) {
+    const message = (data as { message?: unknown }).message;
+    if (typeof message === 'string' && message) return message;
+  }
+  return 'Request failed';
+}
+
+type SessionState = 'ready' | 'email' | 'phone' | 'password' | 'sms' | 'login';
+
+type SessionField = {
+  id: string;
+  stored: boolean;
+  valid: boolean;
+  summary: string;
+  source?: string;
+};
+
+type SessionPayload = {
+  state?: SessionState;
+  fields?: SessionField[];
+  message?: string;
+};
+
+const summaryText: Record<string, string> = {
+  missing: 'חסר',
+  invalid: 'פורמט לא תקין',
+  expired: 'פג תוקף',
+  saved: 'שמור',
+  rejected: 'הבנק דחה',
+  valid: 'פעיל',
+  none: 'אין',
+  waiting: 'ממתין',
+};
+
+function fieldLabel(id: string): string {
+  if (id === 'email') return he.books.email;
+  if (id === 'phone') return he.books.phone;
+  if (id === 'otpToken') return he.books.fieldOtp;
+  if (id === 'accessToken') return he.books.fieldAccess;
+  if (id === 'smsChallenge') return he.books.fieldChallenge;
+  return id;
+}
+
+function displayError(text: string): string {
+  if (text.includes('Max send attempts') || text.includes('SMS send limit')) return he.books.smsLimit;
+  if (text.includes('did not send the SMS')) return he.books.smsNotSent;
+  return text;
+}
+
+function ApiSyncCard({ backfill, running }: { backfill: boolean; running: boolean }) {
+  const [month, setMonth] = useState(currentMonth);
+  const [fromMonth, setFromMonth] = useState(currentMonth);
+  const [toMonth, setToMonth] = useState(currentMonth);
+  const [sessionState, setSessionState] = useState<SessionState | ''>('');
+  const [fields, setFields] = useState<SessionField[] | null>(null);
+  const [checking, setChecking] = useState(true);
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [sms, setSms] = useState('');
+  const [error, setError] = useState('');
+  const [smsBusy, setSmsBusy] = useState(false);
+  const pending = useRef<'sync' | 'backfill' | null>(null);
+
+  function applyStatus(data: SessionPayload) {
+    if (data.state) setSessionState(data.state);
+    if (data.fields) setFields(data.fields);
+    setChecking(false);
+  }
+
+  useEffect(() => {
+    let cancel = false;
+    void (async () => {
+      try {
+        const data = await getJson<SessionPayload>('/api/books/session');
+        if (!cancel) applyStatus(data);
+      } catch (err) {
+        if (cancel) return;
+        setChecking(false);
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
+  async function prepare(extra?: { email?: string; phone?: string; force_sms?: boolean }): Promise<SessionState> {
+    const r = await postJson<SessionPayload>('/api/books/session/prepare', extra ?? {});
+    applyStatus(r.data);
+    if (!r.ok) throw new Error(displayError(messageOf(r.data)));
+    return r.data.state || 'ready';
+  }
+
+  async function startJob(action: 'sync' | 'backfill') {
+    const body =
+      action === 'sync'
+        ? { action: 'book_sync', options: { month } }
+        : { action: 'book_backfill', options: { from: fromMonth, to: toMonth } };
+    const r = await postJson('/api/jobs/run', body);
+    if (!r.ok) throw new Error(messageOf(r.data));
+    setPassword('');
+    setSms('');
+    setSessionState('ready');
+  }
+
+  async function requestSms() {
+    if (smsBusy) return;
+    if (!password.trim()) {
+      setError(he.books.passwordFirst);
+      return;
+    }
+    setSmsBusy(true);
+    setError('');
+    try {
+      const next = await prepare({ force_sms: true });
+      setSms('');
+      setSessionState(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSmsBusy(false);
+    }
+  }
+
+  async function begin(action: 'sync' | 'backfill') {
+    setError('');
+    pending.current = action;
+    setChecking(true);
+    try {
+      const data = await getJson<SessionPayload>('/api/books/session');
+      applyStatus(data);
+      if (data.state === 'ready') await startJob(action);
+    } catch (err) {
+      setChecking(false);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function submitAuth() {
+    setError('');
+    try {
+      if (sessionState === 'email' || sessionState === 'phone') {
+        const next = await prepare({ email, phone });
+        setSessionState(next);
+        if (next === 'ready' && pending.current) await startJob(pending.current);
+        return;
+      }
+      const r = await postJson<SessionPayload>('/api/books/session/complete', {
+        password,
+        sms_code: sms,
+      });
+      applyStatus(r.data);
+      if (!r.ok) throw new Error(displayError(messageOf(r.data)));
+      setPassword('');
+      setSms('');
+      if (pending.current) await startJob(pending.current);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function clearField(field: string) {
+    setError('');
+    const r = await postJson<SessionPayload>('/api/books/session/clear', { field });
+    applyStatus(r.data);
+    if (!r.ok) setError(displayError(messageOf(r.data)));
+  }
+
+  const needsAuth =
+    sessionState === 'email' ||
+    sessionState === 'phone' ||
+    sessionState === 'password' ||
+    sessionState === 'sms' ||
+    sessionState === 'login';
+
+  return (
+    <section className="card">
+      <h2>{he.books.sync}</h2>
+      <p className="hint">{he.books.steps}</p>
+      <div className="session-status" aria-live="polite">
+        <h3>{he.books.statusTitle}</h3>
+        {checking ? <p className="hint">{he.books.statusChecking}</p> : null}
+        {fields?.map((field) => (
+          <div className="session-status__row" key={field.id}>
+            <span>
+              {fieldLabel(field.id)}
+              {': '}
+              {summaryText[field.summary] || field.summary}
+              {field.source === 'env' ? ` (${he.books.fromEnv})` : ''}
+              {' — '}
+              <span className={field.valid ? 'session-status__ok' : 'session-status__bad'}>
+                {field.valid ? he.books.valid : he.books.invalid}
+              </span>
+            </span>
+            {field.stored ? (
+              <button type="button" className="secondary session-status__clear" onClick={() => void clearField(field.id)}>
+                {he.books.clear}
+              </button>
+            ) : null}
+          </div>
+        ))}
+        <p className="hint">{he.books.passwordNote}</p>
+      </div>
+      <label>
+        {he.books.month}
+        <input value={month} onChange={(e) => setMonth(e.target.value)} placeholder="YYYY-MM" />
+      </label>
+      <button type="button" disabled={running} onClick={() => void begin('sync')}>
+        {he.books.sync}
+      </button>
+      {backfill ? (
+        <div className="pipe-grid2" style={{ marginTop: '0.75rem' }}>
+          <label>
+            {he.books.from}
+            <input value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} placeholder="YYYY-MM" />
+          </label>
+          <label>
+            {he.books.to}
+            <input value={toMonth} onChange={(e) => setToMonth(e.target.value)} placeholder="YYYY-MM" />
+          </label>
+          <button type="button" disabled={running} onClick={() => void begin('backfill')}>
+            {he.books.backfill}
+          </button>
+        </div>
+      ) : null}
+      {needsAuth ? (
+        <div className="session-steps">
+          {sessionState === 'password' ? <p className="hint">{he.books.passwordHint}</p> : null}
+          {sessionState === 'sms' ? <p className="hint">{he.books.smsHint}</p> : null}
+          {sessionState === 'login' ? <p className="hint">{he.books.loginHint}</p> : null}
+          {sessionState === 'email' ? (
+            <label>
+              {he.books.email}
+              <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
+            </label>
+          ) : null}
+          {sessionState === 'phone' ? (
+            <label>
+              {he.books.phone}
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+972…" />
+            </label>
+          ) : null}
+          {sessionState === 'login' || sessionState === 'password' || sessionState === 'sms' ? (
+            <label>
+              {he.books.password}
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+            </label>
+          ) : null}
+          {sessionState === 'sms' ? (
+            <label>
+              {he.books.sms}
+              <input value={sms} onChange={(e) => setSms(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
+            </label>
+          ) : null}
+          {sessionState === 'login' ? (
+            <button type="button" disabled={running || smsBusy} onClick={() => void requestSms()}>
+              {he.books.sendSms}
+            </button>
+          ) : (
+            <button type="button" disabled={running} onClick={() => void submitAuth()}>
+              {he.books.continue}
+            </button>
+          )}
+        </div>
+      ) : null}
+      {sessionState === 'ready' ? <p className="hint">{he.books.sessionReady}</p> : null}
+      {error ? (
+        <p className="banner banner--err" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
   );
 }

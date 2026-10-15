@@ -9,7 +9,6 @@ import sqlite3
 from typing import Any
 from urllib.parse import parse_qs
 
-import config
 from ledger import connect_ledger
 from ledger.cash import (
     CashError,
@@ -30,7 +29,9 @@ log = logging.getLogger(__name__)
 
 
 def _ledger_path() -> str:
-    return config.ledger_db_file
+    from ledger.books import active_ledger_path
+
+    return active_ledger_path()
 
 
 def _connect() -> sqlite3.Connection:

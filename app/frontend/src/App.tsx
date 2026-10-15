@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import PageShell from './components/PageShell';
 import Sidebar from './components/Sidebar';
 import { he } from './lib/he';
+import { BookProvider, useBook } from './lib/book';
 import { openCountFromSummary, useCategorizeSummary } from './lib/useCategorizeSummary';
 import Categorize from './pages/Categorize';
 import Cash from './pages/Cash';
@@ -54,12 +55,21 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
 }
 
 export default function App() {
+  return (
+    <BookProvider>
+      <AppShell />
+    </BookProvider>
+  );
+}
+
+function AppShell() {
   const summaryQ = useCategorizeSummary();
   const badge = openCountFromSummary(summaryQ.data);
+  const { bookId } = useBook();
   return (
     <div id="app-shell" className="app-shell">
       <Sidebar categorizeBadge={badge} />
-      <div className="app-main">
+      <div className="app-main" key={bookId}>
         <ErrorBoundary>
           <Routes>
             {/* One path per page — do not pair `/foo` + `/foo/` Navigate redirects;

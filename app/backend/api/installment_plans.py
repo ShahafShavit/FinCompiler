@@ -8,7 +8,6 @@ import os
 from typing import Any
 from urllib.parse import parse_qs
 
-import config
 from ledger import connect_ledger
 from ledger.installment_logic import (
     build_plans_payload,
@@ -21,7 +20,9 @@ log = logging.getLogger(__name__)
 
 
 def _ledger_path() -> str:
-    return config.ledger_db_file
+    from ledger.books import active_ledger_path
+
+    return active_ledger_path()
 
 
 def list_installment_plans(qs: dict[str, list[str]] | None = None) -> tuple[int, dict[str, Any]]:

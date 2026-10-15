@@ -20,7 +20,6 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Any
 
-import config
 from ledger import (
     LEDGER_SQL_EFFECTIVE_TX_DATE_EXPR,
     LEDGER_SQL_TX_INCLUDED,
@@ -41,7 +40,9 @@ _dash_cache_lock = threading.Lock()
 
 
 def _ledger_path() -> str:
-    return config.ledger_db_file
+    from ledger.books import active_ledger_path
+
+    return active_ledger_path()
 
 
 def _ledger_exists() -> bool:
@@ -61,10 +62,14 @@ def ledger_meta() -> dict[str, Any]:
     """Cheap revision for dashboards: ``stat`` only, no DB open or migrate."""
     path = _ledger_path()
     if not os.path.isfile(path):
-        return {"ok": True, "exists": False, "mtime_ns": None}
+        from ledger.books import active_book_id
+
+        return {"ok": True, "exists": False, "mtime_ns": None, "book_id": active_book_id()}
     st = os.stat(path)
     mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000)))
-    return {"ok": True, "exists": True, "mtime_ns": mtime_ns}
+    from ledger.books import active_book_id
+
+    return {"ok": True, "exists": True, "mtime_ns": mtime_ns, "book_id": active_book_id()}
 
 
 def _empty_payload(extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -621,13 +626,49 @@ def _dispatch_dashboard_request_uncached(name: str, qs: dict[str, list[str]]) ->
             top_sources=top_sources,
             top_categories=top_categories,
         )
+    if name == "payers":
+        return payer_totals()
     return {"ok": False, "error": "unknown_endpoint", "message": f"unknown dashboard endpoint: {name}"}
+
+
+def payer_totals() -> dict[str, Any]:
+    """Expense and income grouped by the card payer. Rows with no card have no payer."""
+    from ledger import LEDGER_SQL_TX_INCLUDED
+    from ledger.card_payer import payer_sql
+
+    if not _ledger_exists():
+        return {"ok": True, "rows": [], "ledger_exists": False}
+    sql = f"""
+    SELECT payer, SUM(debit) AS expense, SUM(credit) AS income, COUNT(*) AS n
+    FROM (
+        SELECT {payer_sql()} AS payer, "בחובה" AS debit, "בזכות" AS credit
+        FROM ledger_transaction
+        WHERE {LEDGER_SQL_TX_INCLUDED}
+    )
+    WHERE TRIM(COALESCE(payer, '')) != ''
+    GROUP BY payer
+    ORDER BY expense DESC, payer
+    """
+    conn = ledger_connect_readonly(_ledger_path())
+    try:
+        rows = [
+            {
+                "payer": row[0],
+                "expense": float(row[1] or 0),
+                "income": float(row[2] or 0),
+                "count": int(row[3] or 0),
+            }
+            for row in conn.execute(sql)
+        ]
+    finally:
+        conn.close()
+    return {"ok": True, "rows": rows, "ledger_exists": True}
 
 
 def handle_dashboard_request(name: str, qs: dict[str, list[str]]) -> dict[str, Any]:
     """Dispatch with in-memory JSON cache keyed by endpoint + query + ledger ``mtime_ns``."""
     rev = _ledger_mtime_ns_for_cache()
-    ckey = (str(name), _qs_cache_key(qs), rev)
+    ckey = (str(name), _qs_cache_key(qs), rev, _ledger_path())
     with _dash_cache_lock:
         if ckey in _dash_response_cache:
             _dash_response_cache.move_to_end(ckey)

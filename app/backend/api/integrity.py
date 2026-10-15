@@ -8,7 +8,6 @@ import os
 import sqlite3
 from typing import Any
 
-import config
 from ledger import (
     LEDGER_SQL_LT_TX_INCLUDED,
     LEDGER_SQL_TX_INCLUDED,
@@ -40,7 +39,9 @@ _NO_STMT_MONTH_LT = "(lt.statement_month IS NULL OR TRIM(COALESCE(lt.statement_m
 
 
 def _ledger_path() -> str:
-    return config.ledger_db_file
+    from ledger.books import active_ledger_path
+
+    return active_ledger_path()
 
 
 def _section(

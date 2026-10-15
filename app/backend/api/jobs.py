@@ -225,6 +225,29 @@ def run_action(
             raise RuntimeError(msg or "sheets push failed")
         return
 
+    if action == "book_sync":
+        from ledger.api_sync import BookSyncError, sync_month
+
+        book_id = str(options.get("book") or "personal")
+        month = str(options.get("month") or "").strip()
+        try:
+            sync_month(book_id, month, sink=sink)
+        except BookSyncError as exc:
+            raise RuntimeError(str(exc)) from exc
+        return
+
+    if action == "book_backfill":
+        from ledger.api_sync import BookSyncError, backfill
+
+        book_id = str(options.get("book") or "personal")
+        start = str(options.get("from") or "").strip()
+        end = str(options.get("to") or "").strip()
+        try:
+            backfill(book_id, start, end, sink=sink)
+        except BookSyncError as exc:
+            raise RuntimeError(str(exc)) from exc
+        return
+
     raise ValueError(f"unknown action: {action!r}")
 
 

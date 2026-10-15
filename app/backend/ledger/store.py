@@ -969,6 +969,19 @@ CREATE TABLE IF NOT EXISTS trade_portfolio_position_multiplier (
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (24, 'ledger_effective_ym_expr_index')"
             )
+            ver = _current_schema_version(conn)
+            if ver < 25:
+                conn.executescript(
+                    """
+CREATE TABLE IF NOT EXISTS card_payer (
+    last_four TEXT PRIMARY KEY CHECK (length(trim(last_four)) > 0),
+    payer     TEXT NOT NULL CHECK (length(trim(payer)) > 0)
+) STRICT;
+"""
+                )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (25, 'card_payer_by_last_four')"
+            )
             conn.commit()
         finally:
             conn.close()

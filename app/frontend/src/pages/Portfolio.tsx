@@ -1,4 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
+
+import { useBook } from '../lib/book';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
@@ -244,8 +246,9 @@ export default function Portfolio() {
   const [seeded, setSeeded] = useState(false);
   const prevAccountKey = useRef<string | null>(null);
 
+  const { bookId } = useBook();
   const metaQuery = useQuery({
-    queryKey: ['portfolio-meta'] as const,
+    queryKey: [bookId, 'portfolio-meta'] as const,
     queryFn: async (): Promise<PortfolioMeta> => {
       const r = await fetchJson<PortfolioMeta>('/api/portfolio/meta', { cache: 'no-store' });
       if (!r.ok) throw new Error(`portfolio meta: HTTP ${r.status}`);
@@ -310,7 +313,7 @@ export default function Portfolio() {
     seriesParam === undefined ? 'all' : seriesParam === null ? 'none' : seriesParam.join('\n');
 
   const timeseriesQuery = useQuery({
-    queryKey: ['portfolio-timeseries', from, to, account, metric, seriesQueryKey] as const,
+    queryKey: [bookId, 'portfolio-timeseries', from, to, account, metric, seriesQueryKey] as const,
     queryFn: async (): Promise<TimeseriesPayload> => {
       const p = new URLSearchParams();
       if (from) p.set('from', from);
