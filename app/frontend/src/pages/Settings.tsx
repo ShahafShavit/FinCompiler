@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import PageShell from '../components/PageShell';
 import { fetchJson, postJson, putJson } from '../lib/api';
 import { he } from '../lib/he';
+import { useInvalidateCategorizeSummary } from '../lib/useCategorizeSummary';
 
 import './Settings.css';
 
@@ -80,6 +81,7 @@ function rowLooksIncomplete(r: DropRuleRow): boolean {
 }
 
 export default function Settings() {
+  const invalidateSummary = useInvalidateCategorizeSummary();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -309,12 +311,19 @@ export default function Settings() {
       error?: string;
       message?: string;
       config?: Record<string, unknown>;
+      queue_excluded?: number;
     }>('/api/transaction-drop-rules', body);
     if (!r.ok || !r.data.ok) {
       setDropRulesErr((r.data as { message?: string }).message || `Save failed (${r.status})`);
       return;
     }
-    setDropRulesMsg(he.settings.dropRulesSaved);
+    const excluded = r.data.queue_excluded;
+    const saved =
+      typeof excluded === 'number' && excluded > 0
+        ? `${he.settings.dropRulesSaved} ${he.settings.dropRulesQueueExcluded}: ${excluded}.`
+        : he.settings.dropRulesSaved;
+    setDropRulesMsg(saved);
+    invalidateSummary();
     if (r.data.config && typeof r.data.config === 'object') {
       const next = rowsFromDropRulesApi(r.data.config as Record<string, unknown>);
       setDropRulesRows(next.length > 0 ? next : [emptyDropRuleRow()]);

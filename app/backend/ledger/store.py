@@ -54,7 +54,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 
 import pandas as pd
 
@@ -1538,6 +1538,55 @@ def forward_fill_uncategorized_for_store_if_static_sql(db_path: str, store_name:
         n = conn.execute("SELECT changes()").fetchone()[0]
         conn.commit()
         return int(n)
+    finally:
+        conn.close()
+
+
+def _quote_sql_ident(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def exclude_uncategorized_rows_matching_drop_pairs(
+    db_path: str,
+    pairs: Iterable[tuple[str, str]],
+) -> int:
+    """Set ``excluded_from_calculations = 1`` on queue rows that match drop-rule pairs.
+
+    A queue row still needs a manual category, has a fingerprint, and is not already excluded.
+    Match is exact after trim. A pair applies only when its column exists on ``ledger_transaction``.
+    Rows that already have a category are left unchanged. A second call changes nothing.
+    """
+    grouped: dict[str, set[str]] = {}
+    for column, value in pairs:
+        col = str(column or "").strip()
+        val = str(value or "").strip()
+        if not col or not val:
+            continue
+        grouped.setdefault(col, set()).add(val)
+    if not grouped:
+        return 0
+
+    conn = connect_ledger(db_path)
+    try:
+        known = _ledger_transaction_column_names(conn)
+        total = 0
+        for col, values in grouped.items():
+            if col not in known:
+                continue
+            ident = _quote_sql_ident(col)
+            placeholders = ", ".join("?" for _ in values)
+            sql = f"""
+            UPDATE ledger_transaction
+            SET excluded_from_calculations = 1
+            WHERE "fingerprint" IS NOT NULL AND TRIM("fingerprint") != ''
+              AND {_SQL_NEEDS_MANUAL_CATEGORY}
+              AND {LEDGER_SQL_TX_INCLUDED}
+              AND TRIM(CAST({ident} AS TEXT)) IN ({placeholders})
+            """
+            conn.execute(sql, tuple(sorted(values)))
+            total += int(conn.execute("SELECT changes()").fetchone()[0])
+        conn.commit()
+        return total
     finally:
         conn.close()
 

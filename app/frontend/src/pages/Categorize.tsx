@@ -1060,8 +1060,9 @@ export default function Categorize() {
                 <DiscardTxnButton onClick={() => void postDiscard(String(p.prompt_id))} />
               </div>
               <p className="hint categorize-discard-hint categorize-action-footer__hint">
-                Discard excludes this row from totals and categorize, and adds a compile-time drop rule for this exact
-                payee/source string (מקור עסקה) so future imports with the same value are removed before the ledger.
+                Discard excludes this row from totals and categorize, and adds a drop rule for this exact
+                payee/source (מקור עסקה). Other rows still waiting in the queue with the same value are excluded now.
+                Future imports with the same value are dropped at compile.
               </p>
             </div>
           </>
@@ -1115,7 +1116,9 @@ export default function Categorize() {
                 <DiscardTxnButton onClick={() => void postDiscard(String(p.prompt_id))} />
               </div>
               <p className="hint categorize-discard-hint categorize-action-footer__hint">
-                Discard excludes this row and adds a drop rule for this payee/source (מקור עסקה) on future compiles.
+                Discard excludes this row and adds a drop rule for this payee/source (מקור עסקה). Other rows still
+                waiting in the queue with the same value are excluded now. Future imports with the same value are
+                dropped at compile.
               </p>
             </div>
           </>
@@ -1161,8 +1164,9 @@ export default function Categorize() {
                 <DiscardTxnButton onClick={() => void postDiscard(String(p.prompt_id))} />
               </div>
               <p className="hint categorize-discard-hint categorize-action-footer__hint">
-                Discard excludes this row from totals and categorize, and adds a compile-time drop rule for this exact
-                payee/source string (מקור עסקה) on future imports.
+                Discard excludes this row from totals and categorize, and adds a drop rule for this exact
+                payee/source (מקור עסקה). Other rows still waiting in the queue with the same value are excluded now.
+                Future imports with the same value are dropped at compile.
               </p>
             </div>
           </>

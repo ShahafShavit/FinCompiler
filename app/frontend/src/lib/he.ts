@@ -587,6 +587,7 @@ export const he = {
       'הדביקו או ערכו את המסמך המלא, ואז החילו על הטבלה. שמירה עדיין שולחת את מצב הטבלה.',
     saved: 'נשמר.',
     dropRulesSaved: 'כללי השמטה נשמרו.',
+    dropRulesQueueExcluded: 'שורות שהוחרגו מהתור',
     tableFromJson: 'הטבלה עודכנה מ־JSON.',
     loading: 'טוען הגדרות מהשרת…',
   },

@@ -12,7 +12,8 @@ when ``is_static = 1``.
 ``/api/revise`` — corrections only (no global forward-fill here).
 
 ``/api/discard`` — exclude the current row from calculations and append a workbook drop rule
-for ``מקור עסקה`` when present.
+for ``מקור עסקה`` when present. Saved drop rules then exclude other queue rows that match
+(uncategorized only). ``/api/next`` applies those rules before static forward-fill.
 
 Session history for the History UI lives on :class:`api.utils.helpers.ControlState`
 (process lifetime).
@@ -144,6 +145,7 @@ def next_payload(*, control_state: Any = None) -> dict[str, Any]:
                 }
             )
 
+        _exclude_queue_rows_for_saved_drop_rules(active_ledger_path())
         forward_fill_uncategorized_for_static_stores_sql(active_ledger_path())
 
         cf = _ledger_queue_categorize_file()
@@ -246,6 +248,16 @@ def revise(data: dict[str, Any]) -> Optional[str]:
         return cf.apply_queue_revise(data)
 
 
+def _exclude_queue_rows_for_saved_drop_rules(db_path: str) -> int:
+    """Apply drop rules on disk to uncategorized rows. Does not restore excluded rows."""
+    from ledger import exclude_uncategorized_rows_matching_drop_pairs
+    from pipeline.transaction_drop_rules import transaction_drop_pairs_from_file
+
+    return exclude_uncategorized_rows_matching_drop_pairs(
+        db_path, transaction_drop_pairs_from_file()
+    )
+
+
 def _cell_text(val: Any) -> str:
     if val is None:
         return ""
@@ -301,6 +313,8 @@ def discard(data: dict[str, Any]) -> Optional[str]:
             except Exception as e:  # noqa: BLE001
                 log.exception("discard: append_rule_if_absent failed")
                 return f"excluded row but drop rule not saved: {e}"
+
+        _exclude_queue_rows_for_saved_drop_rules(active_ledger_path())
     return None
 
 

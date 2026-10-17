@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from pipeline.transaction_drop_rules import load_document_from_disk, save_document_atomic, validate_document
@@ -31,4 +32,16 @@ def put_config(raw_body: bytes) -> tuple[int, dict[str, Any]]:
     except OSError as e:
         log.exception("transaction drop rules save failed")
         return 500, {"ok": False, "error": "server_error", "message": str(e)}
-    return 200, {"ok": True, "config": normalized}
+
+    queue_excluded = 0
+    from ledger.books import active_ledger_path
+
+    path = active_ledger_path()
+    if path and os.path.isfile(path):
+        from ledger import exclude_uncategorized_rows_matching_drop_pairs
+        from pipeline.transaction_drop_rules import pairs_from_document
+
+        queue_excluded = exclude_uncategorized_rows_matching_drop_pairs(
+            path, pairs_from_document(normalized)
+        )
+    return 200, {"ok": True, "config": normalized, "queue_excluded": queue_excluded}
