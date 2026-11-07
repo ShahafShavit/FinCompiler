@@ -60,7 +60,7 @@
 }
 
 .inst-msg--err {
-  color: var(--bad, #e07070);
+  color: var(--bad-fg);
 }
 
 .inst-section {
@@ -192,7 +192,7 @@
 
 .inst-row--gapped td:first-child,
 .inst-row--lapsed td:first-child {
-  box-shadow: inset 3px 0 0 var(--bad, #e07070);
+  box-shadow: inset 3px 0 0 var(--expense);
 }
 
 .inst-merchant-btn {
@@ -255,14 +255,14 @@
 
 .inst-badge--variable {
   margin-inline-start: 0.35rem;
-  background: color-mix(in srgb, var(--warn, #e8a838) 18%, transparent);
-  border-color: var(--warn, #e8a838);
-  color: var(--warn, #c98a20);
+  background: var(--amber-dim);
+  border-color: var(--amber);
+  color: var(--amber-fg);
 }
 
 .inst-badge--gapped,
 .inst-badge--lapsed {
-  color: var(--bad, #e07070);
+  color: var(--bad-fg);
 }
 
 .inst-badge--completed,

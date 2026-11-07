@@ -390,7 +390,9 @@ export default function Holdings() {
             <tbody>
               {displayRows.length === 0 ? (
                 <tr>
-                  <td colSpan={Math.max(2, displayActs.length + 2)}>{he.holdings.empty}</td>
+                  <td className="empty" colSpan={Math.max(2, displayActs.length + 2)}>
+                    {he.holdings.empty}
+                  </td>
                 </tr>
               ) : (
                 displayRows.map((row, rowIdx) => {

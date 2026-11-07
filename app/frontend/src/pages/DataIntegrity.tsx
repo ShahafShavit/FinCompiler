@@ -245,7 +245,7 @@ export default function DataIntegrity() {
         </div>
       }
     >
-      {err ? <div className="intg-error">{err}</div> : null}
+      {err ? <div className="intg-error banner banner--err">{err}</div> : null}
       {!report?.ledger_exists ? <p className="intg-muted">{he.integrity.noLedger}</p> : null}
       {txnMsg ? <p className="intg-msg intg-msg--txn">{txnMsg}</p> : null}
 

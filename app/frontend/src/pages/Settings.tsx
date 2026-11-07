@@ -390,7 +390,7 @@ export default function Settings() {
   return (
     <PageShell title={he.settings.title} sub={he.settings.sub} width="narrow">
       {loading ? (
-        <p className="settings-loading-banner" role="status">
+        <p className="settings-loading-banner is-loading" role="status">
           {he.settings.loading}
         </p>
       ) : null}
@@ -400,9 +400,9 @@ export default function Settings() {
           <span className="muted">{he.settings.resolvedFile}:</span> <code>{cfg.providers_file}</code>
         </p>
       ) : null}
-      {err ? <p className="settings-error">{err}</p> : null}
+      {err ? <p className="settings-error banner banner--err">{err}</p> : null}
       {msg ? <p className="settings-msg">{msg}</p> : null}
-      {dropRulesErr ? <p className="settings-error">{dropRulesErr}</p> : null}
+      {dropRulesErr ? <p className="settings-error banner banner--err">{dropRulesErr}</p> : null}
       {dropRulesMsg ? <p className="settings-msg">{dropRulesMsg}</p> : null}
 
       <section className="card">
@@ -555,7 +555,7 @@ export default function Settings() {
           </button>
         </div>
         {dropRulesRows.length === 0 ? (
-          <p className="settings-drop-rules-empty">{he.dashboard.empty}</p>
+          <p className="settings-drop-rules-empty empty">{he.dashboard.empty}</p>
         ) : (
           <div className="settings-drop-rules-list">
             {dropRulesRows.map((row, idx) => (
@@ -713,7 +713,7 @@ function CardPayerSection() {
     <section className="card">
       <h2>{he.books.payers}</h2>
       <p className="hint">{he.books.payerHint}</p>
-      {rows.length === 0 && known.length === 0 ? <p className="hint">{he.dashboard.empty}</p> : null}
+      {rows.length === 0 && known.length === 0 ? <p className="hint empty">{he.dashboard.empty}</p> : null}
       {rows.map((row, index) => (
         <div className="pipe-grid2" key={row.last_four} style={{ marginBottom: '0.5rem' }}>
           <label>

@@ -21,7 +21,7 @@
 
 .heatmap-page .err-banner {
   background: var(--bad);
-  border: 1px solid #6b2a2a;
+  border: 1px solid var(--bad-border);
   color: var(--bad-fg);
   padding: 0.75rem 1rem;
   border-radius: var(--radius-sm);

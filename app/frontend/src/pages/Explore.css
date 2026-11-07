@@ -59,7 +59,7 @@
 }
 
 .explore-msg--err {
-  color: var(--bad, #e07070);
+  color: var(--bad-fg);
 }
 
 .explore-pager {
@@ -154,7 +154,7 @@
 }
 
 .explore-row-err {
-  color: var(--bad, #e07070);
+  color: var(--bad-fg);
   font-size: var(--fs-caption);
   padding: 0.25rem 0.55rem 0.55rem;
 }

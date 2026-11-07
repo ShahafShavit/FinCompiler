@@ -68,8 +68,11 @@ function AppShell() {
   const { bookId } = useBook();
   return (
     <div id="app-shell" className="app-shell">
+      <a className="skip-link" href="#main">
+        {he.app.skipToContent}
+      </a>
       <Sidebar categorizeBadge={badge} />
-      <div className="app-main" key={bookId}>
+      <main id="main" className="app-main" tabIndex={-1} key={bookId}>
         <ErrorBoundary>
           <Routes>
             {/* One path per page — do not pair `/foo` + `/foo/` Navigate redirects;
@@ -90,7 +93,7 @@ function AppShell() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </ErrorBoundary>
-      </div>
+      </main>
     </div>
   );
 }

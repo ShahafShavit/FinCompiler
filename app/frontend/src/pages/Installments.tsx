@@ -638,8 +638,8 @@ export default function Installments() {
         </p>
       ) : null}
 
-      {err ? <p className="inst-msg inst-msg--err">{err}</p> : null}
-      {loading && !data ? <p className="inst-msg">{he.installments.loading}</p> : null}
+      {err ? <p className="inst-msg inst-msg--err banner banner--err">{err}</p> : null}
+      {loading && !data ? <p className="inst-msg is-loading">{he.installments.loading}</p> : null}
 
       {!loading || data ? (
         <>
@@ -698,7 +698,7 @@ export default function Installments() {
             </div>
 
             {filteredPlans.length === 0 ? (
-              <p className="inst-msg">{he.installments.empty}</p>
+              <p className="inst-msg empty">{he.installments.empty}</p>
             ) : (
               <div className="inst-table-wrap">
                 <table className="inst-table">
@@ -927,7 +927,7 @@ export default function Installments() {
             ) : null}
 
             {filteredFees.length === 0 ? (
-              <p className="inst-msg">{he.installments.empty}</p>
+              <p className="inst-msg empty">{he.installments.empty}</p>
             ) : (
               <div className="inst-table-wrap">
                 <table className="inst-table">

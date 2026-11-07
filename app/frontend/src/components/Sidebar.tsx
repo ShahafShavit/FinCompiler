@@ -217,6 +217,8 @@ export default function Sidebar({ categorizeBadge }: { categorizeBadge?: number 
           type="button"
           className="sidebar__toggle"
           onClick={() => setForcedExpand((v) => !v)}
+          aria-expanded={!rail}
+          aria-label={rail ? he.app.expandNav : he.app.collapseNav}
           title={forcedExpand ? he.app.collapseNav : he.app.expandNav}
         >
           {rail ? '«' : '»'}

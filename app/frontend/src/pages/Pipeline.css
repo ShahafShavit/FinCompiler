@@ -47,7 +47,7 @@
 }
 
 .pipe-cat-link--need {
-  color: var(--accent, #6af);
+  color: var(--accent);
 }
 .pipe-row {
   display: flex;
@@ -120,7 +120,7 @@
   margin-bottom: 0;
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
-  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 -8px 28px rgba(28, 18, 10, 0.5);
 }
 
 .pipe-log-dock .pipe-log {

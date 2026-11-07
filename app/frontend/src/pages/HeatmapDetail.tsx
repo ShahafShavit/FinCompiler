@@ -296,7 +296,7 @@ function FingerprintModal({
             onChange={(e) => setPhrase(e.target.value)}
           />
         </label>
-        {err ? <p className="hm-detail-modal-err">{err}</p> : null}
+        {err ? <p className="hm-detail-modal-err banner banner--err">{err}</p> : null}
         <div className="hm-detail-modal-actions">
           <button type="button" className="secondary" onClick={onClose} disabled={busy}>
             {he.common.cancel}
@@ -448,11 +448,11 @@ export default function HeatmapDetail() {
         onSaved={() => loadDetail({ preserveExisting: true })}
       />
       {!queryString ? (
-        <p className="hm-detail-empty">{he.heatmap.noParams}</p>
+        <p className="hm-detail-empty empty">{he.heatmap.noParams}</p>
       ) : err ? (
-        <p className="hm-detail-error">{err}</p>
+        <p className="hm-detail-error banner banner--err">{err}</p>
       ) : !data?.title ? (
-        <p className="hm-detail-empty">{he.heatmap.loading}</p>
+        <p className="hm-detail-empty is-loading">{he.heatmap.loading}</p>
       ) : (
         <>
           {data.truncated ? (
@@ -464,7 +464,7 @@ export default function HeatmapDetail() {
               <section key={si} className="hm-detail-section">
                 {sec.subtitle ? <h2 className="hm-detail-sub">{sec.subtitle}</h2> : null}
                 {!sec.rows.length ? (
-                  <p className="hm-detail-empty">{he.heatmap.empty}</p>
+                  <p className="hm-detail-empty empty">{he.heatmap.empty}</p>
                 ) : (
                   <div className="hm-detail-table-wrap">
                     <table className="hm-detail-table">

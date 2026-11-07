@@ -528,12 +528,12 @@ export default function Explore() {
         </button>
       </div>
 
-      {err ? <p className="explore-msg explore-msg--err">{err}</p> : null}
+      {err ? <p className="explore-msg explore-msg--err banner banner--err">{err}</p> : null}
 
       {loading && !data ? (
-        <p className="explore-msg">{he.explore.loading}</p>
+        <p className="explore-msg is-loading">{he.explore.loading}</p>
       ) : !err && total === 0 ? (
-        <p className="explore-msg">{he.explore.empty}</p>
+        <p className="explore-msg empty">{he.explore.empty}</p>
       ) : !err && rows.length > 0 ? (
         <>
           <div className="explore-pager">

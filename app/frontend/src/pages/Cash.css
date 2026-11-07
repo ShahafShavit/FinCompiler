@@ -612,5 +612,9 @@
 .cash-register__cat-input:focus {
   border-color: var(--border-strong);
   background: var(--bg-input);
-  outline: none;
+}
+
+.cash-register__cat-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

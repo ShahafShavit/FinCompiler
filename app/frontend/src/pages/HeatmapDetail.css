@@ -80,7 +80,7 @@
 .hm-detail-error {
   color: var(--bad-fg);
   background: var(--bad);
-  border: 1px solid #6b2a2a;
+  border: 1px solid var(--bad-border);
   padding: 0.75rem 1rem;
   border-radius: var(--radius-sm);
 }
@@ -142,8 +142,8 @@
 .hm-detail-modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 40;
-  background: rgba(0, 0, 0, 0.55);
+  z-index: var(--z-sidebar);
+  background: var(--overlay);
   display: flex;
   align-items: flex-start;
   justify-content: center;

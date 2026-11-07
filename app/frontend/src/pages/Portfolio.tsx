@@ -415,25 +415,25 @@ export default function Portfolio() {
       actions={filterBar}
     >
       {metaQuery.isError && (
-        <p className="portfolio-msg portfolio-msg--err">{he.portfolio.metaError}</p>
+        <p className="portfolio-msg portfolio-msg--err banner banner--err">{he.portfolio.metaError}</p>
       )}
 
       {meta && !meta.ledger_exists && (
-        <p className="portfolio-msg">{he.portfolio.noLedger}</p>
+        <p className="portfolio-msg empty">{he.portfolio.noLedger}</p>
       )}
 
       {meta?.ledger_exists && (meta.row_count ?? 0) === 0 && (
-        <p className="portfolio-msg">{he.portfolio.noRows}</p>
+        <p className="portfolio-msg empty">{he.portfolio.noRows}</p>
       )}
 
       {hasRows && (
         <>
           {timeseriesQuery.isError && (
-            <p className="portfolio-msg portfolio-msg--err">{he.portfolio.chartError}</p>
+            <p className="portfolio-msg portfolio-msg--err banner banner--err">{he.portfolio.chartError}</p>
           )}
 
           {selected.size === 0 && (
-            <p className="portfolio-msg">{he.portfolio.selectOne}</p>
+            <p className="portfolio-msg empty">{he.portfolio.selectOne}</p>
           )}
 
           {selected.size > 0 && (

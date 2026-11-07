@@ -231,11 +231,11 @@ function AllocationDonutCard() {
         ) : null}
       </h3>
       {isPending ? (
-        <div className="dash-empty">{he.dashboard.loading}</div>
+        <div className="dash-empty is-loading">{he.dashboard.loading}</div>
       ) : error ? (
-        <div className="dash-empty">{error.message}</div>
+        <div className="dash-empty banner banner--err">{error.message}</div>
       ) : filtered.length === 0 ? (
-        <div className="dash-empty">{he.dashboard.empty}</div>
+        <div className="dash-empty empty">{he.dashboard.empty}</div>
       ) : (
         <div className="dash-chart-ltr" dir="ltr">
           <ResponsiveContainer width="100%" height={240}>
@@ -295,11 +295,11 @@ function NetWorthStackedCard() {
     <div className="dash-card dash-card--compact dash-card--grow">
       <h3 className="dash-card__title">{he.dashboard.netWorthOverTime}</h3>
       {isPending ? (
-        <div className="dash-empty">{he.dashboard.loading}</div>
+        <div className="dash-empty is-loading">{he.dashboard.loading}</div>
       ) : error ? (
-        <div className="dash-empty">{error.message}</div>
+        <div className="dash-empty banner banner--err">{error.message}</div>
       ) : rows.length === 0 ? (
-        <div className="dash-empty">{he.dashboard.empty}</div>
+        <div className="dash-empty empty">{he.dashboard.empty}</div>
       ) : (
         <div className="dash-chart-ltr" dir="ltr">
           <ResponsiveContainer width="100%" height={260}>
@@ -357,11 +357,11 @@ function CashflowCard() {
         </Link>
       </h3>
       {isPending ? (
-        <div className="dash-empty">{he.dashboard.loading}</div>
+        <div className="dash-empty is-loading">{he.dashboard.loading}</div>
       ) : error ? (
-        <div className="dash-empty">{error.message}</div>
+        <div className="dash-empty banner banner--err">{error.message}</div>
       ) : rows.length === 0 ? (
-        <div className="dash-empty">{he.dashboard.empty}</div>
+        <div className="dash-empty empty">{he.dashboard.empty}</div>
       ) : (
         <div className="dash-chart-ltr" dir="ltr">
         <ResponsiveContainer width="100%" height={300}>
@@ -784,7 +784,11 @@ function CategoryOverviewCard() {
       </div>
 
       {!catQueryReady ? (
-        <div className="dash-empty">
+        <div
+          className={
+            yearPickerBlocked || rangeKind === 'custom' ? 'dash-empty empty' : 'dash-empty is-loading'
+          }
+        >
           {yearPickerBlocked
             ? 'No effective months in ledger for a year view.'
             : !metaReady || rev === null
@@ -796,11 +800,11 @@ function CategoryOverviewCard() {
                   : 'Loading…'}
         </div>
       ) : isPending ? (
-        <div className="dash-empty">Loading…</div>
+        <div className="dash-empty is-loading">Loading…</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error.message}</div>
+        <div className="dash-empty banner banner--err">Error: {error.message}</div>
       ) : !data?.rows?.length ? (
-        <div className="dash-empty">No categorized activity in this period.</div>
+        <div className="dash-empty empty">No categorized activity in this period.</div>
       ) : view === 'table' ? (
         <div className="dash-cat-table-wrap">
           <table className="dash-cat-table">
@@ -990,11 +994,11 @@ function SourceCategoryMatrixCard() {
         Last 12 months · expense amounts by bank/source and category. Click a cell for transactions.
       </p>
       {isPending ? (
-        <div className="dash-empty">Loading…</div>
+        <div className="dash-empty is-loading">Loading…</div>
       ) : error ? (
-        <div className="dash-empty">Error: {error.message}</div>
+        <div className="dash-empty banner banner--err">Error: {error.message}</div>
       ) : !data?.sources?.length || !data?.categories?.length ? (
-        <div className="dash-empty">No expense transactions in range.</div>
+        <div className="dash-empty empty">No expense transactions in range.</div>
       ) : (
         <div className="dash-matrix-scroll">
           <table className="dash-matrix-table">
@@ -1048,14 +1052,14 @@ function KpiStrip() {
   const rev = meta.isSuccess ? dashboardRevisionFromMeta(meta.data) : null;
   const summary = useDashboardQuery<DashboardSummary>(rev, '/api/dashboard/summary', meta.isSuccess);
 
-  if (meta.isPending) return <div className="dash-empty">{he.dashboard.loading}</div>;
+  if (meta.isPending) return <div className="dash-empty is-loading">{he.dashboard.loading}</div>;
   if (meta.isError) return null;
-  if (summary.isPending) return <div className="dash-empty">{he.dashboard.loading}</div>;
-  if (summary.error) return <div className="dash-empty">{summary.error.message}</div>;
+  if (summary.isPending) return <div className="dash-empty is-loading">{he.dashboard.loading}</div>;
+  if (summary.error) return <div className="dash-empty banner banner--err">{summary.error.message}</div>;
   const data = summary.data;
   if (!data?.ledger_exists) {
     return (
-      <div className="dash-empty">
+      <div className="dash-empty empty">
         לא נמצא לדג׳ר. הריצו את ה־Pipeline כדי למלא את <code>data/ledger.sqlite</code>.
       </div>
     );

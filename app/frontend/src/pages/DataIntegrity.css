@@ -22,7 +22,7 @@
   border-radius: 6px;
   border: 1px solid var(--border-strong);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   cursor: pointer;
 }
 
@@ -204,7 +204,7 @@
 }
 
 .intg-sev--warning .intg-check-hd {
-  border-right: 3px solid #fab005;
+  border-right: 3px solid var(--amber);
 }
 
 .intg-sev--info .intg-check-hd {
@@ -266,8 +266,8 @@
 }
 
 .intg-top-column--over {
-  border-color: rgba(76, 110, 245, 0.65);
-  box-shadow: 0 0 0 1px rgba(76, 110, 245, 0.35);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
 }
 
 .intg-top-column-hd {
@@ -327,10 +327,10 @@
   font-size: 0.8rem;
   line-height: 1.25;
   border-radius: 8px;
-  border: 1px solid rgba(76, 110, 245, 0.65);
+  border: 1px solid var(--accent);
   background: var(--bg-card);
   color: var(--fg);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
+  box-shadow: var(--shadow-pop);
   max-width: min(18rem, 88vw);
   word-break: break-word;
   text-align: start;

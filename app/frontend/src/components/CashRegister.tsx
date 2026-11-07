@@ -736,9 +736,9 @@ export default function CashRegister({ initialMonth, compact = false }: CashRegi
         </div>
         <p className="hint cash-register__history-hint">{he.cash.historyEditHint}</p>
         {!monthReady || loading ? (
-          <p className="hint">{he.cash.loading}</p>
+          <p className="hint is-loading">{he.cash.loading}</p>
         ) : events.length === 0 ? (
-          <p className="hint">{he.cash.empty}</p>
+          <p className="hint empty">{he.cash.empty}</p>
         ) : (
           <div className="cash-register__table-wrap">
             <table className="cash-register__table">

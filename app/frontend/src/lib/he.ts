@@ -9,6 +9,7 @@ export const he = {
     system: 'מערכת',
     expandNav: 'הרחב ניווט',
     collapseNav: 'כווץ ניווט',
+    skipToContent: 'דלג לתוכן',
   },
   books: {
     label: 'ספר',

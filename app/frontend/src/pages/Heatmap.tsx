@@ -945,7 +945,7 @@ export default function Heatmap() {
     >
       {!focusMode ? <p className="subtle">{he.heatmap.ledgerHint}</p> : null}
       {err ? (
-        <div className="err-banner" style={{ display: 'block' }}>
+        <div className="err-banner banner banner--err" style={{ display: 'block' }}>
           {err}
         </div>
       ) : null}
@@ -986,7 +986,7 @@ export default function Heatmap() {
             }
           />
         ) : (
-          <p className="no-data">{he.heatmap.empty}</p>
+          <p className="no-data empty">{he.heatmap.empty}</p>
         )}
       </div>
     </PageShell>
