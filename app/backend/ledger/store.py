@@ -982,6 +982,25 @@ CREATE TABLE IF NOT EXISTS card_payer (
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (25, 'card_payer_by_last_four')"
             )
+            ver = _current_schema_version(conn)
+            if ver < 26:
+                conn.executescript(
+                    """
+CREATE TABLE IF NOT EXISTS category_suggestion (
+    fingerprint      TEXT NOT NULL PRIMARY KEY
+        CHECK (length(trim(fingerprint)) > 0),
+    suggestions_json TEXT NOT NULL
+        CHECK (length(trim(suggestions_json)) > 0),
+    model_version    TEXT NOT NULL
+        CHECK (length(trim(model_version)) > 0),
+    scored_at        TEXT NOT NULL
+        CHECK (datetime(scored_at) IS NOT NULL)
+) STRICT;
+"""
+                )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (26, 'category_suggestion_scores')"
+            )
             conn.commit()
         finally:
             conn.close()

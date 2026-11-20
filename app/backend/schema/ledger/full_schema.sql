@@ -52,6 +52,7 @@ INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (22, 'cash_event_
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (23, 'fingerprint_keep_text_punctuation');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (24, 'ledger_effective_ym_expr_index');
 INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (25, 'card_payer_by_last_four');
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (26, 'category_suggestion_scores');
 
 -- -----------------------------------------------------------------------------
 -- Transaction ledger (dedupe key = fingerprint — encodes both debit and credit columns)
@@ -334,6 +335,18 @@ END;
 CREATE TABLE IF NOT EXISTS card_payer (
     last_four TEXT PRIMARY KEY CHECK (length(trim(last_four)) > 0),
     payer     TEXT NOT NULL CHECK (length(trim(payer)) > 0)
+) STRICT;
+
+-- Precomputed CatBoost top-k category suggestions for the categorize queue (read path only).
+CREATE TABLE IF NOT EXISTS category_suggestion (
+    fingerprint      TEXT NOT NULL PRIMARY KEY
+        CHECK (length(trim(fingerprint)) > 0),
+    suggestions_json TEXT NOT NULL
+        CHECK (length(trim(suggestions_json)) > 0),
+    model_version    TEXT NOT NULL
+        CHECK (length(trim(model_version)) > 0),
+    scored_at        TEXT NOT NULL
+        CHECK (datetime(scored_at) IS NOT NULL)
 ) STRICT;
 
 -- =============================================================================

@@ -543,6 +543,7 @@ class CategorizeFile:
                 if (sm & cm).any():
                     self.stores_df.loc[sm & cm, "category"] = new_category
                     self.save_stores()
+        self._schedule_category_suggest_refresh()
 
     def apply_session_resolve_static_revision(self, store_name: str, category: str, is_static: int) -> None:
         if is_static not in (0, 1):
@@ -710,6 +711,16 @@ class CategorizeFile:
                 update_category_and_notes_by_fingerprint(self._ledger_db_path, fp, category, notes_str)
             else:
                 update_category_by_fingerprint(self._ledger_db_path, fp, category)
+        self._schedule_category_suggest_refresh()
+
+    def _schedule_category_suggest_refresh(self) -> None:
+        """Background retrain/score after a label change. Does not block the save."""
+        try:
+            from ledger.category_suggest_job import schedule_category_suggest_refresh
+
+            schedule_category_suggest_refresh(self._ledger_db_path)
+        except Exception:
+            log.exception("schedule category suggest refresh failed")
 
     def _apply_queue_notes_if_present(self, stable_id: str, data: dict) -> None:
         """When ``notes`` is present in queue JSON, persist to the ledger row for ``stable_id``."""

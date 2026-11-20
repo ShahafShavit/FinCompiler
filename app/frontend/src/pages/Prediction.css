@@ -1,0 +1,243 @@
+.pred-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem 1rem;
+  margin: 0;
+}
+
+.pred-status-grid dt {
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  margin: 0;
+}
+
+.pred-status-grid dd {
+  margin: 0.15rem 0 0;
+  font-weight: 600;
+}
+
+.pred-pill {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.pred-pill--ok {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--fg);
+}
+
+.pred-pill--bad {
+  background: color-mix(in srgb, var(--bad) 28%, transparent);
+  color: var(--fg);
+}
+
+.pred-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  align-items: flex-end;
+  margin-bottom: 0.85rem;
+}
+
+.pred-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 7rem;
+}
+
+.pred-field label {
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+}
+
+.pred-field input[type='text'],
+.pred-field input[type='number'],
+.pred-field textarea {
+  font: inherit;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.pred-field textarea {
+  min-height: 4.5rem;
+  resize: vertical;
+  width: min(100%, 28rem);
+}
+
+.pred-field--check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: unset;
+  padding-bottom: 0.35rem;
+}
+
+.pred-field--check label {
+  color: var(--fg);
+  font-size: 0.9rem;
+}
+
+.pred-btn {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--accent);
+  color: var(--accent-fg);
+  cursor: pointer;
+}
+
+.pred-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.pred-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pred-btn--secondary {
+  background: var(--bg-card);
+  color: var(--fg);
+}
+
+.pred-btn--small {
+  font-size: 0.82rem;
+  padding: 0.2rem 0.55rem;
+}
+
+.pred-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1.15rem;
+}
+
+.pred-card-title {
+  font-size: 1.05rem;
+  margin: 0 0 0.35rem;
+}
+
+.pred-hint {
+  font-size: 0.88rem;
+  color: var(--fg-muted);
+  margin: 0 0 0.75rem;
+}
+
+.pred-error {
+  background: var(--bad);
+  color: var(--bad-fg);
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.pred-meta {
+  font-size: 0.88rem;
+  color: var(--fg-muted);
+  margin: 0 0 0.65rem;
+}
+
+.pred-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.pred-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.pred-table th,
+.pred-table td {
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.pred-table th {
+  background: color-mix(in srgb, var(--bg) 70%, var(--bg-card));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pred-table tr:last-child td {
+  border-bottom: none;
+}
+
+.pred-table tr.pred-row--selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.pred-table tr.pred-row--clickable {
+  cursor: pointer;
+}
+
+.pred-table tr.pred-row--clickable:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.pred-match-yes {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.pred-match-no {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.pred-pred-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pred-pred-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pred-pred-list li:last-child {
+  border-bottom: none;
+}
+
+.pred-pred-list--ranked {
+  max-width: 22rem;
+}
+
+.pred-pred-list--ranked li {
+  padding: 0.35rem 0;
+}
+
+.pred-clamp {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pred-tweak-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.pred-tweak-grid .pred-field--wide {
+  grid-column: 1 / -1;
+}

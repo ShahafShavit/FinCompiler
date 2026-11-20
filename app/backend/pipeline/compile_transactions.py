@@ -142,3 +142,11 @@ def compile_transactions_main(
         )
     except Exception:
         log.exception("compile_transactions_main: installment statement_month fill failed")
+
+    try:
+        from ledger.category_suggest_job import run_category_suggest_refresh
+
+        _notify("CATEGORIZE: refresh category suggestions", sink)
+        run_category_suggest_refresh(config.ledger_db_file)
+    except Exception:
+        log.exception("compile_transactions_main: category suggestion refresh failed")

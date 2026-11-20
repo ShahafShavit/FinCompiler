@@ -15,6 +15,7 @@ from api.routers.categorize import register_categorize_routes
 from api.routers.dashboard import register_dashboard_routes
 from api.routers.heatmap import register_heatmap_routes
 from api.routers.pipeline import register_pipeline_routes
+from api.routers.prediction import register_prediction_routes
 from api.routers.settings import register_settings_routes
 from api.utils import (
     SPA_INDEX_MISSING_BYTES,
@@ -54,6 +55,7 @@ def register_routes(app: FastAPI) -> None:
     register_dashboard_routes(app)
     register_settings_routes(app)
     register_pipeline_routes(app)
+    register_prediction_routes(app)
     register_cash_routes(app)
     register_book_routes(app)
 

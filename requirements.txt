@@ -1,4 +1,5 @@
 attrs==26.1.0
+catboost==1.2.10
 certifi==2026.4.22
 cffi==2.0.0
 charset-normalizer==3.4.7
@@ -6,6 +7,7 @@ cryptography==48.0.0
 curl_cffi==0.16.3
 et_xmlfile==2.0.0
 fastapi==0.128.0
+fastembed==0.9.1
 httpx==0.28.1
 google-api-core==2.30.3
 google-api-python-client==2.196.0
@@ -16,11 +18,15 @@ googleapis-common-protos==1.75.0
 gspread==6.2.1
 h11==0.16.0
 httplib2==0.31.2
+huggingface_hub==1.33.0
 idna==3.13
+loguru==0.7.3
 lxml==6.1.0
+mmh3==5.3.1
 numpy==2.4.4
 oauth2client==4.1.3
 oauthlib==3.3.1
+onnxruntime==1.31.1
 openpyxl==3.1.5
 outcome==1.3.0.post0
 pandas==3.0.2
@@ -42,6 +48,8 @@ six==1.17.0
 sniffio==1.3.1
 sortedcontainers==2.4.0
 tabulate==0.10.0
+tokenizers==0.23.3
+tqdm==4.70.1
 trio==0.33.0
 trio-websocket==0.12.2
 typing_extensions==4.15.0

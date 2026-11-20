@@ -42,7 +42,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 max_v = conn.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0]
-                self.assertEqual(max_v, 24)
+                self.assertEqual(max_v, 26)
                 idx = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_ledger_tx_effective_ym'"
                 ).fetchone()
@@ -75,6 +75,10 @@ class LedgerMigrateTests(unittest.TestCase):
                     str(r[1]) for r in conn.execute("PRAGMA table_info(cash_event)").fetchall()
                 }
                 self.assertIn("category", cash_cols)
+                row_cs = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='category_suggestion'"
+                ).fetchone()
+                self.assertIsNotNone(row_cs)
 
                 conn.execute(
                     'INSERT INTO ledger_transaction ("fingerprint", ingested_at, "תאריך") '
@@ -230,7 +234,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 ).fetchone()
                 self.assertIsNone(gone)
                 max_v = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-                self.assertEqual(max_v, 24)
+                self.assertEqual(max_v, 26)
             finally:
                 conn.close()
 
@@ -329,7 +333,7 @@ class LedgerMigrateTests(unittest.TestCase):
                 self.assertEqual(row[0], fp_new)
                 self.assertIn("test-store", str(row[0]).lower())
                 max_v = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-                self.assertEqual(max_v, 24)
+                self.assertEqual(max_v, 26)
             finally:
                 conn.close()
 

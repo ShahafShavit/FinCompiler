@@ -17,6 +17,7 @@ import Holdings from './pages/Holdings';
 import Installments from './pages/Installments';
 import Portfolio from './pages/Portfolio';
 import Pipeline from './pages/Pipeline';
+import Prediction from './pages/Prediction';
 import Settings from './pages/Settings';
 
 type EBState = { error: Error | null };
@@ -86,6 +87,7 @@ function AppShell() {
             <Route path="/installments" element={<Installments />} />
             <Route path="/integrity" element={<DataIntegrity />} />
             <Route path="/categorize" element={<Categorize />} />
+            <Route path="/prediction" element={<Prediction />} />
             <Route path="/cash" element={<Cash />} />
             <Route path="/holdings" element={<Holdings />} />
             <Route path="/portfolio" element={<Portfolio />} />

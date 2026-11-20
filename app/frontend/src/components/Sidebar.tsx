@@ -69,6 +69,28 @@ function IconCategorize() {
   );
 }
 
+function IconPrediction() {
+  return (
+    <svg className="sidebar__icon" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 19V5M4 19h16"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M7 15l3.5-4 3 2.5L17 8"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <circle cx="17" cy="8" r="1.6" fill="currentColor" />
+    </svg>
+  );
+}
+
 function IconCash() {
   return (
     <svg className="sidebar__icon" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -162,6 +184,7 @@ export default function Sidebar({ categorizeBadge }: { categorizeBadge?: number 
       icon: <IconCategorize />,
       badge: categorizeBadge && categorizeBadge > 0 ? categorizeBadge : null,
     },
+    { to: '/prediction', label: he.nav.prediction, icon: <IconPrediction /> },
     { to: '/cash', label: he.nav.cash, icon: <IconCash /> },
     { to: '/holdings', label: he.nav.holdings, icon: <IconHoldings /> },
     { to: '/portfolio', label: he.nav.portfolio, icon: <IconPortfolio /> },

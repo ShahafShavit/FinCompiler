@@ -71,6 +71,12 @@ ledger_db_file = _data("ledger.sqlite")
 # Second ledger. Same schema as ``ledger_db_file``. API reads follow the active book.
 shared_ledger_file = _data("books", "shared.sqlite")
 
+# Local ML artifacts for category suggestions (under gitignored ``data/``).
+models_dir = _data("models")
+minilm_cache_dir = _data("models", "minilm")
+category_catboost_model_file = _data("models", "category_catboost.cbm")
+category_catboost_meta_file = _data("models", "category_catboost.meta.json")
+
 _static_root = _w("data", "static")
 static_dir = _static_root + os.sep
 
